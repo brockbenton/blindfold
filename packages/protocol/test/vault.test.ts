@@ -20,9 +20,10 @@ describe("IDL self-consistency", () => {
     for (const e of VAULT_IDL.events!) expect(e.discriminator).toEqual(disc(`event:${e.name}`));
   });
   it("has the five instructions and ordered errors", () => {
-    expect(VAULT_IDL.instructions.map((i) => i.name)).toEqual([
-      "initialize", "deposit", "register_provider", "deactivate_provider", "settle_batch",
-    ]);
+    // The generated IDL lists instructions alphabetically, so compare as a set.
+    expect(VAULT_IDL.instructions.map((i) => i.name).sort()).toEqual(
+      ["initialize", "deposit", "register_provider", "deactivate_provider", "settle_batch"].sort(),
+    );
     expect(VAULT_IDL.errors!.map((e) => e.code)).toEqual(Array.from({ length: 15 }, (_, i) => 6000 + i));
     expect(VAULT_IDL.errors![0].name).toBe("InvalidAmount");
     expect(VAULT_IDL.errors![14].name).toBe("MathOverflow");
