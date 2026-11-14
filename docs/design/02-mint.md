@@ -287,3 +287,18 @@ When the real vault exists, swap in `SolanaVaultReader` and `SolanaSettleSender`
 | # | Issue | Proposed fix |
 |---|---|---|
 | 1 | Deposits at `confirmed` can in theory be rolled back after crediting a quote | Accept for the demo (00 §2 already says so); production polls `finalized` |
+
+## 9. Implementation notes (as built)
+
+Deviations and decisions, none touching 00:
+
+- `SettleSender` is `submit(batchId, payouts) -> {tx, validUntil}`, `confirm(tx)`, `isExpired(validUntil)` (not a single `settleBatch`), because recovery needs the blockhash expiry. Program rejections throw `ProgramError(name)` (parsed from `Error Code:` in simulation logs); any other throw is transient and leaves the batch `pending`.
+- `VaultReader.getDeposits(indices)` replaces `getDeposit`, so chunking with `getMultipleAccountsInfo` lives in the Solana reader. The reader throws on a wrong account owner; the poller never skips it.
+- `settlements` has an extra `last_valid` column and `payouts` also stores `payout_token`. `issued_signatures` columns are `b_`, `c_` (unquoted identifiers) plus `seq`.
+- The settlement advisory lock is `(hashtext(current_schema()), 42)` so test schemas do not block each other. Settlement conditions return HTTP 409 (`70010` already running, `70011` in flight or unconfirmed) and 502 (`70012` batch failed, balances restored). One recovery per run: a failed batch is reported and the next run starts fresh.
+- Keyset errors follow 00 5.4: unknown or inactive keyset `12001`, amount not in keyset `12002`.
+- `GET /v1/keys` lists active keysets only; `/v1/keysets` lists all.
+- Fakes (`MemoryVault`, `FakeSender`) live in `src/chain/memory.ts` so the dev mode can use them: `MINT_DEV_FAKE_CHAIN=1` swaps them in and mounts admin-token-protected `/dev/deposit`, `/dev/provider`, `/dev/active`. Off by default.
+- Extra env (all optional): `PROVIDERS_FILE`, `DEPOSIT_POLL_MS`, `SETTLE_INTERVAL_S`.
+- Local Postgres without docker: `scripts/dev-pg.sh` (port 54329, data in `.pgdata`, prints `DATABASE_URL`) and `scripts/dev-pg-stop.sh [--wipe]`. The unix socket moves to `/tmp/blindfold-pg-<uid>` when the worktree path is too long for a socket. Tests default to that URL when `DATABASE_URL` is unset and use one schema per test file. `scripts/smoke.ts` drives a dev-mode server end to end.
+- Not yet run against `solana-test-validator` (Done-when #15). `SolanaVaultReader` and `SolanaSettleSender` are covered with a fake `Connection` only.
