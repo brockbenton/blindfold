@@ -3,5 +3,6 @@ packages:
   - "services/*"
   - "apps/*"
   - "agents/*"
+  - "scripts"
   - "scripts/*"
   - "tests/*"
