@@ -42,3 +42,22 @@ export class SolanaDepositor implements Depositor {
     throw new Error(`deposit failed after 3 attempts: ${(lastErr as Error).message}`);
   }
 }
+
+/** Dev only: asks a mint started with MINT_DEV_FAKE_CHAIN=1 to record a deposit (admin-protected /dev/deposit). No Solana involved. */
+export class DevDepositor implements Depositor {
+  constructor(private o: { mintUrl: string; adminToken: string; fetch?: typeof fetch }) {}
+
+  async deposit(a: { amountCents: number; depositRef: Uint8Array }): Promise<{ signature: string }> {
+    const f = this.o.fetch ?? fetch;
+    const res = await f(`${this.o.mintUrl.replace(/\/+$/, "")}/dev/deposit`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${this.o.adminToken}` },
+      body: JSON.stringify({ deposit_ref: Buffer.from(a.depositRef).toString("hex"), amount_cents: a.amountCents }),
+    });
+    if (res.status === 404) throw new Error("mint has no /dev/deposit: it is not running with MINT_DEV_FAKE_CHAIN=1, so --dev-deposit cannot be used");
+    if (res.status === 401) throw new Error("mint rejected MINT_ADMIN_TOKEN for /dev/deposit");
+    if (!res.ok) throw new Error(`dev deposit failed: HTTP ${res.status}`);
+    const j = (await res.json()) as { index?: number };
+    return { signature: `dev-deposit-${j.index ?? "?"}` };
+  }
+}
