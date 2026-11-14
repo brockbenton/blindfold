@@ -1,6 +1,6 @@
 // Agent reserve check (00 section 7.6). Fails closed: never throws, any problem gives ok:false.
 import type { PublicKey } from "@solana/web3.js";
-import { SOLANA_COMMITMENT } from "./constants.js";
+import { BASE_UNITS_PER_CENT, SOLANA_COMMITMENT } from "./constants.js";
 import { baseUnitsToCents } from "./units.js";
 import { configPda, decodeConfig, vaultAta } from "./vault.js";
 import type { ReservesResponse } from "./types.js";
@@ -40,7 +40,10 @@ export async function checkReserves(opts: {
     if (!config.vaultToken.equals(vault)) return fail("config vault_token is not the expected vault account");
 
     const bal = await connection.getTokenAccountBalance(vault, SOLANA_COMMITMENT);
-    vaultCents = baseUnitsToCents(BigInt(bal.value.amount));
+    const balance = BigInt(bal.value.amount);
+    if (balance < 0n) return fail("vault balance must not be negative");
+    // Direct transfers can include dust; count only whole cents toward liabilities.
+    vaultCents = baseUnitsToCents(balance - balance % BASE_UNITS_PER_CENT);
 
     const f = opts.fetch ?? fetch;
     const res = await f(`${opts.mintUrl.replace(/\/+$/, "")}/v1/blindfold/reserves`);

@@ -74,7 +74,20 @@ describe("checkReserves", () => {
     expect((await run(conn({ data, amount: "9000000" }), reserves("lots"))).ok).toBe(false);
     expect((await run(conn({ data, amount: "9000000" }), reserves(-1))).ok).toBe(false);
   });
-  it("fails when the vault balance is not whole cents", async () => {
-    expect((await run(conn({ data: await configData(), amount: "10001" }), reserves(0))).ok).toBe(false);
+  it.each([
+    ["10001", 1, 1, true],
+    ["9999", 0, 0, true],
+    ["9999", 1, 0, false],
+    ["5999999", 600, 599, false],
+    ["6000001", 600, 600, true],
+  ])("counts only whole cents in vault balance %s", async (amount, outstanding, vaultCents, ok) => {
+    expect(await run(conn({ data: await configData(), amount }), reserves(outstanding)))
+      .toMatchObject({ ok, vaultCents, outstandingCents: outstanding });
+  });
+  it("fails closed on invalid vault balances", async () => {
+    const data = await configData();
+    for (const amount of ["-1", "invalid", (BigInt(Number.MAX_SAFE_INTEGER) * 10_000n + 10_000n).toString()]) {
+      expect((await run(conn({ data, amount }), reserves(0))).ok).toBe(false);
+    }
   });
 });
