@@ -138,6 +138,6 @@ async function submit(d: SettlementDeps, row: Row): Promise<AdminSettleResponse>
     if (st === "confirmed") return markConfirmed(d, row, sent.tx);
     if (st === "failed") return markFailed(d, row, "transaction failed onchain");
     if (Date.now() >= deadline) throw new MintError(70011, `settlement batch ${row.batch_id} submitted, awaiting confirmation`, 409);
-    await sleep(400);
+    await sleep(Math.max(1, Math.min(400, deadline - Date.now())));
   }
 }
