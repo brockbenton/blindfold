@@ -5,3 +5,7 @@ target/
 .anchor/
 dist/
 coverage/
+.keys/
+test-ledger/
+**/*-keypair.json
+.surfpool
