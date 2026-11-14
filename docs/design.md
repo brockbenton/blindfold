@@ -43,7 +43,7 @@ The random `r` means the mint can't connect what it signed to what it later rede
 | Rule | Enforcement |
 |---|---|
 | **Budget** | The agent only has the tokens it was given |
-| **Allowlist** *(add-on 2)* | Tokens are locked **1-of-N** to the allowlisted providers' keys (NUT-11). Nobody else can redeem them. Small leak: each provider sees the whole allowlist |
+| **Allowlist** *(add-on 2)* | Tokens are locked **1-of-N** to the allowlisted providers' keys (NUT-11). Nobody else can redeem them. The list is global (all registered providers), so every owner's tokens look the same to the mint |
 | **Approval: two pockets** *(add-on 4)* | The *allowance* (e.g. $1) is spendable by the agent alone. The *reserve* is locked 2-of-2 (agent + owner) and must be swapped at the mint with the owner's CLI signature before spending. Unilateral spending is capped at the allowance, so many small notes can't bypass approval |
 | **Expiry** *(deferred)* | Time lock + owner refund key returns unspent tokens |
 | **Per-call price cap** | In the wallet SDK (code, not tokens); the budget still bounds the total |
@@ -94,7 +94,7 @@ The demo shows what a **public chain observer** sees. ([Cashu privacy FAQ](https
 
 | Component | Does | Tech | Phase |
 |---|---|---|---|
-| **Vault** | Holds USDC; `deposit`, `register_provider`, `settle_batch` (mint authority) | Anchor, Solana devnet, SPL USDC | MVP |
+| **Vault** | Holds USDC; `deposit`, `register_provider`, `settle_batch` (mint authority) | Anchor, Solana devnet, SPL USDC (classic Token program) | MVP |
 | **Mint** | Cashu API; signing; redemption with lock checks and spent set; balances | TypeScript, Postgres, `cashu-ts` | MVP |
 | **Provider middleware + mock API** | NUT-24 402 handshake; redeem, then serve | Express/Hono | MVP (1 API; 2–3 for the demo) |
 | **Wallet SDK** | Holds tokens; picks tokens matching the lock; handles 402s | TypeScript, `cashu-ts` | MVP |

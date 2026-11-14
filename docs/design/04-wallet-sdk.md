@@ -63,7 +63,7 @@ export class AgentWallet {
 export interface WalletOptions {
   tokenFile?: string;                   // default env TOKEN_FILE
   maxPerCallCents?: number;             // default env MAX_PER_CALL_CENTS (10)
-  allowlist?: string[];                 // provider pubkeys hex33. Default: env WALLET_ALLOWLIST (comma list, 00 §9), else the union of the proofs' signer sets
+  allowlist?: string[];                 // provider pubkeys hex33. Default: env WALLET_ALLOWLIST (comma list, 00 §9), else the union of the proofs' signer sets (the global allowlist, so by default every active provider at funding time)
   fetch?: typeof fetch;                 // injectable, default globalThis.fetch
   mint?: MintLike;                      // injectable, default new Mint(file.mint)
   now?: () => number;
@@ -106,8 +106,7 @@ export class SolanaDepositor implements Depositor { constructor(o: { rpcUrl: str
 
 export interface FundOptions {
   mintUrl: string; cents: number;                // 1..MAX_DEPOSIT_CENTS
-  providerIds: number[];                         // indexes from GET /v1/blindfold/providers
-  prices?: Record<number, number>;               // provider_id -> price in cents. Default: `price_cents` from the providers list, else PRICE_CENTS
+  prices?: Record<number, number>;               // provider_id -> price in cents, overrides the denomination plan only. Default: `price_cents` of every active provider from the providers list, else PRICE_CENTS. The lock never depends on it
   tokenFile: string; depositor: Depositor;
   stateDir?: string;                             // default ~/.blindfold/owner; holds FundState
   pollMs?: number; timeoutMs?: number;           // default DEPOSIT_POLL_MS, 10 min
@@ -196,7 +195,7 @@ Strategy, `planDenominations(cents, prices)`:
 
 | Step | Rule |
 |---|---|
-| 1 | `prices` = distinct expected prices: `--prices` if given, else `price_cents` of the chosen providers from `GET /v1/blindfold/providers`, else (null) `PRICE_CENTS`. If empty use `[5]` |
+| 1 | `prices` = distinct expected prices: `--prices` if given, else `price_cents` of all active providers from `GET /v1/blindfold/providers`, else (null) `PRICE_CENTS`. If empty use `[5]` |
 | 2 | Budget share per price = `floor(cents * 0.8 / prices.length)`. 80% of funds is reserved for exact bundles |
 | 3 | For each price `P`, `n = floor(share / P)` bundles, each bundle is the binary decomposition of `P` (5 = 4+1, 10 = 8+2, 3 = 2+1). Emit `n` copies. Max `popcount(P)` coins per call, at most 4 for `P <= 10` |
 | 4 | Remainder `R = cents - spent_on_bundles` split as the **unary-pair ladder**: `1, 1, 2, 2, 4, 4, ...` while it fits, then binary for what is left. This gives every value up to about `R` as a subset sum in at least two ways, so odd prices not in `prices` (a repriced API) are still payable a few times |
@@ -210,7 +209,7 @@ Each step persists `FundState` (`stateDir/<quoteKeyPubkey>.json`, mode `0600`, a
 
 | # | Step | Calls |
 |---|---|---|
-| 0 | Fetch providers | `GET {mint}/v1/blindfold/providers` (00 §5.5). Pick `provider_id in providerIds`, require `active`. Read `price_cents` for the denomination plan. `allowlist = pubkeys sorted ascending by hex` (00 §3.3). Refuse empty |
+| 0 | Fetch providers | `GET {mint}/v1/blindfold/providers` (00 §5.5). Keep every `active` entry (no per-owner choice). Read their `price_cents` for the denomination plan. `allowlist = pubkeys of all active providers, sorted ascending by hex` (00 §3.3), so every owner's tokens share one lock shape (the mint can't group redemptions by owner). Refuse empty |
 | 1 | Quote key | `sk = createRandomSecretKey()`; `pk = bytesToHex(getPubKeyFromPrivKey(sk))`. Persist `sk` **before** the quote request |
 | 2 | Quote | `mint.createMintQuote('solana-usdc', { unit: 'usd', amount: cents, pubkey: pk })` (00 §5.3). Check `quote.pubkey === pk`, `amount === cents`. Persist `quote`, `request` |
 | 3 | Deposit | `depositRef = hexToBytes(quote.request)` (32 bytes). `depositor.deposit({ amountCents: cents, depositRef })`. `SolanaDepositor`: `amount = centsToBaseUnits(cents)`; build the `deposit` ix with protocol `vault` helpers (`depositPda(config.deposit_count)` read from `Config` just before sending, `depositor_token` = owner USDC ATA, accounts in 00 §4.3 order); send and confirm at `confirmed`. Collision: if another deposit took the index, the tx fails on the seed; rebuild with the new `deposit_count` and resend, up to 3 times. Persist the signature |
@@ -230,7 +229,7 @@ Single process. A promise-chain mutex (`class Mutex { run<T>(fn: () => Promise<T
 
 | Command | Behavior |
 |---|---|
-| `owner fund --cents 100 --providers 0[,1] [--prices 5,3] [--token-file F]` | Calls `ownerFund` with `SolanaDepositor` from `OWNER_KEYPAIR`. Prints quote id, deposit tx, final balance |
+| `owner fund --cents 100 [--prices 5,3] [--token-file F]` | Calls `ownerFund` with `SolanaDepositor` from `OWNER_KEYPAIR`; always locks to all active providers (agent-side restriction is `WALLET_ALLOWLIST`, a code policy, not the lock). Prints quote id, deposit tx, final balance |
 | `owner balance [--token-file F]` | `ownerBalance`: spendable, pending, count by denomination |
 | `owner providers` | Lists `GET /v1/blindfold/providers` |
 | `owner resume <quote-pubkey>` | Resumes a `FundState` |

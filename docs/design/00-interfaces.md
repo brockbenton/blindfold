@@ -72,7 +72,7 @@ Exactly as [NUT-00](https://cashubtc.github.io/nuts/00). `Proof = {amount, id, s
 
 ### 3.3 Blindfold lock (P2PK, NUT-10/11)
 
-Every token the owner issues is locked with a [NUT-11](https://cashubtc.github.io/nuts/11) P2PK secret, **1-of-N** over the allowlisted providers' Cashu keys:
+Every token the owner issues is locked with a [NUT-11](https://cashubtc.github.io/nuts/11) P2PK secret, **1-of-N** over the **global allowlist**: the Cashu keys of every active registered provider, as returned by `GET /v1/blindfold/providers` (§5.5):
 
 ```json
 ["P2PK", {
@@ -92,7 +92,8 @@ Every token the owner issues is locked with a [NUT-11](https://cashubtc.github.i
 | `n_sigs` | Always `1` (omit `pubkeys` and `n_sigs` when N = 1) |
 | `sigflag` | Always `SIG_INPUTS`. The mint rejects `SIG_ALL` in the MVP |
 | `locktime`, `refund` | Not used in the MVP. Reserved for the expiry add-on |
-| Allowlist order | Sorted ascending by hex, so all of one owner's tokens share one secret shape |
+| Allowlist | **One global list for all owners** (all active providers), sorted ascending by hex. Every owner's tokens then share one lock shape, so the mint can't group redemptions by owner. An owner who wants to pay fewer providers restricts the agent in code (`WALLET_ALLOWLIST`, §9), not in the lock |
+| Provider set changes | New tokens use the current list. Old tokens stay valid for any key in their own lock that is still active |
 
 With `cashu-ts`: `OutputData.createP2PKData({ pubkey: allowlist, requiredSignatures: 1, sigFlag: 'SIG_INPUTS' }, amount, keyset)`.
 
@@ -114,7 +115,7 @@ The mint cannot see the lock at issuance (outputs are blinded). Locking is the o
 
 ## 4. Vault program (Anchor, Solana devnet)
 
-Anchor 1.x. Token CPIs use `anchor_spl::token_interface` and `transfer_checked`.
+Anchor 1.x. **USDC only, classic SPL Token program** (`anchor_spl::token`, `transfer_checked`). `initialize` requires `usdc_mint` to be owned by the SPL Token program, so Token-2022 mints (and their fee or hook extensions) are rejected.
 
 ### 4.1 Accounts
 
@@ -140,6 +141,7 @@ pub struct Payout { pub provider_id: u32, pub amount: u64 } // amount in base un
 | `initialize` | `mint_authority: Pubkey, max_deposit: u64` | admin | `admin` (signer, mut), `config` (init), `usdc_mint`, `vault_token` (init ATA), `token_program`, `associated_token_program`, `system_program` | Creates `Config` and the vault ATA |
 | `deposit` | `amount: u64, deposit_ref: [u8; 32]` | depositor | `depositor` (signer, mut), `config` (mut), `deposit_record` (init, seed = current `deposit_count`), `depositor_token` (mut), `vault_token` (mut), `usdc_mint`, `token_program`, `system_program` | `amount > 0`, `amount % 10_000 == 0`, `amount <= max_deposit`. Transfers USDC to the vault, writes `DepositRecord`, increments `deposit_count`, emits `DepositMade` |
 | `register_provider` | `cashu_pubkey: [u8; 33], payout_token: Pubkey` | admin | `admin` (signer, mut), `config` (mut), `provider_record` (init, seed = current `provider_count`), `payout_token_account` (must equal `payout_token`, mint = `config.usdc_mint`), `system_program` | `cashu_pubkey[0]` is `0x02` or `0x03`. Writes `ProviderRecord` with `active = true`, increments `provider_count`, emits `ProviderRegistered` |
+| `deactivate_provider` | `provider_id: u32` | admin | `admin` (signer), `config`, `provider_record` (mut, PDA for `provider_id`) | Sets `active = false`, emits `ProviderDeactivated`. One way: no reactivation in the MVP (register a new record instead) |
 | `settle_batch` | `batch_id: u64, payouts: Vec<Payout>` | mint authority | `mint_authority` (signer), `config` (mut), `vault_token` (mut), `usdc_mint`, `token_program`; then `remaining_accounts` as pairs `[provider_record, payout_token (mut)]`, one pair per payout, same order | `vault_token == config.vault_token`; `batch_id == last_batch_id + 1`; `1 <= payouts.len() <= 8`; no `provider_id` twice; each `amount > 0` and `amount % 10_000 == 0`; each `provider_record` is the PDA for `provider_id`, is active, and its `payout_token` equals the passed account. Transfers each amount, sets `last_batch_id = batch_id`, emits `BatchSettled` |
 
 The `batch_id` check makes `settle_batch` idempotent: a retried batch fails with `BadBatchId` instead of paying twice.
@@ -156,13 +158,14 @@ Emitted with `emit!`. The MVP mint does **not** rely on events; they exist for t
 |---|---|
 | `DepositMade` | `index: u64, depositor: Pubkey, amount: u64, deposit_ref: [u8; 32]` |
 | `ProviderRegistered` | `provider_id: u32, cashu_pubkey: [u8; 33], payout_token: Pubkey` |
+| `ProviderDeactivated` | `provider_id: u32` |
 | `BatchSettled` | `batch_id: u64, total: u64, count: u8` |
 
 ### 4.5 Errors
 
 `InvalidAmount`, `AmountNotWholeCents`, `DepositTooLarge`, `InvalidPubkey`, `WrongMint`, `WrongVaultAccount`, `Unauthorized`, `BadBatchId`, `TooManyPayouts`, `EmptyBatch`, `DuplicateProvider`, `ProviderMismatch`, `ProviderInactive`, `PayoutAccountMismatch`, `MathOverflow`.
 
-`ProviderInactive` is unreachable in the MVP (no deactivate instruction yet); keep the check for later.
+`settle_batch` returns `ProviderInactive` for a deactivated provider. The mint stops crediting a deactivated provider (§5.6 check 6) and pays out its remaining balance before the admin deactivates it, or forfeits it (MVP: admin's call).
 
 ## 5. Mint HTTP API
 
@@ -246,16 +249,16 @@ Errors: `11013` unit not `usd`; `11006` amount outside `1..5000`; `20009` missin
 `GET /v1/blindfold/providers` (public) → `200`:
 
 ```json
-[ { "provider_id": 0, "pubkey": "<hex33>", "name": "mock-api", "url": "http://localhost:4000", "price_cents": 5, "active": true } ]
+[ { "provider_id": 0, "pubkey": "<hex33>", "name": "mock-api", "url": "http://localhost:4000", "price_cents": 5, "topics": ["sol", "btc", "eth"], "active": true } ]
 ```
 
-`provider_id`, `pubkey` and `active` come from `ProviderRecord` accounts. `name`, `url` and `price_cents` (advisory list price, used by the owner to plan denominations) come from `config/providers.json`:
+`provider_id`, `pubkey` and `active` come from `ProviderRecord` accounts. `name`, `url`, `price_cents` (advisory list price, used by the owner to plan denominations) and `topics` (what the provider sells, used by the agent to choose) come from `config/providers.json`:
 
 ```json
-[ { "provider_id": 0, "name": "mock-api", "url": "http://localhost:4000", "price_cents": 5 } ]
+[ { "provider_id": 0, "name": "mock-api", "url": "http://localhost:4000", "price_cents": 5, "topics": ["sol", "btc", "eth"] } ]
 ```
 
-A registered provider missing from the file is listed with `name: null, url: null, price_cents: null`. Used by the owner CLI to build the allowlist and by the agent to find APIs.
+A registered provider missing from the file is listed with `name: null, url: null, price_cents: null, topics: []`. Inactive providers are listed with `active: false`. Used by the owner CLI to build the global allowlist (active entries only) and by the agent to find APIs.
 
 ### 5.6 Redeem [BF]
 

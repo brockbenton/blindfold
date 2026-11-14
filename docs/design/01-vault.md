@@ -10,8 +10,8 @@ The Anchor program that custodies deposited USDC and pays registered providers i
 |---|---|
 | Implements accounts `Config`, `DepositRecord`, `ProviderRecord`, vault ATA | 00 §4.1 |
 | Implements `Payout` | 00 §4.2 |
-| Implements instructions `initialize`, `deposit`, `register_provider`, `settle_batch` | 00 §4.3 |
-| Emits `DepositMade`, `ProviderRegistered`, `BatchSettled` | 00 §4.4 |
+| Implements instructions `initialize`, `deposit`, `register_provider`, `deactivate_provider`, `settle_batch` | 00 §4.3 |
+| Emits `DepositMade`, `ProviderRegistered`, `ProviderDeactivated`, `BatchSettled` | 00 §4.4 |
 | Returns the error enum | 00 §4.5 |
 | Constants `BASE_UNITS_PER_CENT`, `MAX_DEPOSIT_CENTS`, `MAX_PAYOUTS_PER_BATCH` | 00 §2 |
 | Calls | Token program only (`transfer_checked`, ATA creation) |
@@ -19,8 +19,8 @@ The Anchor program that custodies deposited USDC and pays registered providers i
 
 ## 3. MVP scope
 
-- All four instructions, three events, all 15 errors, exactly as in 00 §4.
-- Works with classic SPL Token and Token-2022 mints (`token_interface`, `transfer_checked`).
+- All five instructions, four events, all 15 errors, exactly as in 00 §4.
+- USDC only, classic SPL Token program (`anchor_spl::token`, `transfer_checked`). `initialize` rejects a `usdc_mint` not owned by the SPL Token program, so Token-2022 mints are rejected.
 - Tests on a local validator or LiteSVM with a 6-decimal fake USDC mint, then a devnet deployment with Circle devnet USDC.
 - The Anchor IDL is the deliverable consumed by `packages/protocol`.
 
@@ -31,10 +31,10 @@ Later add-ons, not specified here:
 - Issuance log (onchain blinded values) and the reconciliation view
 - Refunds of unmatched or unminted deposits
 - Hidden provider revenue and fresh payout addresses (this would remove the "only registered providers" guarantee in §5.5)
-- Provider deactivation (`active` is written `true` and never changed in the MVP)
+- Provider reactivation (`deactivate_provider` is one way; register a new record instead)
 - Admin and mint authority rotation
 - Per-window outflow cap
-- Token-2022 extensions beyond a plain mint (transfer fees, hooks, confidential transfers): not supported, see Open questions
+- Token-2022 and its extensions (transfer fees, hooks, confidential transfers): not supported, `initialize` rejects any mint not owned by the SPL Token program
 
 ## 5. Design
 
@@ -64,7 +64,7 @@ The vault ATA is `get_associated_token_address_with_program_id(config, usdc_mint
 let signer_seeds: &[&[&[u8]]] = &[&[b"config", &[config.bump]]];
 // CpiContext::new_with_signer(token_program, TransferChecked { from: vault_token,
 //   mint: usdc_mint, to: payout_token, authority: config }, signer_seeds)
-// token_interface::transfer_checked(ctx, amount, usdc_mint.decimals)
+// token::transfer_checked(ctx, amount, usdc_mint.decimals)
 ```
 
 Read the bump from the stored `Config.bump`, not by re-deriving it. In `settle_batch`, `config` is a `Account<Config>` and must be `mut`; take its `AccountInfo` for the CPI authority before mutating fields, or copy `bump` and `last_batch_id` first to avoid borrow conflicts.
@@ -74,7 +74,7 @@ Read the bump from the stored `Config.bump`, not by re-deriving it. In `settle_b
 **`initialize(mint_authority, max_deposit)`**
 1. `config` is `init` with seeds `[b"config"]`, payer `admin`.
 2. `vault_token` is `init` with `associated_token::mint = usdc_mint`, `associated_token::authority = config`, `associated_token::token_program = token_program`.
-3. `usdc_mint` is `InterfaceAccount<Mint>`, `token_program` is `Interface<TokenInterface>`.
+3. `usdc_mint` is `Account<Mint>` and `token_program` is `Program<Token>`. Constraint on `usdc_mint`: `*usdc_mint.to_account_info().owner == token::ID` (`WrongMint` otherwise), so a Token-2022 mint is rejected even if the account types are loosened later.
 4. Set `admin = admin.key()`, `mint_authority`, `usdc_mint`, `vault_token = vault_token.key()`, `max_deposit`, counts to 0, `bump = ctx.bumps.config`.
 5. `max_deposit` must be greater than 0 (else `InvalidAmount`). The deploy script passes `MAX_DEPOSIT_CENTS * 10_000 = 50_000_000`.
 
@@ -88,9 +88,14 @@ Read the bump from the stored `Config.bump`, not by re-deriving it. In `settle_b
 **`register_provider(cashu_pubkey, payout_token)`**
 1. `admin` must equal `config.admin` (`has_one = admin @ Unauthorized`).
 2. `cashu_pubkey[0]` is 2 or 3 else `InvalidPubkey`. This is a prefix check only, not a curve check (see Open questions).
-3. `payout_token_account` is `InterfaceAccount<TokenAccount>`, `key() == payout_token`, `mint == config.usdc_mint` else `WrongMint` (`usdc_mint` is not in this instruction's account list, so compare against `config`).
+3. `payout_token_account` is `Account<TokenAccount>`, `key() == payout_token`, `mint == config.usdc_mint` else `WrongMint` (`usdc_mint` is not in this instruction's account list, so compare against `config`).
 4. Write record with `active = true`; `provider_count` checked add; emit `ProviderRegistered`.
 5. No uniqueness check on `cashu_pubkey` or `payout_token` in the MVP (admin-only; the mint should reject duplicate keys when loading providers).
+
+**`deactivate_provider(provider_id)`**
+1. `admin` must equal `config.admin` (`has_one = admin @ Unauthorized`).
+2. `provider_record` is `mut` with seeds `[b"provider", provider_id.to_le_bytes()]`; a wrong or missing record fails the seed check.
+3. Set `active = false` and emit `ProviderDeactivated { provider_id }`. Idempotent: deactivating an already inactive provider succeeds as a no-op and emits no event. No reactivation.
 
 **`settle_batch(batch_id, payouts)`**
 1. `mint_authority.key() == config.mint_authority` else `Unauthorized`. `usdc_mint.key() == config.usdc_mint` else `WrongMint`; `vault_token.key() == config.vault_token` else `WrongVaultAccount`.
@@ -102,9 +107,9 @@ Read the bump from the stored `Config.bump`, not by re-deriving it. In `settle_b
    - `provider_id` not seen earlier in this batch else `DuplicateProvider`
    - `provider_record.owner == program_id`, then deserialize as `ProviderRecord` (`Account::try_from`); a failure maps to `ProviderMismatch`
    - Recompute `find_program_address([b"provider", provider_id.to_le_bytes()], program_id)` and require it equals `provider_record.key()` else `ProviderMismatch`
-   - `provider_record.active` else `ProviderInactive` (unreachable in the MVP, there is no deactivate instruction; keep the check)
+   - `provider_record.active` else `ProviderInactive`
    - `payout_token.key() == provider_record.payout_token` else `PayoutAccountMismatch`
-   - `payout_token` is deserialized as `InterfaceAccount<TokenAccount>` with `mint == usdc_mint` else `WrongMint`, and is writable
+   - `payout_token` is deserialized as `Account<TokenAccount>` with `mint == usdc_mint` else `WrongMint`, and is writable
    - `total = total.checked_add(amount).ok_or(MathOverflow)?`
    - `transfer_checked(vault_token -> payout_token, amount)` signed by `Config`
 6. Set `last_batch_id = batch_id`, emit `BatchSettled { batch_id, total, count: payouts.len() as u8 }`.
@@ -121,12 +126,12 @@ Do all validation in a first loop and all transfers in a second, so that no CPI 
 | `InvalidPubkey` | `cashu_pubkey[0]` not 2 or 3 |
 | `WrongMint` | mint account or any token account's mint differs from `config.usdc_mint` |
 | `WrongVaultAccount` | `vault_token` is not `config.vault_token` in `settle_batch` |
-| `Unauthorized` | signer is not `admin` (register) or `mint_authority` (settle) |
+| `Unauthorized` | signer is not `admin` (register, deactivate) or `mint_authority` (settle) |
 | `BadBatchId` | `batch_id != last_batch_id + 1` |
 | `TooManyPayouts` / `EmptyBatch` | more than 8 / 0 payouts |
 | `DuplicateProvider` | same `provider_id` twice in one batch |
 | `ProviderMismatch` | wrong remaining-account count, wrong owner, wrong PDA, undecodable record |
-| `ProviderInactive` | `active == false` (unreachable in the MVP) |
+| `ProviderInactive` | `active == false` in `settle_batch` |
 | `PayoutAccountMismatch` | passed payout account differs from the registered one |
 | `MathOverflow` | any `checked_*` failure |
 
@@ -138,7 +143,7 @@ Not in the enum, left to the token program: insufficient vault balance in `settl
 |---|---|
 | Fake or foreign vault token account | `vault_token` constrained to `address = config.vault_token` in `deposit` and `settle_batch` |
 | Wrong mint | `usdc_mint` constrained to `config.usdc_mint`; `transfer_checked` re-verifies mint and decimals; depositor token account `mint == config.usdc_mint` |
-| Wrong token program | `Interface<TokenInterface>`; `transfer_checked` CPI fails if the program does not own the accounts |
+| Wrong token program | `Program<Token>` (classic SPL Token only); `initialize` rejects a mint not owned by it; `transfer_checked` CPI fails if the program does not own the accounts |
 | Fake `Config` | Anchor `Account<Config>` checks owner and discriminator; seeds fix the address |
 | Fake `ProviderRecord` in `remaining_accounts` | Owner check, discriminator (via `try_from`) and PDA recompute from `provider_id`. Without these an attacker-built account could redirect funds |
 | Redirected payout | Payout token account must equal the address stored at registration by the admin |
@@ -160,11 +165,11 @@ Two deposits built against the same `deposit_count` collide on the `DepositRecor
 Anchor.toml                         (repo root; [programs.localnet|devnet] vault = <id>, [provider] cluster, wallet)
 Cargo.toml                          (workspace, members = ["programs/*"])
 programs/vault/Cargo.toml           (anchor-lang 1.2.2; anchor-spl 1.2.2 features token, associated_token; idl-build)
-programs/vault/src/lib.rs           declare_id!, #[program] with four thin handlers
+programs/vault/src/lib.rs           declare_id!, #[program] with five thin handlers
 programs/vault/src/state.rs         Config, DepositRecord, ProviderRecord, Payout, constants
 programs/vault/src/errors.rs        VaultError (the 15 variants, in the 00 §4.5 order)
-programs/vault/src/events.rs        DepositMade, ProviderRegistered, BatchSettled
-programs/vault/src/instructions/    mod.rs, initialize.rs, deposit.rs, register_provider.rs, settle_batch.rs
+programs/vault/src/events.rs        DepositMade, ProviderRegistered, ProviderDeactivated, BatchSettled
+programs/vault/src/instructions/    mod.rs, initialize.rs, deposit.rs, register_provider.rs, deactivate_provider.rs, settle_batch.rs
 tests/vault.ts                      anchor tests (mocha, @anchor-lang/core), or tests/vault.rs if LiteSVM
 scripts/init-devnet.ts              initialize + register provider (see §7)
 ```
@@ -177,7 +182,7 @@ Nothing else needs to exist. The vault is testable alone.
 
 | Need | How |
 |---|---|
-| Fake USDC | In test setup, create a 6-decimal mint with `@solana/spl-token` `createMint(..., 6)` (classic program). Mint test tokens to depositor ATAs. Run a second suite with a Token-2022 mint to cover `token_interface` |
+| Fake USDC | In test setup, create a 6-decimal mint with `@solana/spl-token` `createMint(..., 6)` (classic program). Mint test tokens to depositor ATAs. Add a Token-2022 mint only to test that `initialize` rejects it |
 | Runner | `anchor test` (starts `solana-test-validator`, deploys, runs `tests/*.ts`). Faster alternative: LiteSVM (`litesvm` crate or npm `litesvm`) loading `target/deploy/vault.so`. Pick one; the test list in §8 is the same |
 | Keypairs | Generate `admin`, `mintAuthority`, `depositor`, `attacker`, `provider` in the test; airdrop SOL on the local validator |
 | Provider payout | Create a token account for the fake mint owned by a throwaway keypair |
@@ -203,6 +208,9 @@ Local (all must pass, each failure asserts the exact error name from 00 §4.5):
 | `register_provider` non-admin | `Unauthorized` |
 | `register_provider` pubkey prefix `0x04` | `InvalidPubkey` |
 | `register_provider` payout account of another mint | `WrongMint` |
+| `deactivate_provider` happy path | `active == false`, `ProviderDeactivated` emitted, other providers untouched |
+| `deactivate_provider` non-admin | `Unauthorized` |
+| `deactivate_provider` twice | second call succeeds as a no-op, no second event |
 | `settle_batch` happy path | batch 1 with 2 payouts: balances move, `last_batch_id == 1`, `BatchSettled.total` correct |
 | `settle_batch` 8 payouts | succeeds and fits in one tx (fixes the `MAX_PAYOUTS_PER_BATCH` assumption) |
 | Replay batch 1 | `BadBatchId`; batch 3 after 1 also `BadBatchId`; balances unchanged |
@@ -216,10 +224,10 @@ Local (all must pass, each failure asserts the exact error name from 00 §4.5):
 | `provider_record` for a different id than the payout's | `ProviderMismatch` |
 | `provider_record` that is not a program account (for example a `DepositRecord` or system account) | `ProviderMismatch` |
 | Odd `remaining_accounts` count | `ProviderMismatch` |
-| Inactive provider (unreachable in the MVP: skip, or set via a test-only helper) | `ProviderInactive` |
+| Deactivate a provider, then settle a payout to it | `ProviderInactive`, balances unchanged |
 | Overflow: two payouts summing past `u64::MAX` | `MathOverflow` (runs before transfers; vault balance irrelevant) |
 | Vault short of funds | token program error, `last_batch_id` unchanged |
-| Token-2022 suite | deposit and settle_batch succeed |
+| `initialize` with a Token-2022 mint | `WrongMint` (rejected before any account is created) |
 
 Devnet:
 
@@ -231,5 +239,4 @@ Devnet:
 ## 9. Open questions
 
 1. **`cashu_pubkey` validity.** Only the 0x02/0x03 prefix is checked, so an off-curve key can be registered. Fix: scripts validate the point offchain before registering; onchain curve decompression is not worth the compute.
-2. **Token-2022 scope.** Plain Token-2022 mints work with `transfer_checked`. Mints with transfer fee or hook extensions would short-pay the vault; the vault would then owe more than it holds. Proposed: reject mints with extensions in `initialize`, or state that only the Circle mint and plain mints are supported.
-3. **Unverified Anchor 1.x details.** No toolchain was available when writing this doc. Verify against the Anchor 1.2.2 docs before coding: `anchor-spl` feature names (`token`, `associated_token`, `idl-build` wiring), `ctx.bumps` struct access, `#[derive(InitSpace)]` with arrays, that a PDA seed expression can use `config.deposit_count` from an earlier account in the struct, and `Account::try_from` on `remaining_accounts`. If a seed expression fails, pass `index` as an instruction arg, check it equals `deposit_count`, and keep the same PDA.
+2. **Unverified Anchor 1.x details.** No toolchain was available when writing this doc. Verify against the Anchor 1.2.2 docs before coding: `anchor-spl` feature names (`token`, `associated_token`, `idl-build` wiring), `ctx.bumps` struct access, `#[derive(InitSpace)]` with arrays, that a PDA seed expression can use `config.deposit_count` from an earlier account in the struct, and `Account::try_from` on `remaining_accounts`. If a seed expression fails, pass `index` as an instruction arg, check it equals `deposit_count`, and keep the same PDA.

@@ -1,35 +1,27 @@
 # Blindfold: Plan
 
-When we build it. Scope is in [`mvp.md`](mvp.md), design in [`design.md`](design.md).
+How we build it. Scope is in [`mvp.md`](mvp.md), design in [`design.md`](design.md), build briefs in [`design/`](design/00-interfaces.md).
 
-## Week plan
+## Dates
 
-| Day | Work |
+| When | What |
 |---|---|
-| **Thu Nov 12** (kickoff night) | Spikes: BDHKE round trip and a NUT-11 locked token with `cashu-ts`; a devnet USDC deposit into an Anchor program; a standard x402 call on Solana devnet; a QuickNode Stream firing a webhook |
-| **Fri** | Vault (`deposit`, `register_provider`, `settle_batch`) + mint (sign, redeem, spent set) |
-| **Sat** | Mock paid API + wallet SDK; first paid call |
-| **Sun** | Replay rejection, `settle_batch` payout, simple agent. **MVP done** |
-| **Mon** | Add-on 1: baseline x402 path, competitor bot, split screen |
-| **Tue** | Add-on 2: allowlist locks + injection beat. Add-on 3: QuickNode Stream |
-| **Wed** | Add-ons 4–7 as time allows; README |
-| **Thu Nov 19** | Demo video + recorded backup |
-| **Fri Nov 20** | Submit before 12:00 PM CST |
+| Sun Nov 15 to Wed Nov 18 | Build |
+| Thu Nov 19 | Demo video + recorded backup |
+| Fri Nov 20, 12:00 PM CST | Submit |
+| Sat Nov 21 | Closing ceremony, in person |
 
-**Sat Nov 21:** must attend the closing ceremony in person.
+## Build order
 
-## Repo layout
+1. **Together:** `packages/protocol` from [`design/00-interfaces.md`](design/00-interfaces.md) §8, plus toolchain setup (Solana CLI, Anchor 1.2.2, Postgres).
+2. **In parallel**, each against the contract and its own stubs:
+   - Vault ([`01-vault.md`](design/01-vault.md))
+   - Mint ([`02-mint.md`](design/02-mint.md))
+   - Mock API, wallet SDK, agent ([`03`](design/03-mock-api.md), [`04`](design/04-wallet-sdk.md), [`05`](design/05-agent.md))
+3. **Integrate** on devnet until the acceptance script in 00 §10 passes. That is MVP done.
+4. **Add-ons** in the order in [`mvp.md`](mvp.md#add-ons).
 
-```
-programs/vault/        Anchor program
-services/mint/         mint (+ Temporal workers, add-on 5)
-packages/middleware/   provider NUT-24 middleware
-packages/wallet/       agent wallet SDK
-agents/research/       agent
-agents/competitor/     demo adversary (add-on 1)
-apps/providers/        mock paid APIs
-apps/view/             split screen (add-on 1)
-```
+Repo layout: 00 §9.
 
 ## Risks
 
@@ -43,6 +35,5 @@ apps/view/             split screen (add-on 1)
 
 ## Open questions
 
-- [ ] Which NUTs does `cashu-ts` support (10/11/12/24)?
-- [ ] Facilitator for the baseline x402 path on Solana devnet? (Baseline only; Blindfold itself uses no third-party facilitator.)
+- [ ] Facilitator for the baseline x402 path on Solana devnet (add-on 1)?
 - [ ] Add-on 7: hide provider revenue at the cost of moving the provider registry offchain?
