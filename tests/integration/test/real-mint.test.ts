@@ -229,4 +229,37 @@ describe.skipIf(!DATABASE_URL)("real mint + mock API + owner + agent", () => {
     // The agent still passes against the true vault balance.
     expect((await agent(["--topic", "sol"])).code).toBe(0);
   });
+
+  it("seams: uppercase provider key onchain is served lowercase; trailing-slash mint URLs work end to end", async () => {
+    const other = makeProviderKey();
+    const reg = await mintReq("/dev/provider", { cashu_pubkey: other.pubkey.toUpperCase() }, true);
+    expect(reg.status).toBe(200);
+    const list = (await mintReq("/v1/blindfold/providers")).json as { pubkey: string }[];
+    expect(list.map((p) => p.pubkey)).toContain(other.pubkey);
+    expect(list.every((p) => p.pubkey === p.pubkey.toLowerCase())).toBe(true);
+
+    const slash = `${mintUrl}/`;
+    const file2 = join(dir, "tokens2.json");
+    const depositor: Depositor = {
+      async deposit({ amountCents, depositRef }) {
+        const r = await mintReq("/dev/deposit", { deposit_ref: Buffer.from(depositRef).toString("hex"), amount_cents: amountCents }, true);
+        return { signature: `dev-${r.json.index}` };
+      },
+    };
+    await ownerFund({ mintUrl: slash, cents: 20, tokenFile: file2, depositor, stateDir: join(dir, "state2"), pollMs: 20 });
+    const api2 = serve({
+      fetch: createApp({ mintUrl: slash, providerSecretKey: providerKey.sk, priceCents: PRICE, redeem: new HttpRedeemClient(slash), log: () => undefined }).fetch,
+      port: 0, hostname: "127.0.0.1",
+    });
+    stops.push(() => new Promise<void>((r) => { (api2 as any).closeAllConnections?.(); api2.close(() => r()); }));
+    await new Promise((r) => setTimeout(r, 30));
+    const wallet = await AgentWallet.open({ tokenFile: file2, maxPerCallCents: 10, usdcMint: USDC_DEVNET_MINT });
+    try {
+      const res = await wallet.payFetch(`http://127.0.0.1:${(api2.address() as { port: number }).port}/v1/data/eth`);
+      expect(res.status).toBe(200);
+    } finally {
+      wallet.close();
+    }
+    expect(wallet.balance()).toBe(20 - PRICE);
+  });
 });
