@@ -33,6 +33,9 @@ importers:
         specifier: 2.31.0
         version: 2.31.0
     devDependencies:
+      '@anchor-lang/core':
+        specifier: 1.2.2
+        version: 1.2.2(bufferutil@4.2.0)(typescript@7.0.2)(utf-8-validate@6.0.6)
       '@blindfold/testkit':
         specifier: workspace:*
         version: link:../../packages/testkit
@@ -75,7 +78,7 @@ importers:
     dependencies:
       '@anchor-lang/core':
         specifier: 1.2.2
-        version: 1.2.2(bufferutil@4.2.0)(typescript@7.0.2)
+        version: 1.2.2(bufferutil@4.2.0)(typescript@7.0.2)(utf-8-validate@6.0.6)
       '@cashu/cashu-ts':
         specifier: 4.13.1
         version: 4.13.1
@@ -173,7 +176,7 @@ importers:
     devDependencies:
       '@anchor-lang/core':
         specifier: 1.2.2
-        version: 1.2.2(bufferutil@4.2.0)(typescript@7.0.2)
+        version: 1.2.2(bufferutil@4.2.0)(typescript@7.0.2)(utf-8-validate@6.0.6)
       '@blindfold/testkit':
         specifier: workspace:*
         version: link:../../packages/testkit
@@ -1455,7 +1458,7 @@ snapshots:
       bn.js: 5.2.5
       buffer-layout: 1.2.2
 
-  '@anchor-lang/core@1.2.2(bufferutil@4.2.0)(typescript@7.0.2)':
+  '@anchor-lang/core@1.2.2(bufferutil@4.2.0)(typescript@7.0.2)(utf-8-validate@6.0.6)':
     dependencies:
       '@anchor-lang/borsh': 1.2.2(@solana/web3.js@1.99.0(bufferutil@4.2.0)(typescript@7.0.2))
       '@anchor-lang/errors': 1.2.2
