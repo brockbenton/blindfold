@@ -1,14 +1,14 @@
-// HAND-WRITTEN placeholder IDL matching docs/design/00-interfaces.md section 4.
-// Replace with target/idl/vault.json once the vault is built (anchor build).
-// Discriminators are the first 8 bytes of sha256("global:<snake_name>"),
-// sha256("account:<Name>") and sha256("event:<Name>"); idl.test.ts checks them.
+// GENERATED from target/idl/vault.json (anchor build, Anchor 1.2.2). Do not edit by hand.
+// Regenerate: copy target/idl/vault.json here after `anchor build`.
 import type { Idl } from "@anchor-lang/core";
 
-/** Placeholder program id, used until VAULT_PROGRAM_ID is configured. */
-export const PLACEHOLDER_VAULT_PROGRAM_ID = "ANeUjqkEoGcxvmojs6dbryf7CpL4jigAfpysipsnfGR6";
+/** Default vault program id (devnet deployment). Overridable via VAULT_PROGRAM_ID. */
+export const VAULT_PROGRAM_ID = "3nVcHrZ9PC2kEPGYxvqedudeCfHXtZj1BRzwfxWqAanT";
+/** Kept for compatibility with earlier imports; now the real program id. */
+export const PLACEHOLDER_VAULT_PROGRAM_ID = VAULT_PROGRAM_ID;
 
 export const VAULT_IDL: Idl = {
-  "address": "ANeUjqkEoGcxvmojs6dbryf7CpL4jigAfpysipsnfGR6",
+  "address": "3nVcHrZ9PC2kEPGYxvqedudeCfHXtZj1BRzwfxWqAanT",
   "metadata": {
     "name": "vault",
     "version": "0.1.0",
@@ -17,55 +17,73 @@ export const VAULT_IDL: Idl = {
   },
   "instructions": [
     {
-      "name": "initialize",
+      "name": "deactivate_provider",
       "discriminator": [
-        175,
-        175,
+        221,
+        82,
+        162,
+        241,
         109,
-        31,
-        13,
-        152,
-        155,
-        237
+        251,
+        145,
+        153
       ],
       "accounts": [
         {
           "name": "admin",
-          "writable": true,
-          "signer": true
+          "signer": true,
+          "relations": [
+            "config"
+          ]
         },
         {
           "name": "config",
-          "writable": true
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
         },
         {
-          "name": "usdc_mint"
-        },
-        {
-          "name": "vault_token",
-          "writable": true
-        },
-        {
-          "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-        },
-        {
-          "name": "associated_token_program",
-          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
+          "name": "provider_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  118,
+                  105,
+                  100,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "provider_id"
+              }
+            ]
+          }
         }
       ],
       "args": [
         {
-          "name": "mint_authority",
-          "type": "pubkey"
-        },
-        {
-          "name": "max_deposit",
-          "type": "u64"
+          "name": "provider_id",
+          "type": "u32"
         }
       ]
     },
@@ -89,11 +107,47 @@ export const VAULT_IDL: Idl = {
         },
         {
           "name": "config",
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
         },
         {
           "name": "deposit_record",
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  112,
+                  111,
+                  115,
+                  105,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.deposit_count",
+                "account": "Config"
+              }
+            ]
+          }
         },
         {
           "name": "depositor_token",
@@ -132,6 +186,81 @@ export const VAULT_IDL: Idl = {
       ]
     },
     {
+      "name": "initialize",
+      "discriminator": [
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "usdc_mint",
+          "docs": [
+            "with `WrongMint` before any account is created). Its layout is validated by the",
+            "associated token account initialization below."
+          ]
+        },
+        {
+          "name": "vault_token",
+          "docs": [
+            "owner check, so a Token-2022 mint fails with `WrongMint` rather than inside the ATA program."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "mint_authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "max_deposit",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "register_provider",
       "discriminator": [
         254,
@@ -147,15 +276,55 @@ export const VAULT_IDL: Idl = {
         {
           "name": "admin",
           "writable": true,
-          "signer": true
+          "signer": true,
+          "relations": [
+            "config"
+          ]
         },
         {
           "name": "config",
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
         },
         {
           "name": "provider_record",
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  118,
+                  105,
+                  100,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.provider_count",
+                "account": "Config"
+              }
+            ]
+          }
         },
         {
           "name": "payout_token_account"
@@ -182,38 +351,6 @@ export const VAULT_IDL: Idl = {
       ]
     },
     {
-      "name": "deactivate_provider",
-      "discriminator": [
-        221,
-        82,
-        162,
-        241,
-        109,
-        251,
-        145,
-        153
-      ],
-      "accounts": [
-        {
-          "name": "admin",
-          "signer": true
-        },
-        {
-          "name": "config"
-        },
-        {
-          "name": "provider_record",
-          "writable": true
-        }
-      ],
-      "args": [
-        {
-          "name": "provider_id",
-          "type": "u32"
-        }
-      ]
-    },
-    {
       "name": "settle_batch",
       "discriminator": [
         22,
@@ -228,11 +365,29 @@ export const VAULT_IDL: Idl = {
       "accounts": [
         {
           "name": "mint_authority",
-          "signer": true
+          "signer": true,
+          "relations": [
+            "config"
+          ]
         },
         {
           "name": "config",
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
         },
         {
           "name": "vault_token",
@@ -307,6 +462,19 @@ export const VAULT_IDL: Idl = {
   ],
   "events": [
     {
+      "name": "BatchSettled",
+      "discriminator": [
+        238,
+        14,
+        187,
+        192,
+        127,
+        95,
+        104,
+        9
+      ]
+    },
+    {
       "name": "DepositMade",
       "discriminator": [
         210,
@@ -317,19 +485,6 @@ export const VAULT_IDL: Idl = {
         203,
         155,
         199
-      ]
-    },
-    {
-      "name": "ProviderRegistered",
-      "discriminator": [
-        38,
-        209,
-        137,
-        78,
-        185,
-        19,
-        147,
-        14
       ]
     },
     {
@@ -346,16 +501,16 @@ export const VAULT_IDL: Idl = {
       ]
     },
     {
-      "name": "BatchSettled",
+      "name": "ProviderRegistered",
       "discriminator": [
-        238,
-        14,
-        187,
-        192,
-        127,
-        95,
-        104,
-        9
+        38,
+        209,
+        137,
+        78,
+        185,
+        19,
+        147,
+        14
       ]
     }
   ],
@@ -373,22 +528,22 @@ export const VAULT_IDL: Idl = {
     {
       "code": 6002,
       "name": "DepositTooLarge",
-      "msg": "Deposit exceeds the maximum"
+      "msg": "Deposit exceeds the maximum deposit"
     },
     {
       "code": 6003,
       "name": "InvalidPubkey",
-      "msg": "Cashu pubkey must start with 0x02 or 0x03"
+      "msg": "Cashu public key must be a compressed secp256k1 point (prefix 0x02 or 0x03)"
     },
     {
       "code": 6004,
       "name": "WrongMint",
-      "msg": "Wrong or non-classic USDC mint"
+      "msg": "Token mint is not the vault USDC mint"
     },
     {
       "code": 6005,
       "name": "WrongVaultAccount",
-      "msg": "Wrong vault token account"
+      "msg": "Vault token account is not the configured vault account"
     },
     {
       "code": 6006,
@@ -413,30 +568,50 @@ export const VAULT_IDL: Idl = {
     {
       "code": 6010,
       "name": "DuplicateProvider",
-      "msg": "Provider appears twice in a batch"
+      "msg": "Provider appears twice in one batch"
     },
     {
       "code": 6011,
       "name": "ProviderMismatch",
-      "msg": "Provider record does not match provider id"
+      "msg": "Provider record account is missing, invalid or does not match the payout"
     },
     {
       "code": 6012,
       "name": "ProviderInactive",
-      "msg": "Provider is not active"
+      "msg": "Provider is inactive"
     },
     {
       "code": 6013,
       "name": "PayoutAccountMismatch",
-      "msg": "Payout account does not match the provider record"
+      "msg": "Payout token account differs from the registered one"
     },
     {
       "code": 6014,
       "name": "MathOverflow",
-      "msg": "Math overflow"
+      "msg": "Arithmetic overflow"
     }
   ],
   "types": [
+    {
+      "name": "BatchSettled",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "batch_id",
+            "type": "u64"
+          },
+          {
+            "name": "total",
+            "type": "u64"
+          },
+          {
+            "name": "count",
+            "type": "u8"
+          }
+        ]
+      }
+    },
     {
       "name": "Config",
       "type": {
@@ -460,6 +635,9 @@ export const VAULT_IDL: Idl = {
           },
           {
             "name": "max_deposit",
+            "docs": [
+              "Base units."
+            ],
             "type": "u64"
           },
           {
@@ -482,7 +660,7 @@ export const VAULT_IDL: Idl = {
       }
     },
     {
-      "name": "DepositRecord",
+      "name": "DepositMade",
       "type": {
         "kind": "struct",
         "fields": [
@@ -506,6 +684,38 @@ export const VAULT_IDL: Idl = {
                 32
               ]
             }
+          }
+        ]
+      }
+    },
+    {
+      "name": "DepositRecord",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "index",
+            "type": "u64"
+          },
+          {
+            "name": "depositor",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "docs": [
+              "Base units."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "deposit_ref",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
           },
           {
             "name": "slot",
@@ -518,6 +728,37 @@ export const VAULT_IDL: Idl = {
           {
             "name": "bump",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Payout",
+      "docs": [
+        "`amount` is in base units."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "provider_id",
+            "type": "u32"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProviderDeactivated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "provider_id",
+            "type": "u32"
           }
         ]
       }
@@ -556,51 +797,6 @@ export const VAULT_IDL: Idl = {
       }
     },
     {
-      "name": "Payout",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "provider_id",
-            "type": "u32"
-          },
-          {
-            "name": "amount",
-            "type": "u64"
-          }
-        ]
-      }
-    },
-    {
-      "name": "DepositMade",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "index",
-            "type": "u64"
-          },
-          {
-            "name": "depositor",
-            "type": "pubkey"
-          },
-          {
-            "name": "amount",
-            "type": "u64"
-          },
-          {
-            "name": "deposit_ref",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          }
-        ]
-      }
-    },
-    {
       "name": "ProviderRegistered",
       "type": {
         "kind": "struct",
@@ -621,38 +817,6 @@ export const VAULT_IDL: Idl = {
           {
             "name": "payout_token",
             "type": "pubkey"
-          }
-        ]
-      }
-    },
-    {
-      "name": "ProviderDeactivated",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "provider_id",
-            "type": "u32"
-          }
-        ]
-      }
-    },
-    {
-      "name": "BatchSettled",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "batch_id",
-            "type": "u64"
-          },
-          {
-            "name": "total",
-            "type": "u64"
-          },
-          {
-            "name": "count",
-            "type": "u8"
           }
         ]
       }
