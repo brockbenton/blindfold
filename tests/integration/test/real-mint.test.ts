@@ -152,7 +152,7 @@ describe.skipIf(!DATABASE_URL)("real mint + mock API + owner + agent", () => {
     try {
       const res = await wallet.payFetch(`${apiUrl}/v1/data/sol`);
       expect(res.status).toBe(200);
-      expect((await res.json()).topic).toBe("sol");
+      expect(((await res.json()) as { topic: string }).topic).toBe("sol");
       const pr = JSON.parse(Buffer.from(res.headers.get("payment-response")!, "base64").toString());
       expect(pr.success).toBe(true);
       expect(pr.transaction).toMatch(/^[0-9a-f-]{36}$/);
