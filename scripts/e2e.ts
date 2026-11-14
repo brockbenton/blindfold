@@ -169,7 +169,7 @@ async function main() {
     SOLANA_RPC_URL: rpc, VAULT_PROGRAM_ID: programId.toBase58(), USDC_MINT: usdcMint.toBase58(), MINT_URL: mintUrl,
     DATABASE_URL: databaseUrl, MINT_SEED: randomBytes(32).toString("hex"), MINT_AUTHORITY_KEYPAIR: "", MINT_ADMIN_TOKEN: ADMIN_TOKEN, PORT: mintPort,
     providers: [{ provider_id: providerId, name: "mock-api", url: apiUrl, price_cents: PRICE, topics: ["sol", "btc", "eth"] }],
-    depositPollMs: 1000, settleIntervalS: 1e9, devFakeChain: false,
+    depositPollMs: 1000, settleIntervalS: 86_400, devFakeChain: false,
   };
   const { app: mintApp, start } = await createMintServer({
     db, cfg, vault: new SolanaVaultReader(connection, programId, usdcMint),
@@ -190,7 +190,7 @@ async function main() {
 
   // Mock API (in process) with the real redeem client.
   const apiLogs: Record<string, unknown>[] = [];
-  const api = createApp({ mintUrl, providerSecretKey: hex(providerSk), priceCents: PRICE, providerId, redeem: new HttpRedeemClient(mintUrl), log: (e) => apiLogs.push(e) });
+  const api = createApp({ mintUrl, providerSecretKey: hex(providerSk), priceCents: PRICE, usdcMint: usdcMint.toBase58(), providerId, redeem: new HttpRedeemClient(mintUrl), log: (e) => apiLogs.push(e) });
   const apiServer = serve({ fetch: api.fetch, port: apiPort, hostname: "127.0.0.1" });
   cleanups.push(() => stop(apiServer));
 
