@@ -280,7 +280,7 @@ When the real vault exists, swap in `SolanaVaultReader` and `SolanaSettleSender`
 | 13 | More than 8 providers with balances: first call pays the 8 largest, second call pays the rest |
 | 14 | `reconcile`: `vault_balance == deposited - settled` after the flow in section 6 |
 | 14a | `GET /v1/blindfold/reserves`: unauthenticated `200`; after mint 100 and a redeem of 40 settled in full, `{issued: 100, settled: 40, outstanding: 60}`; a `pending` or `failed` settlement is not counted as settled; values come from one transaction (concurrent mint during the read does not make `outstanding` inconsistent) |
-| 15 | Against `solana-test-validator` with the real vault: deposit, mint, redeem, settle end to end |
+| 15 | Against `solana-test-validator` with the real vault: deposit, mint, redeem, settle end to end. **Done** 2026-11-14: `e2e:localnet` and devnet `e2e` both pass (see 01-vault.md) |
 
 ## 8. Open questions
 

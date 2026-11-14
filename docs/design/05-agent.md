@@ -208,12 +208,12 @@ Env `FAKE_PRICE_CENTS` and `FAKE_START_CENTS` tune the fake wallet so tests can 
 
 ## 8. Done when
 
-- [ ] `agent --fake --json` exits 0 and prints the JSON in §5.4 with `balanceBefore - balanceAfter == paidCents`.
-- [ ] `scripted.test.ts` covers exits 0, 3 (empty wallet, `over_cap`), 4 (list fetch fails), 5 (`PaymentFailed` 402), 6 (no provider), 7 (reserves not ok: no paid call made, reason printed; same for RPC error), and the pass case (reserves ok, check runs before the first call and every `RESERVE_CHECK_EVERY` calls).
-- [ ] Fail-closed (00 §10 step 6): with a stub reserves endpoint reporting `outstanding` above the vault balance, the agent refuses to pay and exits 7.
-- [ ] Against the real mint, wallet and mock API: one call returns 200, token file balance drops by `PRICE_CENTS`, exit 0.
-- [ ] stdout in `--json` mode is exactly one JSON line (e2e script parses it).
-- [ ] Agent code never reads the Solana keypair, `MINT_ADMIN_TOKEN` or any provider secret.
+- [x] `agent --fake --json` exits 0 and prints the JSON in §5.4 with `balanceBefore - balanceAfter == paidCents`.
+- [x] `scripted.test.ts` covers exits 0, 3 (empty wallet, `over_cap`), 4 (list fetch fails), 5 (`PaymentFailed` 402), 6 (no provider), 7 (reserves not ok: no paid call made, reason printed; same for RPC error), and the pass case (reserves ok, check runs before the first call and every `RESERVE_CHECK_EVERY` calls).
+- [x] Fail-closed (00 §10 step 6): with a stub reserves endpoint reporting `outstanding` above the vault balance, the agent refuses to pay and exits 7.
+- [x] Against the real mint, wallet and mock API: one call returns 200, token file balance drops by `PRICE_CENTS`, exit 0.
+- [x] stdout in `--json` mode is exactly one JSON line (e2e script parses it).
+- [x] Agent code never reads the Solana keypair, `MINT_ADMIN_TOKEN` or any provider secret.
 
 ## 9. Open questions
 
