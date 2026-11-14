@@ -83,7 +83,13 @@ import { bytesToHex, hexToBytes } from '@noble/curves/utils'; // or node Buffer
 const providerPubkey = bytesToHex(getPubKeyFromPrivKey(hexToBytes(providerSecretKey)));
 ```
 
-Must be 33-byte compressed lowercase hex (66 chars, prefix `02`/`03`). Assert this at startup. This value is what the operator passes to `register_provider` and what `/health` prints.
+Must be 33-byte compressed lowercase hex (66 chars, prefix `02`/`03`). Assert this at startup. This value is what the operator passes to `register_provider` and what `/health` prints. The operator also adds a mint `config/providers.json` entry that matches what this process serves, including `topics` (what `GET /v1/data/:topic` answers; the agent picks a provider by topic, 05):
+
+```json
+{ "provider_id": 0, "name": "mock-api", "url": "http://localhost:4000", "price_cents": 5, "topics": ["sol", "btc", "eth"] }
+```
+
+`price_cents` equals `PRICE_CENTS`, `url` equals the public base URL of this process.
 
 ### 5.4 Request flow
 

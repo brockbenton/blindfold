@@ -75,7 +75,7 @@ All timestamps `timestamptz default now()` unless stated. Money columns are cent
 | `deposit_cursor` | `id int pk check(id=1)`, `next_index bigint default 0` | Single row |
 | `issued_signatures` | `B_ text pk`, `quote_id uuid fk`, `request_id uuid` (one per successful mint request, for replay), `keyset_id text`, `amount int`, `C_ text`, `dleq_s text`, `dleq_e text`, `created_at` | `B_` primary key is the uniqueness rule (11003). Index on `(quote_id)` |
 | `spent_proofs` | `Y text pk`, `amount int`, `keyset_id text`, `redemption_id uuid fk`, `created_at` | `Y` primary key (11001) |
-| `providers` | `provider_id int pk`, `pubkey text`, `payout_token text`, `active bool`, `name text null`, `url text null`, `price_cents int null`, `synced_at` | `unique(pubkey)`. Cache of `ProviderRecord` accounts plus `config/providers.json` |
+| `providers` | `provider_id int pk`, `pubkey text`, `payout_token text`, `active bool`, `name text null`, `url text null`, `price_cents int null`, `topics jsonb default '[]'`, `synced_at` | `unique(pubkey)`. Cache of `ProviderRecord` accounts plus `config/providers.json` |
 | `provider_balances` | `provider_id int pk fk`, `balance bigint default 0` | `check(balance >= 0)`. Unsettled cents |
 | `redemptions` | `id uuid pk`, `provider_id int fk`, `amount bigint`, `proof_count int`, `created_at` | |
 | `settlements` | `id bigserial pk`, `batch_id bigint`, `status text check in ('pending','submitted','confirmed','failed')`, `payouts jsonb` (`[{provider_id, amount_cents, amount_base}]`), `tx_sig text null`, `error text null`, `created_at`, `updated_at` | Partial unique index `(batch_id) where status <> 'failed'` |
@@ -99,7 +99,7 @@ All timestamps `timestamptz default now()` unless stated. Money columns are cent
 | `POST /v1/mint/quote/solana-usdc` | Validate unit (`11013`), amount (`11006`), `pubkey` is 66 hex starting `02`/`03` (`20009`). `deposit_ref = randomBytes(32).hex`, `id = uuidv7()`, `expiry = now + QUOTE_EXPIRY_S`. Response adds `vault_program`, `usdc_mint`, `amount_base_units = centsToBaseUnits(amount)` as string |
 | `GET /v1/mint/quote/solana-usdc/{id}` | Same shape from the row. Unknown id: HTTP 404 `{detail, code: 20001}` |
 | `POST /v1/mint/solana-usdc` | See 4.5 |
-| `GET /v1/blindfold/providers` | `select * from providers order by provider_id`; `name`/`url`/`price_cents` are `null` when `config/providers.json` has no entry |
+| `GET /v1/blindfold/providers` | `select * from providers order by provider_id`; `name`/`url`/`price_cents` are `null` and `topics` is `[]` when `config/providers.json` has no entry; inactive providers are returned with `active: false` |
 | `POST /v1/blindfold/redeem` | See 4.7 |
 | `/v1/blindfold/admin/*` | Bearer check with constant-time compare. `settle` runs 4.8 once. `balances` lists rows with `balance > 0` |
 
@@ -129,7 +129,7 @@ Poller (`setInterval` guarded by a `running` flag so ticks never overlap), every
 
 Cursor advance and credit are in one transaction, so a crash replays at most the last record, which `on conflict do nothing` makes a no-op (skip the credit when the insert affected 0 rows).
 
-Provider sync (every 30 s and at boot): read `provider_count` from `Config`, fetch `ProviderRecord` for ids `0..count-1`, upsert `providers` (`pubkey` hex of `cashu_pubkey`, `payout_token`, `active`). Left-join `name`, `url`, `price_cents` from `config/providers.json` (`[{"provider_id": 0, "name": "mock-api", "url": "http://localhost:4000", "price_cents": 5}]`, loaded at boot; missing entries give nulls). Insert a `provider_balances` row for every new provider. Redeem reads the DB cache only; a provider registered seconds ago is usable after the next sync. `POST /admin/settle` forces a sync first.
+Provider sync (every 30 s and at boot): read `provider_count` from `Config`, fetch `ProviderRecord` for ids `0..count-1`, upsert `providers` (`pubkey` hex of `cashu_pubkey`, `payout_token`, `active`), so a provider the admin deactivated onchain shows `active = false` after the next sync. Left-join `name`, `url`, `price_cents`, `topics` from `config/providers.json` (`[{"provider_id": 0, "name": "mock-api", "url": "http://localhost:4000", "price_cents": 5, "topics": ["sol", "btc", "eth"]}]`, loaded at boot by the config loader; missing entries give nulls and `topics: []`; a missing `topics` field in an entry is also `[]`). Insert a `provider_balances` row for every new provider. Redeem reads the DB cache only; a provider registered seconds ago is usable after the next sync. `POST /admin/settle` forces a sync first.
 
 ### 4.7 Redeem algorithm
 
@@ -144,7 +144,7 @@ Input `proofs` in the 00 §3.4 wire form: `amount` a number, `witness` a JSON st
    r = verifyP2PKSpendingConditions(p); require r.success && r.path === 'MAIN' else 10001
 5. sigs = getP2PKWitnessSignatures(p.witness); set = signerSet(p.secret)
    valid = getValidSigners(sigs, p.secret, set); require valid.length === 1 else 10001
-6. provider = select from providers where pubkey = valid[0] and active else 70002
+6. provider = select from providers where pubkey = valid[0] and active else 70002   -- inactive (deactivated) providers are rejected here
 7. all proofs yield the same provider_id else 70003
 8. BEGIN
      insert into redemptions (id, provider_id, amount, proof_count)
@@ -178,7 +178,7 @@ create:  pending --(tx sent)--> submitted --(confirmed)--> confirmed
    - Else if `submitted` and the blockhash of the stored tx has not expired (`isBlockhashValid`): wait and re-check next tick.
    - Else (never sent, or expired and not landed): resend once with a fresh blockhash if the batch is still `chain + 1`; an error with `BadBatchId` means another path landed it, so re-read the chain and apply the first rule. A deterministic program error (`ProviderInactive`, `PayoutAccountMismatch`, others) sets `failed`, records `error`, and re-credits each payout to `provider_balances` in one transaction. `failed` frees `batch_id` (partial unique index), so the next batch reuses `chain + 1`.
 
-Edge: if a provider is no longer `active` in the cache, step 2 skips it and its balance stays unsettled (visible in `balances`).
+Edge: deactivation (00 §4.5). If a provider is no longer `active` in the cache, step 2 skips it and its balance stays unsettled (visible in `balances`), since the program would return `ProviderInactive`. The admin should settle before deactivating (`POST /admin/settle`, repeated until the provider's balance is 0); otherwise the remaining balance is excluded from batches and forfeited unless the provider is re-registered (MVP: admin's call). The mint credits no new redemptions to it (check 6).
 
 Admin settle response: `{batch_id, payouts: [{provider_id, amount}], tx}` with `amount` in cents. When more than 8 providers have balances, one call settles the 8 largest; the rest wait for the next run (the loop or another admin call).
 
@@ -270,11 +270,12 @@ When the real vault exists, swap in `SolanaVaultReader` and `SolanaSettleSender`
 | 5 | Mint concurrency: 10 parallel mints on one quote never issue more than `amount_paid` |
 | 6 | Every `BlindSignature` carries `dleq`; `verifyDLEQProof` on the client side passes; unblinded proof passes `verifyUnblindedSignature` |
 | 7 | Redeem happy path, N=1 and N=3 allowlist (each signer key credits its own provider) |
-| 8 | Redeem rejects: forged `C` `10001`; non-P2PK secret `70001`; `SIG_ALL` `70001`; `locktime` or `refund` present `70001`; amount as numeric string and object witness accepted; no witness `10001`; two valid signers `10001`; unregistered or inactive key `70002`; two providers in one request `70003`; duplicate secret `11007`; 65 proofs `11014` |
+| 8 | Redeem rejects: forged `C` `10001`; non-P2PK secret `70001`; `SIG_ALL` `70001`; `locktime` or `refund` present `70001`; amount as numeric string and object witness accepted; no witness `10001`; two valid signers `10001`; unregistered or inactive key `70002` (deactivate onchain, sync, redeem rejects); two providers in one request `70003`; duplicate secret `11007`; 65 proofs `11014` |
 | 9 | Double spend: same proof in two parallel redeems, exactly one succeeds, balance credited once; a request with one spent and one fresh proof leaves the fresh one unspent |
 | 10 | `checkstate` returns `SPENT` after redeem, `UNSPENT` before |
 | 11 | Settlement: balances debited at `pending`; payout `amount_base = cents * 10_000`; empty returns `{batch_id: null}`; admin 401 without token |
 | 12 | Settlement recovery: crash after submit and landed (`FakeSender.failNext('afterLand')`) ends `confirmed` with no second send; send failure with `BadBatchId` re-reads chain; deterministic failure restores balances and next batch reuses the same `batch_id`; redeem during `submitted` is not lost |
+| 13a | Deactivated provider: sync sets `active = false`, `GET /providers` lists it with `active: false`, its balance is skipped by settlement and stays visible in `balances`; providers.json entry without `topics` serves `topics: []` |
 | 13 | More than 8 providers with balances: first call pays the 8 largest, second call pays the rest |
 | 14 | `reconcile`: `vault_balance == deposited - settled` after the flow in section 6 |
 | 15 | Against `solana-test-validator` with the real vault: deposit, mint, redeem, settle end to end |

@@ -12,7 +12,7 @@ A small agent that makes at least one paid API call through the wallet SDK and r
 |---|---|
 | `packages/wallet` (04) | `AgentWallet.open`, `balance()`, `payFetch`, `PaymentRefused`, `PaymentFailed` (00 §8.1) |
 | `packages/protocol` (00) | `ProviderInfo` type, `env` loader (§9), constants |
-| Mint (02) | `GET /v1/blindfold/providers` (§5.5, includes advisory `price_cents`) |
+| Mint (02) | `GET /v1/blindfold/providers` (§5.5, includes advisory `price_cents` and `topics`) |
 | Mock API (03) | The paid endpoint `GET /v1/data/:topic` (00 §7.5) |
 | Owner CLI (04) | Writes the token file the agent reads (§3.4) |
 
@@ -35,7 +35,7 @@ class PaymentFailed extends Error { status: number }
 ## 3. MVP scope
 
 - One scripted run: discover, pick, call once, print, exit.
-- Provider choice: first `active` provider, or the one matching `--provider`.
+- Provider choice: the one matching `--provider`, else the first active provider whose `topics` include `--topic`, else the first active provider.
 - Topic from `--topic` (default `sol`).
 - Fake wallet and fake provider list so the agent runs before other components exist (§7).
 - Optional `--calls N` (default 1) to repeat the paid call. Not needed for acceptance.
@@ -81,7 +81,7 @@ Error classes in `src/errors.ts`: `NetworkError`, `HttpError {status, body}`, `N
 
 1. `start = tools.balance()`. If `0`, fail with exit code 3 and reason `insufficient_balance` before any call.
 2. `providers = tools.list_providers()`. Empty, or `--provider` name not found: `NoProviderError`.
-3. Pick provider: match `--provider` by `name`, else `providers[0]`. Its `price_cents` (advisory, may be null) is shown in the output only; the wallet decides what to pay.
+3. Pick provider: match `--provider` by `name`, else the first provider whose `topics` include `topic`, else `providers[0]`. Its `price_cents` (advisory, may be null) is shown in the output only; the wallet decides what to pay.
 4. `url = new URL('/v1/data/' + encodeURIComponent(topic), provider.url)`.
 5. `res = tools.call_paid_api({ url })`. Repeat `--calls` times, collecting results.
 6. `end = tools.balance()`.
@@ -98,7 +98,7 @@ Error classes in `src/errors.ts`: `NetworkError`, `HttpError {status, body}`, `N
 | `--mint-url <url>` | `MINT_URL` | `http://localhost:3338` | Mint and provider list |
 | `--max-per-call <cents>` | `MAX_PER_CALL_CENTS` | `10` | Passed to the wallet |
 | `--topic <str>` | none | `sol` | Topic (path segment of `/v1/data/:topic`) |
-| `--provider <name>` | none | first active | Provider `name` from §5.5 |
+| `--provider <name>` | none | first active with matching topic | Provider `name` from §5.5 |
 | `--calls <n>` | none | `1` | Number of paid calls |
 | `--json` | none | off | One JSON object on stdout, logs on stderr |
 | `--fake` | `AGENT_FAKE=1` | off | Use stubs (§7) |
@@ -120,7 +120,7 @@ balance    100c -> 95c
 `--json` (stdout, single line; nothing else on stdout):
 
 ```json
-{ "ok": true, "provider": {"provider_id":0,"name":"mock-api","url":"http://localhost:4000","price_cents":5},
+{ "ok": true, "provider": {"provider_id":0,"name":"mock-api","url":"http://localhost:4000","price_cents":5,"topics":["sol","btc","eth"]},
   "topic": "sol", "calls": [{"status":200,"paidCents":5,"data":{}}],
   "balanceBefore": 100, "balanceAfter": 95, "paidCents": 5 }
 ```
@@ -169,7 +169,7 @@ agents/simple/
 | Stub | Behavior |
 |---|---|
 | `fakeWallet(startCents = 100, priceCents = 5)` | Same shape as the real `AgentWallet` (00 §8.1): `balance()` is synchronous and returns the running total in cents; `payFetch(url)` deducts `priceCents` and returns `200` JSON `{"topic":"<last path segment>","price":172.4,"change_24h_pct":-1.2,"volume_24h":123456789,"whale_netflow":42000,"as_of":1763166400,"fake":true}`. Throws `PaymentRefused` with `reason: 'insufficient_balance'` when the balance is below price, and `'over_cap'` when price exceeds `maxPerCallCents`. Env `FAKE_FAIL_STATUS=400` makes it throw `PaymentFailed` with that `status` (balance unchanged) |
-| `fakeProviders` | `[{ provider_id: 0, pubkey: "02" + "11".repeat(32), name: "mock-api", url: "http://localhost:4000", price_cents: 5, active: true }]`, served by a patched `list_providers` |
+| `fakeProviders` | `[{ provider_id: 0, pubkey: "02" + "11".repeat(32), name: "mock-api", url: "http://localhost:4000", price_cents: 5, topics: ["sol", "btc", "eth"], active: true }]`, served by a patched `list_providers` |
 
 Env `FAKE_PRICE_CENTS` and `FAKE_START_CENTS` tune the fake wallet so tests can hit each exit code. Until `packages/wallet` exists, `stubs.ts` also defines local `PaymentRefused` and `PaymentFailed` with the 00 §8.1 fields; switch to the real imports once published.
 
@@ -185,6 +185,5 @@ Env `FAKE_PRICE_CENTS` and `FAKE_START_CENTS` tune the fake wallet so tests can 
 
 | # | Question | Proposed fix |
 |---|---|---|
-| 1 | `list_providers` does not say what each provider sells, so the agent cannot choose by topic | Fine for one mock provider. Later, add optional `topics: string[]` to `config/providers.json` and §5.5 |
-| 2 | `paidCents` is computed from balance deltas, which is wrong if two calls run concurrently | Agent is sequential in MVP. Wallet could return `paidCents` on the response (for example a header-less side channel) later |
-| 3 | The agent cannot tell a lost `200` from a rejected payment | Covered by wallet checkstate (§7.4). No agent action |
+| 1 | `paidCents` is computed from balance deltas, which is wrong if two calls run concurrently | Agent is sequential in MVP. Wallet could return `paidCents` on the response (for example a header-less side channel) later |
+| 2 | The agent cannot tell a lost `200` from a rejected payment | Covered by wallet checkstate (§7.4). No agent action |
