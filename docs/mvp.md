@@ -16,11 +16,11 @@ What we build. Why is in [`README.md`](../README.md), how in [`design.md`](desig
 
 ### Done when
 
-- [ ] The owner deposits USDC into the vault and receives tokens.
-- [ ] The agent calls the mock API, gets a 402, pays with a token and gets the data.
-- [ ] The mint rejects a replayed token.
-- [ ] The agent reads the vault balance from Solana and refuses to pay when reserves don't cover outstanding tokens.
-- [ ] `settle_batch` pays the provider in USDC on devnet.
+- [x] The owner deposits USDC into the vault and receives tokens.
+- [x] The agent calls the mock API, gets a 402, pays with a token and gets the data.
+- [x] The mint rejects a replayed token.
+- [x] The agent reads the vault balance from Solana and refuses to pay when reserves don't cover outstanding tokens.
+- [x] `settle_batch` pays the provider in USDC on devnet.
 
 ## Add-ons
 
