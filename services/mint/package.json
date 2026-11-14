@@ -22,6 +22,7 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "@anchor-lang/core": "1.2.2",
     "@blindfold/testkit": "workspace:*",
     "@types/pg": "8.23.1",
     "tsx": "4.23.15"

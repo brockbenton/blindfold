@@ -50,7 +50,7 @@ export class MemoryVault implements VaultReader {
   async getConfig(): Promise<VaultConfigView> {
     return { depositCount: BigInt(this.deposits.length), providerCount: this.providers.length, lastBatchId: this.lastBatchId };
   }
-  async getDeposits(indices: bigint[]) {
+  async getDeposits(indices: bigint[]): Promise<(DepositRecordAccount | null)[]> {
     if (this.failReads) throw new Error("DepositRecord is not owned by the vault program");
     return indices.map((i) => this.deposits[Number(i)] ?? null);
   }
