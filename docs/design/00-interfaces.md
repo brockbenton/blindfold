@@ -2,7 +2,9 @@
 
 The contract every MVP component builds against. If a component doc disagrees with this file, this file wins. Change it only by team agreement, then update the affected component docs.
 
-Where a Cashu NUT already defines something, we use it unchanged and link it. Blindfold-specific deviations are marked **[BF]**.
+Where a Cashu NUT or the [x402 v2 spec](https://github.com/x402-foundation/x402/blob/main/specs/x402-specification-v2.md) already defines something, we use it unchanged and link it. Blindfold-specific choices are marked **[BF]**.
+
+Payments travel over **x402 v2** with a custom scheme, `cashu`: the Cashu token rides inside x402's standard payment envelope. A feasibility spike (real `@x402/hono` server, real `@x402/fetch` client, real `cashu-ts` crypto) passed all checks; see `spikes/x402-cashu/`.
 
 ## 1. Overview
 
@@ -13,7 +15,7 @@ Owner CLI ──deposit(amount, deposit_ref)──▶ Vault program (Solana devn
     └──────────────────────────────▶ Mint ◀──────┘  settle_batch
                                       ▲  ▲
          cashuB token file            │  │ POST /v1/blindfold/redeem
-Owner ───────────────▶ Agent ─ Wallet SDK ─HTTP 402 / X-Cashu─▶ Mock API
+Owner ───────────────▶ Agent ─ Wallet SDK ─x402 v2, scheme cashu─▶ Mock API
 ```
 
 | Step | From → To | Interface |
@@ -23,8 +25,8 @@ Owner ───────────────▶ Agent ─ Wallet SDK ─H
 | 3. Detect | Mint → Vault | Poll `Config.deposit_count` + `DepositRecord` (§6) |
 | 4. Issue | Owner → Mint | `POST /v1/mint/solana-usdc` with locked blinded outputs (§5.4, §3.3) |
 | 5. Hand over | Owner → Agent | `cashuB` token file (§3.4) |
-| 6. Pay | Agent (wallet SDK) → Mock API | HTTP 402 + `X-Cashu` (§7) |
-| 7. Redeem | Mock API → Mint | `POST /v1/blindfold/redeem` (§5.6) |
+| 6. Pay | Agent (wallet SDK) → Mock API | x402 v2 `PAYMENT-REQUIRED` / `PAYMENT-SIGNATURE`, scheme `cashu` (§7) |
+| 7. Redeem | Mock API (x402 settle) → Mint | `POST /v1/blindfold/redeem` (§5.6) |
 | 8. Settle | Mint → Vault | `settle_batch` instruction (§4.3) |
 
 ## 2. Constants and conventions
@@ -43,6 +45,10 @@ Owner ───────────────▶ Agent ─ Wallet SDK ─H
 | Solana commitment | `confirmed` | Demo only; real deployment would use `finalized` |
 | Devnet USDC mint | `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` | Circle devnet USDC, classic SPL Token program. Configurable via `USDC_MINT` |
 | Mint URL | `http://localhost:3338` | Configurable via `MINT_URL` |
+| x402 version | `2` | |
+| x402 scheme | `cashu` | **[BF]** custom scheme |
+| x402 network | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | CAIP-2 id for Solana devnet (`SOLANA_DEVNET_CAIP2` in `@x402/svm`) |
+| x402 packages | `@x402/core`, `@x402/hono`, `@x402/fetch` `2.31.x` | Versions the spike used |
 
 Keys:
 
@@ -101,7 +107,7 @@ The mint cannot see the lock at issuance (outputs are blinded). Locking is the o
 
 ### 3.4 Encoded tokens
 
-`cashuB` V4 tokens per [NUT-00](https://cashubtc.github.io/nuts/00), via `getEncodedToken` / `getDecodedToken`. Used in the `X-Cashu` retry header and in the agent's token file.
+`cashuB` V4 tokens per [NUT-00](https://cashubtc.github.io/nuts/00), via `getEncodedToken` / `getDecodedToken`. Used in the x402 payment payload (`payload.token`, §7.2) and in the agent's token file.
 
 **Agent token file [BF]:** a JSON file the owner CLI writes and the agent's wallet SDK reads and rewrites:
 
@@ -262,7 +268,7 @@ A registered provider missing from the file is listed with `name: null, url: nul
 
 ### 5.6 Redeem [BF]
 
-`POST /v1/blindfold/redeem`, called by providers.
+`POST /v1/blindfold/redeem`, called by the provider's x402 facilitator during settle (§7.3).
 
 ```json
 { "proofs": [ /* Proof[], each with witness = "{\"signatures\":[\"<schnorr sig hex>\"]}" */ ] }
@@ -310,51 +316,91 @@ Every `DEPOSIT_POLL_MS`, at `confirmed` commitment:
 
 Later, the QuickNode Stream add-on posts to an internal webhook that triggers the same poll immediately. No other code changes.
 
-## 7. HTTP 402 handshake (NUT-24)
+## 7. Payment handshake: x402 v2, scheme `cashu`
 
-Per [NUT-24](https://cashubtc.github.io/nuts/24) with a [NUT-18](https://cashubtc.github.io/nuts/18) payment request.
+Headers, encodings and types are exactly [x402 v2 HTTP transport](https://github.com/x402-foundation/x402/blob/main/specs/transports-v2/http.md): `PAYMENT-REQUIRED` (server to client), `PAYMENT-SIGNATURE` (client to server) and `PAYMENT-RESPONSE` (server to client), each a base64-encoded JSON object. Only the scheme is ours.
+
+Prior art: [`x402-cashu`](https://github.com/orangerabbit-io/x402-cashu) carries sat-denominated Cashu over x402 as scheme `exact` on network `cashu:mainnet`. We share its payload shape (`payload.token`, `extra.mints`, `extra.unit`) but use our own scheme name `cashu` on the Solana network, because our value is Solana USDC, the lock is a required 1-of-N, and settlement is a redeem rather than a swap. Do not depend on that package (hackathon rule: no building on pre-existing projects).
+
+Use the SDKs rather than hand-rolling headers: `@x402/hono` `paymentMiddleware` + `x402ResourceServer` on the provider, `@x402/fetch` `wrapFetchWithPayment` + `x402Client` in the wallet.
 
 ### 7.1 Server: payment required
 
-```
-HTTP/1.1 402 Payment Required
-X-Cashu: creqA...
-Content-Type: application/json
-
-{ "error": "payment_required", "amount": 5, "unit": "usd" }
-```
-
-Decoded request:
+An unpaid request gets `402` with `PAYMENT-REQUIRED` decoding to an x402 `PaymentRequired`:
 
 ```json
-{ "a": 5, "u": "usd", "m": ["http://localhost:3338"], "nut10": { "k": "P2PK", "d": "<provider pubkey hex33>" } }
+{
+  "x402Version": 2,
+  "resource": { "url": "http://localhost:4000/v1/data/sol", "description": "market data", "mimeType": "application/json" },
+  "accepts": [{
+    "scheme": "cashu",
+    "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+    "asset": "<USDC_MINT>",
+    "amount": "50000",
+    "payTo": "<provider Cashu pubkey hex33>",
+    "maxTimeoutSeconds": 60,
+    "extra": {
+      "mints": ["http://localhost:3338"],
+      "unit": "usd",
+      "nut10": { "k": "P2PK", "d": "<provider Cashu pubkey hex33>" },
+      "paymentFlow": "upfront"
+    }
+  }]
+}
 ```
 
-Build with `cashu-ts` `PaymentRequest` and encode as `creqA`. Wallets must decode both `creqA` and `creqB` (`decodePaymentRequest` handles both).
+| Field | Rule |
+|---|---|
+| `amount` | USDC base units, always a whole number of cents (`PRICE_CENTS * 10_000`) |
+| `payTo` | The provider's Cashu pubkey. Must equal `extra.nut10.d` |
+| `extra.mints`, `extra.unit`, `extra.nut10` | Same meaning as NUT-18 `m`, `u`, `nut10`. Added by the server scheme's `enhancePaymentRequirements` |
+| `extra.paymentFlow` | Added by the SDK. Always `upfront`: settle (redeem) runs **before** the route handler |
+| Other `accepts` entries | Allowed. Add-on 1 adds a standard `exact` entry on the same route; clients pick the scheme they have registered |
 
 ### 7.2 Client: paid retry
 
-Same method, URL and body, plus `X-Cashu: cashuB...` holding proofs that:
+Same method, URL and body, plus `PAYMENT-SIGNATURE` decoding to an x402 `PaymentPayload`:
 
-| Rule | Source |
+```json
+{ "x402Version": 2, "resource": { ... }, "accepted": { /* the chosen accepts entry, unchanged */ }, "payload": { "token": "cashuB..." } }
+```
+
+The `cashuB` token (§3.4) holds proofs that:
+
+| Rule | Note |
 |---|---|
-| Come from a mint in `m`, unit `u` | NUT-24 |
-| Sum to **exactly** `a` | **[BF]** NUT-24 allows `>= a`, but Blindfold has no change, so overpayment is lost. The wallet must send an exact sum |
-| Each have `nut10.d` in their signer set (§3.3) | **[BF]** NUT-24 expects the lock to match `nut10`. A 1-of-N lock that includes `d` counts as a match |
-| Carry no witness | The provider adds its signature |
+| Come from a mint in `extra.mints`, unit `extra.unit` | |
+| Sum to **exactly** `amount / 10_000` cents | **[BF]** There is no change, so overpayment would be lost |
+| Each have `extra.nut10.d` in their signer set (§3.3) | A 1-of-N lock that includes the provider's key counts as a match |
+| Carry no witness | The provider adds its signature at settle |
 
-### 7.3 Server: result
+### 7.3 Server: facilitator and result
 
-| Case | Status |
+The provider passes `x402ResourceServer` a **Blindfold facilitator**: an in-process object implementing x402's `FacilitatorClient` interface. It lives with the provider because it signs with the provider's key.
+
+| Method | Behaviour |
 |---|---|
-| Redeemed, data served | `200` with the data |
-| Client error, token not redeemed | `400` `{ "error": "<reason>" }`, reason one of `malformed_token`, `wrong_mint`, `wrong_unit`, `wrong_amount` (sum `!= a`), `wrong_lock` (provider key not in signer set), `unexpected_witness` |
-| Mint rejected redemption (spent, invalid) | `400` `{ "error": "redeem_failed", "code": <mint code> }` |
-| Mint unreachable or `5xx` | `502` `{ "error": "mint_unavailable" }` |
+| `getSupported()` | `{ kinds: [{ x402Version: 2, scheme: "cashu", network: <devnet CAIP-2> }], extensions: [], signers: {} }` |
+| `verify(payload, req)` | Structural checks only. Not called in the `upfront` flow; return `{ isValid: true }` if the token decodes |
+| `settle(payload, req)` | Decode token, run the §7.2 checks, sign every proof with the provider key (`signP2PKProofs`), call `POST /v1/blindfold/redeem` (§5.6). Return an x402 `SettleResponse` |
 
-### 7.4 Client: after a failed retry
+`SettleResponse` on success: `{ "success": true, "transaction": "<redemption_id>", "network": "<CAIP-2>", "amount": "<base units>" }`. Like x402's `batch-settlement` scheme, `transaction` is a commitment id, not an onchain signature: the USDC moves later in `settle_batch`.
 
-On any non-2xx paid retry, the wallet calls `POST /v1/checkstate` for the proofs it sent. `UNSPENT` proofs go back into the wallet; `SPENT` proofs are dropped. This also covers a lost `200`.
+On failure: `{ "success": false, "errorReason": "<reason>", "transaction": "", "network": "<CAIP-2>" }`, reason one of `malformed_token`, `wrong_mint`, `wrong_unit`, `wrong_amount`, `wrong_lock`, `unexpected_witness`, `redeem_failed_<mint code>` (e.g. `redeem_failed_11001` for a replay), `mint_unavailable`.
+
+| Case | What the client sees |
+|---|---|
+| Settled | `200` with the data and a `PAYMENT-RESPONSE` header (the `SettleResponse`) |
+| Any settle failure | `402` again (SDK behaviour). The route handler does not run. Clients must not rely on the reason reaching them |
+
+### 7.4 Client: wallet configuration and recovery
+
+| Piece | Rule |
+|---|---|
+| Scheme registration | `new x402Client().register(<devnet CAIP-2>, cashuClientScheme)`. The wallet registers only `cashu`, so it never pays with any other scheme |
+| Spend controls | `setSpendControls({ allowedAssets: [{ network, asset: USDC_MINT, maxAmountPerPayment: String(MAX_PER_CALL_CENTS * 10_000) }] })`. Required: x402 rejects non-default assets for custom schemes otherwise. This is also the first per-call cap |
+| `createPaymentPayload` | Runs the Blindfold refusals (allowlist, signer set, exact sum, mint, unit, cap) and throws `PaymentRefused` before any proof leaves. Moves chosen proofs to `pending` |
+| `schemeHooks.onPaymentResponse` | Success: drop the pending proofs. Failure or no `SettleResponse`: `POST /v1/checkstate` (NUT-07) for them; `UNSPENT` go back, `SPENT` are dropped. This also covers a lost `200` |
 
 ### 7.5 Mock API paid endpoint
 
@@ -375,7 +421,7 @@ Built **first**, before the components, by whoever starts. Every TS component im
 | `constants` | Everything in §2 |
 | `types` | Re-exports `Proof`, `BlindedMessage`, etc. from `cashu-ts`; `TokenFile`, `ProviderInfo`, `RedeemRequest/Response`, `MintQuoteSolanaUsdcRequest/Response`, error code enum (§5) |
 | `lock` | `buildLockOptions(allowlist: string[]): P2PKOptions` (sorted, §3.3); `signerSet(secret: string): string[]` |
-| `paymentRequest` | `buildPaymentRequest({amount, mintUrl, providerPubkey}): string` (`creqA`); `parsePaymentRequest(header): {amount, unit, mints, providerPubkey}` |
+| `x402` | `CASHU_SCHEME`, `SOLANA_DEVNET_CAIP2`; types `CashuExtra`, `CashuPayload` (`{ token }`); `parseCashuRequirements(req): { cents, mints, unit, providerPubkey }` (throws if `amount` is not whole cents or `payTo != nut10.d`); `cashuExtra({ mintUrl, providerPubkey })` |
 | `units` | `centsToBaseUnits`, `baseUnitsToCents` (throws if not whole cents) |
 | `vault` | PDA helpers (`configPda`, `depositPda(index)`, `providerPda(id)`, `vaultAta`), account decoders and instruction builders from the Anchor IDL (`@anchor-lang/core`) |
 | `env` | Zod-validated loader for §9 |
@@ -393,10 +439,10 @@ class AgentWallet {
   payFetch(url: string | URL, init?: RequestInit): Promise<Response>; // fetch-compatible
 }
 class PaymentRefused extends Error { reason: RefusalReason }  // thrown before any proof leaves the wallet
-class PaymentFailed extends Error { status: number }          // paid retry returned non-2xx (after checkstate recovery)
+class PaymentFailed extends Error { status: number; errorReason?: string } // paid retry not settled (after checkstate recovery). status is 402 for any settle failure (§7.3); errorReason only if the SDK surfaced it
 ```
 
-`payFetch` returns non-402 responses unchanged and never throws for them. `RefusalReason` includes `provider_not_allowed`, `provider_not_in_signer_set`, `over_cap`, `insufficient_balance`, `insufficient_exact`, `unit`, `mint`, `bad_request`, `amount_mismatch`.
+`payFetch` wraps `@x402/fetch` (§7.4). It returns non-402 responses unchanged and never throws for them. x402 wraps errors thrown inside a scheme ("Failed to create payment payload: ..."), and its spend controls refuse over-cap requests before our scheme runs; `payFetch` unwraps both into `PaymentRefused` (the latter as `over_cap`). `RefusalReason` includes `provider_not_allowed`, `provider_not_in_signer_set`, `over_cap`, `insufficient_balance`, `insufficient_exact`, `unit`, `mint`, `bad_request`.
 
 ## 9. Repo layout and configuration
 
@@ -412,6 +458,7 @@ packages/wallet/       04: wallet SDK + owner CLI
 agents/simple/         05: simple agent
 config/providers.json  provider_id → name, url
 scripts/               devnet setup (initialize, register provider), e2e test
+spikes/x402-cashu/     feasibility spike (reference only, not production code)
 docker-compose.yml     Postgres
 .env.example
 ```
@@ -423,7 +470,7 @@ docker-compose.yml     Postgres
 | `ADMIN_KEYPAIR` (path) | scripts |
 | `MINT_URL` | wallet, mock API, agent |
 | `DATABASE_URL`, `MINT_SEED` (32-byte hex), `MINT_AUTHORITY_KEYPAIR` (path), `MINT_ADMIN_TOKEN`, `PORT` (3338) | mint |
-| `PROVIDER_SECRET_KEY` (secp256k1 hex), `PROVIDER_ID`, `PRICE_CENTS` (5), `PORT` (4000) | mock API |
+| `PROVIDER_SECRET_KEY` (secp256k1 hex), `PROVIDER_ID`, `PRICE_CENTS` (5), `PORT` (4000), `PUBLIC_URL` (for x402 `resource.url`) | mock API |
 | `OWNER_KEYPAIR` (path) | owner CLI |
 | `TOKEN_FILE`, `MAX_PER_CALL_CENTS` (10), `WALLET_ALLOWLIST` (comma list of provider pubkeys; default: union of the proofs' signer sets) | wallet SDK, agent |
 
@@ -434,7 +481,7 @@ docker-compose.yml     Postgres
 `scripts/e2e.ts` on devnet:
 
 1. Owner CLI: quote $1.00 (100 cents), deposit, wait until `amount_paid == 100`, mint tokens locked to the mock API's key, write the token file.
-2. Agent: one paid call to the mock API through the wallet SDK. Gets `402`, retries, gets `200` with data. Token file balance drops by `PRICE_CENTS`.
-3. Replay: resend the same `cashuB` to the mock API. Gets `400` with mint code `11001`.
+2. Agent: one paid call to the mock API through the wallet SDK. Gets `402` with `PAYMENT-REQUIRED` offering scheme `cashu`, retries with `PAYMENT-SIGNATURE`, gets `200` with data and a `PAYMENT-RESPONSE` whose `transaction` is a redemption id. Token file balance drops by `PRICE_CENTS`.
+3. Replay: resend the same `PAYMENT-SIGNATURE` header. Gets `402`; the provider's settle logged `redeem_failed_11001`; its mint balance is unchanged.
 4. `POST /v1/blindfold/admin/settle`. The provider's payout account receives `PRICE_CENTS * 10_000` base units of USDC on devnet.
 5. `GET /v1/blindfold/admin/reconcile`: `vault_balance == deposited - settled`.

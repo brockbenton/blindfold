@@ -28,6 +28,7 @@ Repo layout: 00 §9.
 - **"Isn't this a mixer?"** Lead with the [not-a-mixer rules](design.md#trust-and-not-a-mixer).
 - **"Privacy for whom?"** Real x402 volume is tiny (about $28k/day in March 2026, roughly half wash trading). Answer with the Linux Foundation standard and Circle building privacy into Arc. Teams that subscribe to their main vendors already get much of this privacy through ordinary billing; demand for this payment method is unproven.
 - **"Why not fresh wallets?"** Curvy's approach covers part of the need cheaply. Ecash adds an untraceable funding source, an operator who can't link payments, no gas per call, and rules in the tokens.
+- **Judges may know x402 `batch-settlement` on Solana.** It also deposits once and settles in batches. Answer: its channels are public per payer and provider, the agent holds a signing key, and it needs one funded channel per provider.
 - **Judges may know bigrceo/hush.** Lead with the competitor table: operator-blind plus guardrails in the tokens.
 - **Privacy is thin with 2 agents.** The bot makes it concrete; say plainly that privacy grows with users.
 - **Overclaiming on security.** Follow [`security-sources.md`](security-sources.md#how-we-use-this): the drain flaw is patched in code but not in structure, and we never claim to fix x402 security in general.
@@ -35,5 +36,4 @@ Repo layout: 00 §9.
 
 ## Open questions
 
-- [ ] Facilitator for the baseline x402 path on Solana devnet (add-on 1)?
 - [ ] Add-on 7: hide provider revenue at the cost of moving the provider registry offchain?

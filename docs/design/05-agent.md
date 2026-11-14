@@ -28,7 +28,7 @@ class PaymentRefused extends Error { reason: RefusalReason }
 class PaymentFailed extends Error { status: number }
 ```
 
-`payFetch` does the 402 handshake (§7) and returns non-402 responses unchanged (it does not throw for them). It throws `PaymentRefused` before any proof leaves the wallet, with `reason` one of `bad_request`, `unit`, `mint`, `over_cap`, `provider_not_allowed`, `provider_not_in_signer_set`, `insufficient_exact`, `insufficient_balance` (04 also has `amount_mismatch`). It throws `PaymentFailed` when the paid retry returns non-2xx (after the wallet's checkstate recovery). Network failures propagate as `TypeError` (fetch) or an error with `cause`.
+`payFetch` does the x402 handshake (§7, scheme `cashu`) and returns non-402 responses unchanged (it does not throw for them). It throws `PaymentRefused` before any proof leaves the wallet, with `reason` one of `bad_request`, `unit`, `mint`, `over_cap`, `provider_not_allowed`, `provider_not_in_signer_set`, `insufficient_exact`, `insufficient_balance` (04 also has). It throws `PaymentFailed` when the paid retry returns non-2xx (after the wallet's checkstate recovery); x402 collapses every settle failure into `402`, so `status` is `402` and the reason is not available. On success the `PAYMENT-RESPONSE` header carries the provider's redemption id (`decodePaymentResponseHeader(res.headers.get('PAYMENT-RESPONSE')).transaction`); the agent may log it with the call. Network failures propagate as `TypeError` (fetch) or an error with `cause`.
 
 **Paid endpoint (00 §7.5).** `GET {provider.url}/v1/data/:topic` (topic is a path parameter) returns `200 {topic, price, change_24h_pct, volume_24h, whale_netflow, as_of}`.
 
@@ -135,8 +135,8 @@ On failure with `--json`: `{ "ok": false, "error": { "kind": "payment_refused"|"
 | 1 | `internal` | Unexpected exception |
 | 2 | `config` | Missing or bad flag/env, unreadable token file |
 | 3 | `payment_refused` | `PaymentRefused` from the wallet; print `reason` (e.g. `over_cap`, `insufficient_balance`, `provider_not_allowed`) |
-| 4 | `network` | Mint or provider unreachable (fetch failed, timeout). A `PaymentFailed` with `status` 502 (`mint_unavailable`) also maps here |
-| 5 | `http` | `PaymentFailed` (the paid retry returned non-2xx other than 502, for example `400 redeem_failed`; `status` is reported), or an unpaid non-2xx such as `404` |
+| 4 | `network` | Mint or provider unreachable (fetch failed, timeout) |
+| 5 | `http` | `PaymentFailed` (the paid retry returned non-2xx, always `402` under x402, for example a replayed token; `status` is reported), or an unpaid non-2xx such as `404` |
 | 6 | `no_provider` | No active provider, or `--provider` not found |
 
 No retries in the agent. The wallet already reconciles unspent proofs after a failed retry (§7.4). Fetch timeout 10 s on `list_providers`; `payFetch` timeout is the wallet's.
@@ -168,7 +168,7 @@ agents/simple/
 
 | Stub | Behavior |
 |---|---|
-| `fakeWallet(startCents = 100, priceCents = 5)` | Same shape as the real `AgentWallet` (00 §8.1): `balance()` is synchronous and returns the running total in cents; `payFetch(url)` deducts `priceCents` and returns `200` JSON `{"topic":"<last path segment>","price":172.4,"change_24h_pct":-1.2,"volume_24h":123456789,"whale_netflow":42000,"as_of":1763166400,"fake":true}`. Throws `PaymentRefused` with `reason: 'insufficient_balance'` when the balance is below price, and `'over_cap'` when price exceeds `maxPerCallCents`. Env `FAKE_FAIL_STATUS=400` makes it throw `PaymentFailed` with that `status` (balance unchanged) |
+| `fakeWallet(startCents = 100, priceCents = 5)` | Same shape as the real `AgentWallet` (00 §8.1): `balance()` is synchronous and returns the running total in cents; `payFetch(url)` deducts `priceCents` and returns `200` JSON `{"topic":"<last path segment>","price":172.4,"change_24h_pct":-1.2,"volume_24h":123456789,"whale_netflow":42000,"as_of":1763166400,"fake":true}`. Throws `PaymentRefused` with `reason: 'insufficient_balance'` when the balance is below price, and `'over_cap'` when price exceeds `maxPerCallCents`. Env `FAKE_FAIL_STATUS=402` makes it throw `PaymentFailed` with that `status` (balance unchanged) |
 | `fakeProviders` | `[{ provider_id: 0, pubkey: "02" + "11".repeat(32), name: "mock-api", url: "http://localhost:4000", price_cents: 5, topics: ["sol", "btc", "eth"], active: true }]`, served by a patched `list_providers` |
 
 Env `FAKE_PRICE_CENTS` and `FAKE_START_CENTS` tune the fake wallet so tests can hit each exit code. Until `packages/wallet` exists, `stubs.ts` also defines local `PaymentRefused` and `PaymentFailed` with the 00 §8.1 fields; switch to the real imports once published.
@@ -176,7 +176,7 @@ Env `FAKE_PRICE_CENTS` and `FAKE_START_CENTS` tune the fake wallet so tests can 
 ## 8. Done when
 
 - [ ] `agent --fake --json` exits 0 and prints the JSON in §5.4 with `balanceBefore - balanceAfter == paidCents`.
-- [ ] `scripted.test.ts` covers exits 0, 3 (empty wallet, `over_cap`), 4 (list fetch fails, `PaymentFailed` 502), 5 (`PaymentFailed` 400), 6 (no provider).
+- [ ] `scripted.test.ts` covers exits 0, 3 (empty wallet, `over_cap`), 4 (list fetch fails), 5 (`PaymentFailed` 402), 6 (no provider).
 - [ ] Against the real mint, wallet and mock API: one call returns 200, token file balance drops by `PRICE_CENTS`, exit 0.
 - [ ] stdout in `--json` mode is exactly one JSON line (e2e script parses it).
 - [ ] Agent code never reads the Solana keypair, `MINT_ADMIN_TOKEN` or any provider secret.
