@@ -1,0 +1,25 @@
+{
+  "name": "agent-simple",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": { "agent": "./dist/main.js" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@blindfold/protocol": "workspace:*",
+    "@blindfold/wallet": "workspace:*",
+    "@solana/web3.js": "1.99.0",
+    "@x402/fetch": "2.31.0"
+  },
+  "devDependencies": {
+    "@anchor-lang/core": "1.2.2",
+    "@blindfold/testkit": "workspace:*",
+    "@hono/node-server": "2.1.8",
+    "hono": "4.13.18"
+  }
+}

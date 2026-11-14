@@ -221,3 +221,10 @@ Env `FAKE_PRICE_CENTS` and `FAKE_START_CENTS` tune the fake wallet so tests can 
 |---|---|---|
 | 1 | `paidCents` is computed from balance deltas, which is wrong if two calls run concurrently | Agent is sequential in MVP. Wallet could return `paidCents` on the response (for example a header-less side channel) later |
 | 2 | The agent cannot tell a lost `200` from a rejected payment | Covered by wallet checkstate (§7.4). No agent action |
+
+## 10. Implementation notes (client stream)
+
+- `runMain(argv, env, io, { tools?, connection? })` returns the exit code; the wallet lock is released in `finally`.
+- Without `--fake`, `SOLANA_RPC_URL`, `VAULT_PROGRAM_ID` and `USDC_MINT` must be set (exit 2), as in 5.3, even though the protocol loader has defaults.
+- `RunResult.calls[]` also carries the optional `redemptionId`.
+- In-process e2e: `agents/simple/test/e2e-local.test.ts`.
