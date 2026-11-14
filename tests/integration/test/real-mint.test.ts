@@ -11,7 +11,7 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { USDC_DEVNET_MINT, VAULT_IDL, vaultAta } from "@blindfold/protocol";
 import { makeProviderKey } from "@blindfold/testkit";
-import { AgentWallet, PaymentRefused, ownerFund, type Depositor } from "@blindfold/wallet";
+import { AgentWallet, DevDepositor, PaymentRefused, ownerFund } from "@blindfold/wallet";
 import { FakeSender, MemoryVault } from "../../../services/mint/src/chain/memory.js";
 import { createPool } from "../../../services/mint/src/db.js";
 import { createMint } from "../../../services/mint/src/mint.js";
@@ -119,13 +119,7 @@ describe.skipIf(!DATABASE_URL)("real mint + mock API + owner + agent", () => {
     stops.push(() => new Promise<void>((r) => { (as as any).closeAllConnections?.(); as.close(() => r()); }));
 
     // Real owner flow; the depositor calls the mint's /dev/deposit instead of Solana.
-    const depositor: Depositor = {
-      async deposit({ amountCents, depositRef }) {
-        const r = await mintReq("/dev/deposit", { deposit_ref: Buffer.from(depositRef).toString("hex"), amount_cents: amountCents }, true);
-        if (r.status !== 200) throw new Error(`dev deposit failed: ${JSON.stringify(r.json)}`);
-        return { signature: `dev-${r.json.index}` };
-      },
-    };
+    const depositor = new DevDepositor({ mintUrl, adminToken: ADMIN });
     await ownerFund({ mintUrl, cents: 100, tokenFile, depositor, stateDir: join(dir, "state"), pollMs: 20 });
   });
   afterAll(async () => { for (const s of stops.reverse()) await s(); });
@@ -240,12 +234,7 @@ describe.skipIf(!DATABASE_URL)("real mint + mock API + owner + agent", () => {
 
     const slash = `${mintUrl}/`;
     const file2 = join(dir, "tokens2.json");
-    const depositor: Depositor = {
-      async deposit({ amountCents, depositRef }) {
-        const r = await mintReq("/dev/deposit", { deposit_ref: Buffer.from(depositRef).toString("hex"), amount_cents: amountCents }, true);
-        return { signature: `dev-${r.json.index}` };
-      },
-    };
+    const depositor = new DevDepositor({ mintUrl: slash, adminToken: ADMIN });
     await ownerFund({ mintUrl: slash, cents: 20, tokenFile: file2, depositor, stateDir: join(dir, "state2"), pollMs: 20 });
     const api2 = serve({
       fetch: createApp({ mintUrl: slash, providerSecretKey: providerKey.sk, priceCents: PRICE, redeem: new HttpRedeemClient(slash), log: () => undefined }).fetch,

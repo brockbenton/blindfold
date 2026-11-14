@@ -51,7 +51,7 @@ node packages/wallet/dist/cli.js fund --cents 100
 node packages/wallet/dist/cli.js balance
 ```
 
-With the fake chain, fund through the test harness instead (it swaps the depositor for `/dev/deposit`): section 6.
+Against a fake-chain mint (section 2), add `--dev-deposit` (needs `MINT_ADMIN_TOKEN`; no Solana, no `OWNER_KEYPAIR`): `MINT_ADMIN_TOKEN=dev-admin node packages/wallet/dist/cli.js fund --cents 100 --dev-deposit`. It refuses with a clear error if the mint is not running with `MINT_DEV_FAKE_CHAIN=1`.
 
 ## 5. Agent
 

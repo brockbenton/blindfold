@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import { Command } from "commander";
 import { loadOwnerEnv, loadWalletEnv } from "@blindfold/protocol";
-import { SolanaDepositor, type Depositor } from "./depositor.js";
+import { DevDepositor, SolanaDepositor, type Depositor } from "./depositor.js";
 import { fetchProviders, ownerBalance, ownerFund, ownerResume } from "./owner.js";
 
 export interface CliDeps {
@@ -29,7 +29,14 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<void> 
   const env = deps.env ?? process.env;
   const mintUrl = () => loadWalletEnv(env).MINT_URL;
   const tokenFileOf = (v?: string) => v ?? loadWalletEnv(env).TOKEN_FILE;
-  const depositor = () => (deps.makeDepositor ?? (() => solanaDepositor(env)))();
+  const depositor = (dev = false) => {
+    if (dev) {
+      const adminToken = env.MINT_ADMIN_TOKEN;
+      if (!adminToken) throw new Error("--dev-deposit needs MINT_ADMIN_TOKEN");
+      return new DevDepositor({ mintUrl: mintUrl(), adminToken });
+    }
+    return (deps.makeDepositor ?? (() => solanaDepositor(env)))();
+  };
 
   const program = new Command("owner").exitOverride().configureOutput({ writeOut: out, writeErr: () => undefined });
 
@@ -37,11 +44,12 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<void> 
     .requiredOption("--cents <n>", "amount in cents", (v) => Number.parseInt(v, 10))
     .option("--prices <list>", "expected provider prices in cents, comma separated")
     .option("--token-file <path>")
-    .action(async (o: { cents: number; prices?: string; tokenFile?: string }) => {
+    .option("--dev-deposit", "dev only: deposit through the mint's /dev/deposit (fake-chain mint, needs MINT_ADMIN_TOKEN)")
+    .action(async (o: { cents: number; prices?: string; tokenFile?: string; devDeposit?: boolean }) => {
       const tokenFile = tokenFileOf(o.tokenFile);
       const prices = o.prices ? Object.fromEntries(o.prices.split(",").map((p, i) => [i, Number.parseInt(p, 10)])) : undefined;
       const r = await ownerFund({
-        mintUrl: mintUrl(), cents: o.cents, prices, tokenFile, depositor: depositor(),
+        mintUrl: mintUrl(), cents: o.cents, prices, tokenFile, depositor: depositor(o.devDeposit),
         stateDir: deps.stateDir, pollMs: deps.pollMs, onProgress: (s) => out(`step ${s}`),
       });
       const b = await ownerBalance(tokenFile);
