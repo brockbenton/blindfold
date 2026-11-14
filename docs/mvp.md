@@ -12,13 +12,14 @@ What we build. Why is in [`README.md`](../README.md), how in [`design.md`](desig
 2. **Mint** (TypeScript + Postgres, `cashu-ts`). Blind-signs tokens, redeems them, keeps the spent set and provider balances.
 3. **Mock paid API.** Returns an x402 `402` offering the `cashu` scheme and serves data once it gets a valid token.
 4. **Agent wallet SDK.** Holds the tokens, handles the x402 handshake and retries with payment.
-5. **Simple agent.** Makes at least one paid call through the wallet.
+5. **Simple agent.** Checks the vault's reserves onchain, then makes at least one paid call through the wallet.
 
 ### Done when
 
 - [ ] The owner deposits USDC into the vault and receives tokens.
 - [ ] The agent calls the mock API, gets a 402, pays with a token and gets the data.
 - [ ] The mint rejects a replayed token.
+- [ ] The agent reads the vault balance from Solana and refuses to pay when reserves don't cover outstanding tokens.
 - [ ] `settle_batch` pays the provider in USDC on devnet.
 
 ## Add-ons

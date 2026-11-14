@@ -101,6 +101,7 @@ All timestamps `timestamptz default now()` unless stated. Money columns are cent
 | `POST /v1/mint/solana-usdc` | See 4.5 |
 | `GET /v1/blindfold/providers` | `select * from providers order by provider_id`; `name`/`url`/`price_cents` are `null` and `topics` is `[]` when `config/providers.json` has no entry; inactive providers are returned with `active: false` |
 | `POST /v1/blindfold/redeem` | See 4.7 |
+| `GET /v1/blindfold/reserves` | Public, no auth (00 §5.5a). One read transaction (`repeatable read`, read only): `issued = sum(issued_signatures.amount)`, `settled = sum(amount_cents)` over `confirmed` settlements, `outstanding = issued - settled`. Returns `{issued, settled, outstanding, keyset_id, updated_at}` (cents; `keyset_id` is the active keyset, `updated_at` is unix s at read time). Trust limit: `issued` is mint-reported until the issuance-log add-on puts it onchain, so the agent's check catches a drained or underfunded vault but not a mint that under-reports issuance |
 | `/v1/blindfold/admin/*` | Bearer check with constant-time compare. `settle` runs 4.8 once. `balances` lists rows with `balance > 0` |
 
 Error helper: `throw new MintError(code, detail, status = 400)` returns `{detail, code}`; only the unknown-quote GET passes 404. Body validation failures (zod) use code `10000`.
@@ -214,7 +215,7 @@ services/mint/
     crypto/keyset.ts      createNewMintKeys, privKeys holder
     crypto/blind.ts       sign + DLEQ
     crypto/p2pk.ts        verifyLockedProof(proof) -> {providerPubkey}
-    routes/{info,keys,quote,mint,providers,redeem,checkstate,admin}.ts
+    routes/{info,keys,quote,mint,providers,reserves,redeem,checkstate,admin}.ts
     chain/vaultReader.ts  interface VaultReader + SolanaVaultReader
     chain/settleSender.ts interface SettleSender + SolanaSettleSender
     jobs/depositPoller.ts
@@ -278,6 +279,7 @@ When the real vault exists, swap in `SolanaVaultReader` and `SolanaSettleSender`
 | 13a | Deactivated provider: sync sets `active = false`, `GET /providers` lists it with `active: false`, its balance is skipped by settlement and stays visible in `balances`; providers.json entry without `topics` serves `topics: []` |
 | 13 | More than 8 providers with balances: first call pays the 8 largest, second call pays the rest |
 | 14 | `reconcile`: `vault_balance == deposited - settled` after the flow in section 6 |
+| 14a | `GET /v1/blindfold/reserves`: unauthenticated `200`; after mint 100 and a redeem of 40 settled in full, `{issued: 100, settled: 40, outstanding: 60}`; a `pending` or `failed` settlement is not counted as settled; values come from one transaction (concurrent mint during the read does not make `outstanding` inconsistent) |
 | 15 | Against `solana-test-validator` with the real vault: deposit, mint, redeem, settle end to end |
 
 ## 8. Open questions
