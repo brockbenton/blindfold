@@ -1,0 +1,24 @@
+{
+  "name": "mock-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@blindfold/protocol": "workspace:*",
+    "@cashu/cashu-ts": "4.13.1",
+    "@hono/node-server": "2.1.8",
+    "@x402/core": "2.31.0",
+    "@x402/hono": "2.31.0",
+    "hono": "4.13.18"
+  },
+  "devDependencies": {
+    "@blindfold/testkit": "workspace:*",
+    "@x402/fetch": "2.31.0"
+  }
+}

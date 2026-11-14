@@ -259,3 +259,10 @@ Manual: with the real mint, `scripts/e2e.ts` steps 2 and 3 pass (00 §10).
 3. **Move `src/x402/` to a package?** Once a second provider (add-on) needs it, extract it (possibly shared with the wallet's client scheme). Not needed for the MVP.
 4. **Does the SDK put `errorReason` into the `402` `PAYMENT-REQUIRED` `error` field?** The spike saw only a non-200 status. Confirm in `@x402/hono`; if it does, decide whether leaking reasons such as `wrong_lock` is acceptable (00 §7.3 says clients must not rely on it).
 5. **`mint_unavailable` handling.** The SDK turns every settle failure into a plain `402`, which looks like "pay again" to the client. Decide whether the facilitator should throw instead (the SDK may map that to `500`) so clients can tell an outage from a refusal. The wallet's checkstate recovery is safe either way.
+
+## 10. Implementation notes (client stream)
+
+- Open question 4 answered: a failed settle gives `402` with body `{}` and no `PAYMENT-REQUIRED`; the reason is only in the provider log.
+- `PUBLIC_URL` is applied by `withPublicUrl(app, url)` (rewrites the request origin) in `index.ts`; `createApp` takes no URL.
+- `/depth` is priced at `depthPriceCents` (default 10). `dataHandler` option replaces the paid handler (poisoned-response hook).
+- Node caps request headers near 16 KiB, so the 64 KiB token cap is tested on the facilitator directly.

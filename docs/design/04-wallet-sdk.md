@@ -314,3 +314,11 @@ All with vitest, no network.
 | Q1 | 00 §5.3 quote `amount` is the target; `amount_paid` may differ. If an owner overpays, mint only what was planned | Wallet mints `min(cents, amount_paid - amount_issued)` and re-plans the split to that amount |
 | Q2 | x402 spend controls reject over-cap before our scheme runs, so the refusal reason is inferred from the SDK error text | Match on the error shape in `payFetch`; pin `@x402/*` to 2.31.x and cover it with test 5 so an SDK upgrade fails loudly |
 | Q3 | Does the SDK retry a paid request after `onPaymentResponse` returns, or after a `402` to the paid retry? | Spike showed one retry only. Re-check on upgrade; the hook returns nothing so no recovery retry is requested |
+
+## 10. Implementation notes (client stream)
+
+- Lock file staleness is by dead pid, not 60 s age (a long-running agent has no heartbeat). A second `open()` in the same process throws.
+- `PaymentFailed.errorReason` is never populated: `@x402/hono` answers a failed settle with `402 {}` and no `PAYMENT-REQUIRED` header (verified by test in mock-api).
+- Non-USDC asset is refused by x402 spend controls before our scheme; `payFetch` maps it to `mint`. Network errors on the paid retry trigger the same checkstate recovery as a 402.
+- CLI exposes `runCli(argv, deps)` so tests inject a depositor instead of an env flag.
+- Test fakes (`FakeMint` incl. redeem and reserves, `FakeProvider`, `FakeDepositor`) live in `packages/wallet/test/fakes` and are imported by the agent e2e test.
