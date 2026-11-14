@@ -62,6 +62,15 @@ describe("exit codes", () => {
     expect(r.code).toBe(2);
     expect(r.stderr).toContain("TOKEN_FILE");
   });
+  it.each([["--json", "--bogus"], ["--bogus", "--json"], ["--json", "--calls"]])(
+    "reports parse errors as JSON for %j", async (...argv) => {
+      const r = await cli(argv);
+      expect(r.code).toBe(2);
+      expect(r.stdout.trim().split("\n")).toHaveLength(1);
+      expect(JSON.parse(r.stdout)).toMatchObject({ ok: false, error: { kind: "config" } });
+      expect(r.stderr).toBe("");
+    },
+  );
   it("4, 5, 6 from tools", async () => {
     const base = (over: Partial<Tools>): Tools => ({
       balance: async () => ({ cents: 100 }), list_providers: async () => fakeProviders,

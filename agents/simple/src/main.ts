@@ -36,7 +36,9 @@ export async function runMain(
   io: Io,
   overrides: { tools?: Tools; connection?: Connection } = {},
 ): Promise<number> {
-  let out: Reporter = humanReporter(io);
+  // Parse failures still honor JSON output, even if --json follows the bad flag.
+  let out: Reporter = argv.slice(0, argv.indexOf("--") < 0 ? argv.length : argv.indexOf("--")).includes("--json")
+    ? jsonReporter(io) : humanReporter(io);
   let opened: AgentWallet | undefined;
   try {
     let a;
