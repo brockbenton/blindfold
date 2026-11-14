@@ -200,19 +200,29 @@ async function runFund(st: FundState, o: FundOptions, stateDir: string) {
     if ([...signerSet(p.secret)].sort().join() !== want) throw new Error("issued proof lock does not match the allowlist");
   }
 
-  // Step 8: write (append on top-up).
+  // Step 8: write (append on top-up). Hold the token file lock (04 section 5.2): an agent that has the file open
+  // rewrites it from memory on its next payment, which would drop proofs appended underneath it.
   progress("write");
   const store = new FileTokenStore(st.tokenFile);
   const wire = proofs.map((p) => toWireProof(p));
-  let file: StoredFile;
-  if (existsSync(st.tokenFile)) {
-    file = await store.read();
-    if (file.mint.replace(/\/+$/, "") !== st.mintUrl.replace(/\/+$/, "")) throw new Error("token file is for a different mint");
-    file.proofs.push(...wire);
-  } else {
-    file = { version: 1, mint: st.mintUrl, unit: "usd", proofs: wire };
+  try {
+    store.acquireLock();
+  } catch (e) {
+    throw new Error(`${(e as Error).message}: stop the agent using it, then run \`owner resume ${st.quotePubkey}\` to write the minted tokens`);
   }
-  await store.write(file);
+  try {
+    let file: StoredFile;
+    if (existsSync(st.tokenFile)) {
+      file = await store.read();
+      if (file.mint.replace(/\/+$/, "") !== st.mintUrl.replace(/\/+$/, "")) throw new Error("token file is for a different mint");
+      file.proofs.push(...wire);
+    } else {
+      file = { version: 1, mint: st.mintUrl, unit: "usd", proofs: wire };
+    }
+    await store.write(file);
+  } finally {
+    store.releaseSync();
+  }
   await unlink(statePath(stateDir, st.quotePubkey)).catch(() => undefined);
   return { quote: st.quote, cents: st.cents, proofs: wire.length, depositTx: st.depositTx };
 }
