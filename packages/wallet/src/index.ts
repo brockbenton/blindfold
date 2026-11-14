@@ -5,7 +5,7 @@ export { selectExact, type SelectError } from "./select.js";
 export { FileTokenStore, validateFile, type TokenStore, type StoredFile, type PendingWire } from "./store.js";
 export { classify, proofY, type MintLike } from "./checkstate.js";
 export { planDenominations } from "./denominations.js";
-export { SolanaDepositor, type Depositor } from "./depositor.js";
+export { SolanaDepositor, DevDepositor, type Depositor } from "./depositor.js";
 export {
   ownerFund, ownerResume, ownerBalance, fetchProviders, loadFundState,
   type FundOptions, type FundStep, type FundState,
