@@ -90,6 +90,22 @@ describe("ownerFund", () => {
     expect(total(w.file())).toBe(20);
   });
 
+  it("a top-up never writes underneath an agent that holds the token file lock", async () => {
+    w = await makeWorld();
+    await ownerFund(fundArgs(10));
+    const wallet = await w.open();
+    await expect(ownerFund(fundArgs(10))).rejects.toThrow(/owner resume/);
+    expect(total(w.file())).toBe(10);
+    wallet.close();
+    const pk = readdirSync(join(w.dir, "state"))[0].replace(".json", "");
+    await ownerResume(pk, { depositor: w.depositor, stateDir: join(w.dir, "state"), pollMs: 5 });
+    expect(w.depositor.calls).toHaveLength(2);
+    expect(total(w.file())).toBe(20);
+    expect(existsSync(`${w.tokenFile}.lock`)).toBe(false);
+    // The agent can open the file again: the owner released its lock.
+    expect((await w.open()).balance()).toBe(20);
+  });
+
   it("state file is mode 0600", async () => {
     w = await makeWorld();
     await expect(ownerFund(fundArgs(10, { onProgress: (s: string) => { if (s === "deposit") throw new Error("stop"); } }))).rejects.toThrow("stop");
