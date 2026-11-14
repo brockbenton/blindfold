@@ -1,0 +1,17 @@
+{
+  "name": "@blindfold/devnet-scripts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "initialize": "node --experimental-strip-types initialize.ts",
+    "register-provider": "node --experimental-strip-types register-provider.ts",
+    "deposit-smoke": "node --experimental-strip-types deposit-smoke.ts"
+  },
+  "dependencies": {
+    "@blindfold/protocol": "workspace:*",
+    "@solana/spl-token": "0.4.15",
+    "@solana/web3.js": "1.99.0"
+  }
+}
