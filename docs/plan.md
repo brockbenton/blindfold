@@ -1,39 +1,34 @@
-# Blindfold: Plan
+# Delivery plan
 
-How we build it. Scope is in [`mvp.md`](mvp.md), design in [`design.md`](design.md), build briefs in [`design/`](design/00-interfaces.md).
+[Implemented scope](mvp.md) · [Runbook](RUNNING.md) · [Design](design.md)
 
-## Dates
+## Schedule (2026)
 
-| When | What |
+| When | Work |
 |---|---|
-| Sun Nov 15 to Wed Nov 18 | Build |
-| Thu Nov 19 | Demo video + recorded backup |
-| Fri Nov 20, 12:00 PM CST | Submit |
-| Sat Nov 21 | Closing ceremony, in person |
+| November 15–18 | Integration and remaining demo work |
+| November 19 | Demo video and recorded backup |
+| November 20, noon CST (18:00 UTC) | Submission |
+| November 21 | Closing ceremony |
 
-## Build order
+The original component build is present. The [vault notes](design/01-vault.md#10-implementation-notes-and-decisions) record a November 14 devnet acceptance run. Re-run acceptance before recording; a historical pass does not establish current RPC, key or deployment availability.
 
-1. **Together:** `packages/protocol` from [`design/00-interfaces.md`](design/00-interfaces.md) §8, plus toolchain setup (Solana CLI, Anchor 1.2.2, Postgres).
-2. **In parallel**, each against the contract and its own stubs:
-   - Vault ([`01-vault.md`](design/01-vault.md))
-   - Mint ([`02-mint.md`](design/02-mint.md))
-   - Mock API, wallet SDK, agent ([`03`](design/03-mock-api.md), [`04`](design/04-wallet-sdk.md), [`05`](design/05-agent.md))
-3. **Integrate** on devnet until the acceptance script in 00 §10 passes. That is MVP done.
-4. **Add-ons** in the order in [`mvp.md`](mvp.md#add-ons).
+## Remaining work
 
-Repo layout: 00 §9.
+1. Keep the TypeScript build, type checks and PostgreSQL-backed tests passing; validate the real vault separately with the [runbook](RUNNING.md).
+2. Build the `exact` baseline and competitor-bot comparison, then the full hostile-response demo. The mock API currently offers only `cashu`.
+3. Add QuickNode Streams only after the base demo is repeatable. Polling already supports the mint workflow.
+4. Consider owner approval, Temporal, issuance logging and hidden revenue in the [add-on order](mvp.md#add-ons). Do not present them as implemented.
+5. Record a backup with known balances, provider configuration and matching program/keypair IDs.
 
-## Risks
+## Risks to demonstrate honestly
 
-- **"Isn't this a mixer?"** Lead with the [not-a-mixer rules](design.md#trust-and-not-a-mixer).
-- **"Privacy for whom?"** Real x402 volume is tiny (about $28k/day in March 2026, roughly half wash trading). Answer with the Linux Foundation standard and Circle building privacy into Arc. Teams that subscribe to their main vendors already get much of this privacy through ordinary billing; demand for this payment method is unproven.
-- **"Why not fresh wallets?"** Curvy's approach covers part of the need cheaply. Ecash adds an untraceable funding source, an operator who can't link payments, no gas per call, and rules in the tokens.
-- **Judges may know x402 `batch-settlement` on Solana.** It also deposits once and settles in batches. Answer: its channels are public per payer and provider, the agent holds a signing key, and it needs one funded channel per provider.
-- **Judges may know bigrceo/hush.** Lead with the competitor table: operator-blind plus guardrails in the tokens.
-- **Privacy is thin with 2 agents.** The bot makes it concrete; say plainly that privacy grows with users.
-- **Overclaiming on security.** Follow [`security-sources.md`](security-sources.md#how-we-use-this): the drain flaw is patched in code but not in structure, and we never claim to fix x402 security in general.
-- **Scope:** about 10 components. Follow the cut order in [`mvp.md`](mvp.md#add-ons).
+- **Custody:** the mint can lie about issuance and misuse settlement authority. Public reserves do not make it trustless.
+- **Privacy:** a public observer sees deposits and provider payouts. Timing, amounts and few users can correlate purchases; the demo should state exactly what the observer can access.
+- **Agent compromise:** provider locks stop arbitrary-recipient redemption, but allowed providers can still receive the entire budget. A token leak can fund purchases at those providers.
+- **Recovery:** a lost paid response can consume tokens without returning data. Funding checkpoint recovery is not exactly-once deposit execution.
+- **Scope:** finish the baseline comparison and hostile-response demo before adding unrelated services.
 
-## Open questions
+## Open design question
 
-- [ ] Add-on 7: hide provider revenue at the cost of moving the provider registry offchain?
+Hiding provider revenue would require changing the fixed onchain payout registry or the withdrawal protocol. Decide that trust tradeoff before implementing fresh payout addresses.

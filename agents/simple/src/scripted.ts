@@ -10,7 +10,7 @@ export interface ScriptedOptions {
   reserveEvery: number;
 }
 
-/** 05 section 5.2. The reserve gate fails closed: no paid call after a failed check. */
+/** 05-agent.md, Decision loop. The reserve gate fails closed: no paid call after a failed check. */
 export async function runScripted(tools: Tools, o: ScriptedOptions): Promise<RunResult> {
   const start = (await tools.balance()).cents;
   if (start <= 0) throw new PaymentRefused("insufficient_balance", { balance: start });

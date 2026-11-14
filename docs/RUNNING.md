@@ -1,89 +1,166 @@
 # Run it locally
 
-Prereqs: Node 22+ (26 used), pnpm (`npx -y pnpm@10` works), Postgres. Solana tools for localnet: prefix commands with
-`export PATH="$HOME/.cargo/bin:$HOME/.local/share/solana/install/active_release/bin:$HOME/.avm/bin:$PATH"`.
+Run commands from the repository root unless a step says otherwise. Use Node 22+ (Node 24 is also supported), pnpm **10.33.0** from `package.json`, and PostgreSQL. Solana tools are needed only for the real-vault checks in section 7.
+
+## 1. Install and build
 
 ```sh
-npx -y pnpm@10 install
-npx -y pnpm@10 -r build          # workspace packages resolve each other through dist/
+npx --yes pnpm@10.33.0 install --frozen-lockfile
+npx --yes pnpm@10.33.0 -r build
 ```
 
-## 1. Postgres
+Workspace packages resolve through `dist/`, so build before tests and rebuild after source changes. On a cloud machine with a read-only home directory, set `npm_config_cache` to a writable path such as `/workspace/.cache/npm` before using `npx`.
+
+The programs read process environment variables; they do not automatically load `.env`. `.env.example` lists the settings, with development placeholders. Export the values you need in each terminal, or load a local `.env` explicitly (`set -a; . ./.env; set +a`). Replace placeholder secrets and key paths for real-vault use. Use `.keys/` for local key files; that directory is ignored by Git.
+
+## 2. PostgreSQL
+
+Install PostgreSQL server and client tools. The repository supports a user-owned cluster without Docker:
 
 ```sh
-services/mint/scripts/dev-pg.sh          # no docker; port 54329, prints DATABASE_URL
-export DATABASE_URL=postgres://$USER@127.0.0.1:54329/blindfold
-# or: docker compose up -d postgres  (postgres://blindfold:blindfold@localhost:5432/blindfold)
-services/mint/scripts/dev-pg-stop.sh     # stop (add --wipe to delete data)
+# Debian/Ubuntu commonly put these tools here; adjust for your installed version.
+export PG_BIN=/usr/lib/postgresql/17/bin
+export DATABASE_URL="$(services/mint/scripts/dev-pg.sh)"
+"$PG_BIN/psql" "$DATABASE_URL" -c 'select 1'
 ```
 
-## 2. Mint
-
-Fake chain (no Solana; in-memory vault, fake settlement sender, `/dev/*` hooks):
+`dev-pg.sh` uses `PG_BIN` (default `/usr/bin`), listens on `127.0.0.1:54329`, and stores data in `services/mint/.pgdata/`. It uses local trust authentication for development. Running it again reuses the cluster and database. `DEV_PG_PORT` overrides the port. The stop script also needs the same `PG_BIN`:
 
 ```sh
-export MINT_SEED=$(openssl rand -hex 32) MINT_ADMIN_TOKEN=dev-admin MINT_AUTHORITY_KEYPAIR=unused
-MINT_DEV_FAKE_CHAIN=1 npx -y pnpm@10 --filter @blindfold/mint dev     # :3338
-MINT_URL=http://localhost:3338 MINT_ADMIN_TOKEN=dev-admin npx -y pnpm@10 --filter @blindfold/mint exec tsx scripts/smoke.ts   # mint-only walkthrough
+services/mint/scripts/dev-pg-stop.sh
+# Add --wipe only to deliberately delete this local cluster and all its databases.
 ```
 
-Real vault (localnet or devnet): leave `MINT_DEV_FAKE_CHAIN` unset and set `SOLANA_RPC_URL`, `VAULT_PROGRAM_ID`, `USDC_MINT`,
-`MINT_AUTHORITY_KEYPAIR` (must equal `Config.mint_authority`). For localnet, start the validator and set the vault up first (section 7).
-
-## 3. Mock API (provider)
+Alternatively, with Docker available:
 
 ```sh
-export PROVIDER_SECRET_KEY=$(openssl rand -hex 32) PROVIDER_ID=0 PRICE_CENTS=5 PORT=4000 MINT_URL=http://localhost:3338
-npx -y pnpm@10 --filter mock-api start        # prints its Cashu pubkey
+docker compose up -d postgres
+export DATABASE_URL=postgres://blindfold:blindfold@127.0.0.1:5432/blindfold
 ```
 
-Register that pubkey as a provider: fake chain `curl -X POST localhost:3338/dev/provider -H 'authorization: Bearer dev-admin' -H 'content-type: application/json' -d '{"cashu_pubkey":"<pubkey>"}'`;
-real vault `ADMIN_KEYPAIR=... node --experimental-strip-types scripts/devnet/register-provider.ts <pubkey> <payoutTokenAccount>`.
-Put its `url` and `topics` in `config/providers.json` (the agent finds providers through the mint).
+The compose file uses PostgreSQL 16 and creates `blindfold`, not `mint_test`. CI runs the application suite against both PostgreSQL 16 and 18; a local PostgreSQL 17 cluster also works.
 
-## 4. Owner funds a token file
+## 3. Fake-chain mint
 
-The owner CLI deposits on Solana (`SolanaDepositor`), so it needs a real vault (localnet or devnet):
+This mode runs the real mint HTTP server and database with an in-memory vault and settlement sender. No Solana keys or RPC are needed. The vault resets on process restart while PostgreSQL does not: **use a new disposable database and new token file for each fake-chain server session**. Reusing the database can leave deposit cursors, provider records and liabilities inconsistent with the new empty vault.
+
+Starting from the local cluster in section 2, create an isolated demo database:
 
 ```sh
-export OWNER_KEYPAIR=./keys/owner.json TOKEN_FILE=./tokens.json SOLANA_RPC_URL=... VAULT_PROGRAM_ID=... USDC_MINT=...
-node packages/wallet/dist/cli.js fund --cents 100
+export DEMO_DB="blindfold_demo_$(date +%s)_$$"
+"$PG_BIN/createdb" --maintenance-db="$DATABASE_URL" "$DEMO_DB"
+export DATABASE_URL="postgres://$(id -un)@127.0.0.1:${DEV_PG_PORT:-54329}/$DEMO_DB"
+export MINT_URL=http://localhost:3338
+export MINT_SEED="$(openssl rand -hex 32)"
+export MINT_ADMIN_TOKEN=dev-admin MINT_AUTHORITY_KEYPAIR=unused MINT_DEV_FAKE_CHAIN=1
+PORT=3338 node services/mint/dist/index.js
+```
+
+The database URL construction above is for `dev-pg.sh`; with Docker or an external database use that server's credentials and a separate demo database. Keep a real mint's seed stable across restarts: boot rejects a seed that disagrees with its stored active keyset.
+
+In another terminal, from the repository root:
+
+```sh
+export MINT_URL=http://localhost:3338 MINT_ADMIN_TOKEN=dev-admin
+curl --fail "$MINT_URL/v1/info"
+npx --yes pnpm@10.33.0 --filter @blindfold/mint exec tsx scripts/smoke.ts
+```
+
+The smoke script registers a throwaway provider, deposits, mints, redeems, settles and prints reconciliation totals. Skip it for a fresh provider-0 walkthrough in section 4, or start a new fake-chain session afterwards. It does not test the mock API or an onchain vault. Tests in section 6 cover the application integration.
+
+## 4. Mock API and owner CLI
+
+In another terminal:
+
+```sh
+export MINT_URL=http://localhost:3338
+export PROVIDER_SECRET_KEY="$(openssl rand -hex 32)"
+export PROVIDER_ID=0 PRICE_CENTS=5
+PORT=4000 PUBLIC_URL=http://localhost:4000 node apps/mock-api/dist/index.js
+```
+
+`GET /health` returns its public key. Register that key at the fake-chain mint:
+
+```sh
+export MINT_URL=http://localhost:3338 MINT_ADMIN_TOKEN=dev-admin
+export PROVIDER_PUBKEY="$(curl --fail --silent http://localhost:4000/health | node --input-type=module -e 'let s=""; for await (const c of process.stdin) s+=c; console.log(JSON.parse(s).pubkey)')"
+curl --fail -X POST "$MINT_URL/dev/provider" \
+  -H "authorization: Bearer $MINT_ADMIN_TOKEN" -H 'content-type: application/json' \
+  -d "{\"cashu_pubkey\":\"$PROVIDER_PUBKEY\"}"
+```
+
+Use the returned `provider_id` for `PROVIDER_ID`; restart the API with the same secret if it differs from 0. The smoke script in section 3 registers a provider too, so an API registered afterwards usually has a later ID. `PROVIDER_ID` is a logging sanity check; the mint credits the signing key, not this variable.
+
+The checked-in `config/providers.json` describes provider 0 at port 4000. If the registered ID differs, supply matching metadata through a separate JSON file and set `PROVIDERS_FILE` when starting the mint. Metadata is loaded at boot. It supplies the URL, topics and advisory price used for agent discovery and denomination planning.
+
+For fake-chain funding (no `OWNER_KEYPAIR`):
+
+```sh
+export TOKEN_FILE="$(pwd)/.keys/demo-tokens-$(date +%s).json"
+node packages/wallet/dist/cli.js fund --cents 100 --dev-deposit --state-dir .keys/owner-state
 node packages/wallet/dist/cli.js balance
+node packages/wallet/dist/cli.js providers
 ```
 
-Against a fake-chain mint (section 2), add `--dev-deposit` (needs `MINT_ADMIN_TOKEN`; no Solana, no `OWNER_KEYPAIR`): `MINT_ADMIN_TOKEN=dev-admin node packages/wallet/dist/cli.js fund --cents 100 --dev-deposit`. It refuses with a clear error if the mint is not running with `MINT_DEV_FAKE_CHAIN=1`.
+For a real vault, omit `--dev-deposit` and set `OWNER_KEYPAIR`, `SOLANA_RPC_URL`, `VAULT_PROGRAM_ID` and `USDC_MINT`. The owner needs SOL and USDC. Fund only while the agent using that token file is stopped.
+
+On interruption, inspect the saved state in the selected directory. Resume with its filename's quote pubkey:
+
+```sh
+node packages/wallet/dist/cli.js resume <quote-pubkey> --state-dir .keys/owner-state --dev-deposit
+```
+
+Use `--dev-deposit` only for a fake-chain mint. See [recovery limits](design/04-wallet-sdk.md#recovery-limits) before resuming an uncertain real deposit; a persisted checkpoint is not an exactly-once guarantee.
 
 ## 5. Agent
 
+A stub-only demonstration needs no services:
+
 ```sh
-TOKEN_FILE=./tokens.json MINT_URL=http://localhost:3338 SOLANA_RPC_URL=... VAULT_PROGRAM_ID=... USDC_MINT=... \
-  node agents/simple/dist/main.js --topic sol --calls 3          # add --json for one JSON line
-node agents/simple/dist/main.js --fake                            # no mint, chain or provider
+node agents/simple/dist/main.js --fake --json
 ```
 
-Exit codes: 3 refused (allowlist, cap), 7 reserve check failed (fails closed), 4 network, 5 http.
+The real agent checks the vault on Solana even when talking to a fake-chain mint. To run against a real localnet or devnet vault, export matching settings and fund the token file first:
+
+```sh
+# TOKEN_FILE, MINT_URL, SOLANA_RPC_URL, VAULT_PROGRAM_ID and USDC_MINT must be set.
+node agents/simple/dist/main.js --topic sol --calls 3 --json
+```
+
+There is no CLI switch to bypass reserves for the fake-chain mint. The PostgreSQL integration suite injects a chain stand-in for that workflow. Exit codes: 2 configuration, 3 payment refused, 4 network, 5 HTTP/payment failure, 6 no provider, 7 reserves failed; 1 is an unexpected error.
 
 ## 6. Tests
 
-```sh
-npx -y pnpm@10 -r typecheck && npx -y pnpm@10 -r test
-```
-
-Mint and integration tests need Postgres (`DATABASE_URL`; mint tests default to the dev-pg URL, integration tests skip without it).
-`tests/integration` boots the real mint (fake chain), real mock API, real owner flow and real agent in one process.
-
-## 7. Localnet end to end (real vault)
+Use the database from section 2; tests create isolated schemas. With `DATABASE_URL` exported:
 
 ```sh
-anchor build                                   # target/deploy/vault.so; keep target/deploy/vault-keypair.json (never commit it)
-export DATABASE_URL=postgres://$USER@127.0.0.1:54329/blindfold
-npx -y pnpm@10 --filter @blindfold/scripts e2e:localnet
+npx --yes pnpm@10.33.0 -r typecheck
+npx --yes pnpm@10.33.0 -r test
 ```
 
-The script starts `solana-test-validator` with the program loaded (or reuses one on :8899), creates a 6-decimal mint as fake USDC,
-initializes the vault, registers a provider, then runs 00 section 10: deposit, mint, paid call, replay, settle, reconcile, fail-closed
-reserve check. It stops the validator when done (`--keep-validator` to leave it). The program id must match the keypair
-(`3nVcHrZ9PC2kEPGYxvqedudeCfHXtZj1BRzwfxWqAanT`).
+Mint tests require PostgreSQL (defaulting to the dev-pg URL if unset). `tests/integration` skips without `DATABASE_URL`; a successful command with skipped integration tests does not validate the full flow. That suite runs the real mint, provider, owner and agent with a fake chain.
 
-Devnet: `npx -y pnpm@10 --filter @blindfold/scripts e2e` with `ADMIN_KEYPAIR`, `OWNER_KEYPAIR` (SOL plus 1 USDC), `MINT_AUTHORITY_KEYPAIR`
-(SOL), and a deployed vault. Details in the header of `scripts/e2e.ts`.
+## 7. Real-vault checks
+
+Use Rust 1.89.0 (`rust-toolchain.toml`), Anchor 1.2.2 and Solana tools. If installed in their default locations:
+
+```sh
+export PATH="$HOME/.cargo/bin:$HOME/.local/share/solana/install/active_release/bin:$HOME/.avm/bin:$PATH"
+anchor build
+cargo test --locked -p vault
+npx --yes pnpm@10.33.0 --filter @blindfold/scripts e2e:localnet
+```
+
+The Rust integration tests load `target/deploy/vault.so`; `cargo test` alone cannot build that artifact. `anchor test` also runs the configured Cargo tests, but additionally involves Anchor's deployment configuration. Use the direct Cargo command for LiteSVM tests.
+
+The localnet script starts `solana-test-validator` from `$HOME/.local/share/solana/install/active_release/bin`, or reuses an RPC already serving at `127.0.0.1:8899`. Use a fresh validator: the script generates a new mint and keys and expects the vault configuration to match them. It stops only the validator it starts, unless passed `--keep-validator`.
+
+The vault's declared ID, `Anchor.toml`, protocol IDL and deployment keypair must agree. The ignored `target/deploy/vault-keypair.json` is not supplied by Git. If you generate a new program keypair, synchronize IDs and rebuild before deploying. See [vault deployment notes](design/01-vault.md#10-implementation-notes-and-decisions).
+
+Devnet acceptance:
+
+```sh
+npx --yes pnpm@10.33.0 --filter @blindfold/scripts e2e
+```
+
+Requires PostgreSQL, a deployed vault, `ADMIN_KEYPAIR`, `OWNER_KEYPAIR` (SOL and at least 1 USDC), and `MINT_AUTHORITY_KEYPAIR` (SOL, matching `Config.mint_authority`). The admin must control the vault to register the test provider. The script deactivates its temporary provider on exit. This spends devnet funds; it is separate from the default test suite.

@@ -40,7 +40,7 @@ interface SavedOutput {
   rHex: string;
 }
 
-/** Resumable state (04 section 5.6), persisted after every step. Holds the quote key: mode 0600. */
+/** Resumable state (04-wallet-sdk.md, Owner funding), persisted after every step. Holds the quote key: mode 0600. */
 export interface FundState {
   version: 1;
   mintUrl: string;

@@ -1,4 +1,4 @@
-// Settlement state machine (02 section 4.8). Retry safety comes from Config.last_batch_id onchain.
+// Settlement state machine (02-mint.md, Settlement recovery). Retry safety comes from Config.last_batch_id onchain.
 import { BASE_UNITS_PER_CENT, MAX_PAYOUTS_PER_BATCH, type AdminSettleResponse } from "@blindfold/protocol";
 import { tx as dbTx, type Db } from "../db.js";
 import { MintError } from "../errors.js";

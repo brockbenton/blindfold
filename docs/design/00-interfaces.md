@@ -1,6 +1,6 @@
 # 00: Interfaces
 
-The contract every MVP component builds against. If a component doc disagrees with this file, this file wins. Change it only by team agreement, then update the affected component docs.
+The MVP interface reference. Keep this file, component docs, implementation and tests in sync when changing an interface. Planned features are called out explicitly.
 
 Where a Cashu NUT or the [x402 v2 spec](https://github.com/x402-foundation/x402/blob/main/specs/x402-specification-v2.md) already defines something, we use it unchanged and link it. Blindfold-specific choices are marked **[BF]**.
 
@@ -37,7 +37,7 @@ Owner ───────────────▶ Agent ─ Wallet SDK ─x
 | USDC decimals | 6 | |
 | `BASE_UNITS_PER_CENT` | `10_000` | Conversion happens only at the vault boundary |
 | Keyset amounts | `1, 2, 4, ... 4096` (2^0 to 2^12) | One active keyset, `input_fee_ppk = 0` |
-| `MAX_DEPOSIT_CENTS` | `5000` ($50) | Not-a-mixer cap; enforced onchain and in quotes |
+| `MAX_DEPOSIT_CENTS` | `5000` ($50) | Default per-deposit cap; vault uses configured `max_deposit`, quotes enforce 5000 cents |
 | `QUOTE_EXPIRY_S` | `3600` | Payment deadline only (NUT-04) |
 | `DEPOSIT_POLL_MS` | `2000` | |
 | `SETTLE_INTERVAL_S` | `60` | |
@@ -98,7 +98,7 @@ Every token the owner issues is locked with a [NUT-11](https://cashubtc.github.i
 | `n_sigs` | Always `1` (omit `pubkeys` and `n_sigs` when N = 1) |
 | `sigflag` | Always `SIG_INPUTS`. The mint rejects `SIG_ALL` in the MVP |
 | `locktime`, `refund` | Not used in the MVP. Reserved for the expiry add-on |
-| Allowlist | **One global list for all owners** (all active providers), sorted ascending by hex. Every owner's tokens then share one lock shape, so the mint can't group redemptions by owner. An owner who wants to pay fewer providers restricts the agent in code (`WALLET_ALLOWLIST`, §9), not in the lock |
+| Allowlist | **One global list for all owners** (all active providers), sorted ascending by hex. Every owner's tokens then share one lock shape, to avoid owner-specific signer sets; timing and amounts can still correlate redemptions. An owner who wants to pay fewer providers restricts the agent in code (`WALLET_ALLOWLIST`, §9), not in the lock |
 | Provider set changes | New tokens use the current list. Old tokens stay valid for any key in their own lock that is still active |
 
 With `cashu-ts`: `OutputData.createP2PKData({ pubkey: allowlist, requiredSignatures: 1, sigFlag: 'SIG_INPUTS' }, amount, keyset)`.
@@ -121,7 +121,7 @@ The mint cannot see the lock at issuance (outputs are blinded). Locking is the o
 
 ## 4. Vault program (Anchor, Solana devnet)
 
-Anchor 1.x. **USDC only, classic SPL Token program** (`anchor_spl::token`, `transfer_checked`). `initialize` requires `usdc_mint` to be owned by the SPL Token program, so Token-2022 mints (and their fee or hook extensions) are rejected.
+Anchor 1.x. **Configured classic SPL mint; the intended deployment uses six-decimal USDC. Uses the classic SPL Token program** (`anchor_spl::token`, `transfer_checked`). `initialize` requires `usdc_mint` to be owned by the SPL Token program, so Token-2022 mints (and their fee or hook extensions) are rejected.
 
 ### 4.1 Accounts
 
@@ -147,14 +147,14 @@ pub struct Payout { pub provider_id: u32, pub amount: u64 } // amount in base un
 | `initialize` | `mint_authority: Pubkey, max_deposit: u64` | admin | `admin` (signer, mut), `config` (init), `usdc_mint`, `vault_token` (init ATA), `token_program`, `associated_token_program`, `system_program` | Creates `Config` and the vault ATA |
 | `deposit` | `amount: u64, deposit_ref: [u8; 32]` | depositor | `depositor` (signer, mut), `config` (mut), `deposit_record` (init, seed = current `deposit_count`), `depositor_token` (mut), `vault_token` (mut), `usdc_mint`, `token_program`, `system_program` | `amount > 0`, `amount % 10_000 == 0`, `amount <= max_deposit`. Transfers USDC to the vault, writes `DepositRecord`, increments `deposit_count`, emits `DepositMade` |
 | `register_provider` | `cashu_pubkey: [u8; 33], payout_token: Pubkey` | admin | `admin` (signer, mut), `config` (mut), `provider_record` (init, seed = current `provider_count`), `payout_token_account` (must equal `payout_token`, mint = `config.usdc_mint`), `system_program` | `cashu_pubkey[0]` is `0x02` or `0x03`. Writes `ProviderRecord` with `active = true`, increments `provider_count`, emits `ProviderRegistered` |
-| `deactivate_provider` | `provider_id: u32` | admin | `admin` (signer), `config`, `provider_record` (mut, PDA for `provider_id`) | Sets `active = false`, emits `ProviderDeactivated`. One way: no reactivation in the MVP (register a new record instead) |
+| `deactivate_provider` | `provider_id: u32` | admin | `admin` (signer), `config`, `provider_record` (mut, PDA for `provider_id`) | Sets `active = false`, emits `ProviderDeactivated`. One way: no reactivation in the MVP (register a new record instead, after deactivation; the old balance is not migrated) |
 | `settle_batch` | `batch_id: u64, payouts: Vec<Payout>` | mint authority | `mint_authority` (signer), `config` (mut), `vault_token` (mut), `usdc_mint`, `token_program`; then `remaining_accounts` as pairs `[provider_record, payout_token (mut)]`, one pair per payout, same order | `vault_token == config.vault_token`; `batch_id == last_batch_id + 1`; `1 <= payouts.len() <= 8`; no `provider_id` twice; each `amount > 0` and `amount % 10_000 == 0`; each `provider_record` is the PDA for `provider_id`, is active, and its `payout_token` equals the passed account. Transfers each amount, sets `last_batch_id = batch_id`, emits `BatchSettled` |
 
-The `batch_id` check makes `settle_batch` idempotent: a retried batch fails with `BadBatchId` instead of paying twice.
+The `batch_id` check prevents duplicate payouts: a retried batch fails with `BadBatchId` instead of paying twice.
 
 Two deposits built against the same `deposit_count` collide on the `DepositRecord` seed; the second fails and the client rebuilds it with the new count and resends.
 
-`initialize` can be called by anyone once. The deploy script calls it immediately after deploying (accepted hackathon risk).
+`initialize` can be called by anyone once. Initialize immediately after deployment. Deployment and initialization are separate operations; another caller can take control first.
 
 ### 4.4 Events
 
@@ -171,7 +171,7 @@ Emitted with `emit!`. The MVP mint does **not** rely on events; they exist for t
 
 `InvalidAmount`, `AmountNotWholeCents`, `DepositTooLarge`, `InvalidPubkey`, `WrongMint`, `WrongVaultAccount`, `Unauthorized`, `BadBatchId`, `TooManyPayouts`, `EmptyBatch`, `DuplicateProvider`, `ProviderMismatch`, `ProviderInactive`, `PayoutAccountMismatch`, `MathOverflow`.
 
-`settle_batch` returns `ProviderInactive` for a deactivated provider. The mint stops crediting a deactivated provider (§5.6 check 6) and pays out its remaining balance before the admin deactivates it, or forfeits it (MVP: admin's call).
+The mint requires provider pubkeys to be unique among active records. A deactivated key may be re-registered under a new provider ID, but old balances remain attached to the old ID. `settle_batch` returns `ProviderInactive` for a deactivated provider. The mint stops crediting a deactivated provider (§5.6 check 6) and pays out its remaining balance before the admin deactivates it, or forfeits it (MVP: admin's call).
 
 ## 5. Mint HTTP API
 
@@ -183,7 +183,7 @@ Base URL `MINT_URL`. JSON bodies. Errors use the Cashu shape `{"detail": string,
 |---|---|---|
 | `GET /v1/info` | [NUT-06](https://cashubtc.github.io/nuts/06) | `nuts`: `4` with method `solana-usdc`, unit `usd`, `min_amount: 1`, `max_amount: 5000`; `5` disabled; `7`, `10`, `11`, `12`, `20` `{"supported": true}` |
 | `GET /v1/keys`, `GET /v1/keys/{keyset_id}` | NUT-01 | |
-| `GET /v1/keysets` | NUT-02 | Lists **all** keysets, including inactive ones. The mint signs only with the active keyset; redeem accepts any known `usd` keyset |
+| `GET /v1/keysets` | NUT-02 | Lists **all** keysets, including inactive ones. The mint signs only with the active keyset; redemption also requires available private keys; this implementation loads only the seed-derived active keyset. Rotation is not supported |
 | `POST /v1/checkstate` | NUT-07 | `{"Ys": [hex]}` → `{"states": [{"Y", "state": "UNSPENT"|"SPENT", "witness": null}]}` |
 
 **[BF] Not offered in the MVP:** `POST /v1/swap` (NUT-03) and melt (NUT-05). Without swap, locked tokens can only leave the system through `/v1/blindfold/redeem`.
@@ -224,7 +224,7 @@ Errors: `11013` unit not `usd`; `11006` amount outside `1..5000`; `20009` missin
 
 `GET /v1/mint/quote/solana-usdc/{quote}` returns `404 {"detail", "code": 20001}` for an unknown quote, otherwise the same shape with current `amount_paid` / `amount_issued` / `updated_at`.
 
-`amount_paid` is the sum, in cents, of all `DepositRecord`s whose `deposit_ref` matches, even if it differs from `amount`. `expiry` limits payment only; a paid quote can be minted after expiry.
+`amount_paid` is the sum, in cents, of all `DepositRecord`s whose `deposit_ref` matches, even if it differs from `amount`. `expiry` is advertised as a payment deadline, but the current poller does not enforce it: matching deposits are credited even after expiry. A paid quote can be minted after expiry. Do not rely on the timestamp as a spending or refund control.
 
 ### 5.4 Mint tokens
 
@@ -295,9 +295,9 @@ The mint, in order:
 | # | Check | Error |
 |---|---|---|
 | 1 | `1 <= proofs.length <= 64`, no duplicate `secret` | `11014`, `11007` |
-| 2 | Keyset known, unit `usd` | `12001` |
+| 2 | Keyset known, unit `usd`; private key available for the denomination | `12001`, `12002` |
 | 3 | `C` valid for `secret` and amount | `10001` |
-| 4 | Secret is NUT-10 `P2PK`, well formed per NUT-11, only the tags `pubkeys`, `n_sigs` (= 1), `sigflag` (= `SIG_INPUTS`) present. Any `locktime` or `refund` tag is rejected in the MVP | `70001` |
+| 4 | Secret is NUT-10 `P2PK`, well formed per NUT-11, only the tags `pubkeys`, `n_sigs` (= 1), `sigflag` (= `SIG_INPUTS`) present. Duplicate tags/signers and any `locktime` or `refund` tag are rejected in the MVP | `70001` |
 | 5 | Exactly one signer-set key produced a valid signature in `witness` | `10001` |
 | 6 | That key is the `cashu_pubkey` of an active registered provider | `70002` |
 | 7 | All proofs in the request were signed by the same provider | `70003` |
@@ -307,17 +307,19 @@ The credited provider is the one whose key signed, never one named in the reques
 
 ### 5.7 Admin
 
-Header `Authorization: Bearer <MINT_ADMIN_TOKEN>`. `401` otherwise.
+Header `Authorization: Bearer <MINT_ADMIN_TOKEN>`. `401 {"detail":"unauthorized"}` otherwise.
 
 | Endpoint | Response |
 |---|---|
-| `GET /v1/blindfold/admin/balances` | `[{ "provider_id": 0, "balance": 15 }]` (cents, unsettled) |
+| `GET /v1/blindfold/admin/balances` | `[{ "provider_id": 0, "balance": 15 }]` (cents, unsettled; positive balances only) |
 | `POST /v1/blindfold/admin/settle` | Runs one settlement now (at most 8 providers, largest balances first; the rest wait for the next run). `{ "batch_id": 1, "payouts": [{ "provider_id": 0, "amount": 15 }], "tx": "<signature>" }` or `{ "batch_id": null }` if no balances |
 | `GET /v1/blindfold/admin/reconcile` | `{ "vault_balance": c, "deposited": c, "issued": c, "redeemed": c, "settled": c }` (all cents). Lets tests check `vault_balance == deposited - settled` |
 
+Settlement can also return HTTP 409 (`70010`: another run holds the lock; `70011`: a batch is still in flight) or HTTP 502 (`70012`: a batch failed and balances were restored). Retry according to batch state, not as a new payment. Reconciliation is a diagnostic read, not an atomic snapshot across chain and database.
+
 ## 6. Deposit detection (MVP: polling)
 
-The mint reads vault **account state**, not transaction logs or raw instructions. (V12 Critical 2: a facilitator was fooled by parsing an `ApproveChecked` as a `TransferChecked`. Account state written by our own program after a successful `transfer_checked` can't be faked that way.)
+The mint reads vault-owned **account state**, not transaction logs or raw instructions. A DepositRecord is written only after a successful token transfer; a transfer-like instruction alone is not evidence of payment.
 
 Every `DEPOSIT_POLL_MS`, at `confirmed` commitment:
 
@@ -430,13 +432,13 @@ Before its first paid call in a session, and again every `RESERVE_CHECK_EVERY` p
 
 1. Reads the vault token account (`vaultAta`, §4.1) balance from Solana RPC itself (`getTokenAccountBalance`, `confirmed`), and the `Config` account to confirm it is owned by the vault program and `usdc_mint` matches `USDC_MINT`.
 2. Fetches `GET /v1/blindfold/reserves` (§5.5a).
-3. Proceeds only if `baseUnitsToCents(vault_balance) >= outstanding`. Otherwise, or if RPC or the mint is unreachable, it refuses to pay (**fail closed**) and reports why.
+3. Proceeds only if `floor(vault_balance / 10_000) >= outstanding` (count only whole cents; direct transfers may add sub-cent dust). Otherwise, or if RPC or the mint is unreachable, it refuses to pay (**fail closed**) and reports why.
 
-This is the agent's onchain read (track requirement) and a safety limit in its decision loop: the agent doesn't take the custodial mint's word that its tokens are backed.
+The agent reads the asset balance independently, but liabilities remain mint-reported. This check can detect underfunding relative to that report; it cannot prove the mint disclosed all issuance.
 
 ## 8. Shared TypeScript package: `packages/protocol`
 
-Built **first**, before the components, by whoever starts. Every TS component imports it.
+Build this package before components that import its `dist/` output. The recursive workspace build orders dependencies automatically.
 
 | Export | Contents |
 |---|---|
@@ -449,7 +451,7 @@ Built **first**, before the components, by whoever starts. Every TS component im
 | `vault` | PDA helpers (`configPda`, `depositPda(index)`, `providerPda(id)`, `vaultAta`), account decoders and instruction builders from the Anchor IDL (`@anchor-lang/core`) |
 | `env` | Zod-validated loader for §9 |
 
-The IDL is copied from `target/idl/vault.json` after `anchor build`. Until the vault exists, `vault` exports a hand-written IDL matching §4.
+The checked-in IDL is `packages/protocol/src/idl.ts`. After changing the vault, compare it with `target/idl/vault.json` from `anchor build`, including account order and signer/writable flags. The generated build output does not automatically update this TypeScript file.
 
 ### 8.1 Wallet SDK surface (`packages/wallet`)
 
@@ -465,7 +467,7 @@ class PaymentRefused extends Error { reason: RefusalReason }  // thrown before a
 class PaymentFailed extends Error { status: number; errorReason?: string } // paid retry not settled (after checkstate recovery). status is 402 for any settle failure (§7.3); errorReason only if the SDK surfaced it
 ```
 
-`payFetch` wraps `@x402/fetch` (§7.4). It returns non-402 responses unchanged and never throws for them. x402 wraps errors thrown inside a scheme ("Failed to create payment payload: ..."), and its spend controls refuse over-cap requests before our scheme runs; `payFetch` unwraps both into `PaymentRefused` (the latter as `over_cap`). `RefusalReason` includes `provider_not_allowed`, `provider_not_in_signer_set`, `over_cap`, `insufficient_balance`, `insufficient_exact`, `unit`, `mint`, `bad_request`.
+`payFetch` wraps `@x402/fetch` (§7.4). It returns non-402 responses unchanged and never throws for them. x402 wraps errors thrown inside a scheme ("Failed to create payment payload: ..."), and its spend controls refuse over-cap requests before our scheme runs; `payFetch` unwraps both into `PaymentRefused` (the latter as `over_cap`). `RefusalReason` includes `provider_not_allowed`, `provider_not_in_signer_set`, `over_cap`, `insufficient_balance`, `insufficient_exact`, `unit`, `mint`, `bad_request`. Call `wallet.close()` when finished to release the file lock. If a payment was attempted, a non-2xx final response raises `PaymentFailed`; an unpaid non-402 response is returned unchanged.
 
 ## 9. Repo layout and configuration
 
@@ -496,10 +498,11 @@ docker-compose.yml     Postgres
 | `DATABASE_URL`, `MINT_SEED` (32-byte hex), `MINT_AUTHORITY_KEYPAIR` (path), `MINT_ADMIN_TOKEN`, `PORT` (3338) | mint |
 | `PROVIDER_SECRET_KEY` (secp256k1 hex), `PROVIDER_ID`, `PRICE_CENTS` (5), `PORT` (4000), `PUBLIC_URL` (for x402 `resource.url`) | mock API |
 | `OWNER_KEYPAIR` (path) | owner CLI |
-| `RESERVE_CHECK_EVERY` (10) | agent |
+| `RESERVE_CHECK_EVERY` (10) | agent; checks before calls 1, 11, 21, … by default |
+| `MINT_DEV_FAKE_CHAIN` (`1` to enable), `PROVIDERS_FILE`, `DEPOSIT_POLL_MS`, `SETTLE_INTERVAL_S` | mint; fake-chain mode is local development only |
 | `TOKEN_FILE`, `MAX_PER_CALL_CENTS` (10), `WALLET_ALLOWLIST` (comma list of provider pubkeys; default: union of the proofs' signer sets) | wallet SDK, agent |
 
-**Test networks:** unit tests run against `solana-test-validator` (or LiteSVM) with a locally created 6-decimal SPL mint standing in for USDC. The demo runs on devnet with Circle devnet USDC from faucet.circle.com.
+**Test layers:** TypeScript tests use fakes; mint and application integration tests require PostgreSQL. Rust vault tests use LiteSVM and a built `target/deploy/vault.so`. The separate `e2e:localnet` script uses `solana-test-validator` and a six-decimal test mint; `e2e` uses a deployed devnet vault and funded keys. See [the runbook](../RUNNING.md).
 
 ## 10. End-to-end acceptance (MVP done)
 

@@ -1,45 +1,44 @@
-# Blindfold: MVP and add-ons
+# MVP and add-ons
 
-What we build. Why is in [`README.md`](../README.md), how in [`design.md`](design.md), when in [`plan.md`](plan.md).
+[Runbook](RUNNING.md) · [Design](design.md) · [Plan](plan.md)
 
-## MVP
+## Implemented MVP
 
-**Goal:** one paid API call working end to end on Solana devnet. Keep it basic, but make it real. Get this working before expanding the protocol or the agent.
+The target is a paid API call backed by a real Solana vault: owner deposit, token issuance, agent payment, replay rejection, provider settlement and a fail-closed reserve check.
 
-### Components
+| Component | Implemented behavior |
+|---|---|
+| Vault | `initialize`, `deposit`, `register_provider`, `deactivate_provider`, `settle_batch` |
+| Mint | Blind signing, DLEQ, spent set, provider balances, deposit polling and settlement recovery |
+| Mock paid API | x402 v2 `cashu` challenge, online redemption before serving data |
+| Wallet and owner CLI | Provider-locked funding, exact-sum payments, per-call cap and pending-payment recovery |
+| Scripted agent | Provider discovery, topic selection, reserve gate and result reporting |
 
-1. **Vault** (Anchor program). Holds devnet USDC. Instructions: `deposit`, `register_provider`, `settle_batch`.
-2. **Mint** (TypeScript + Postgres, `cashu-ts`). Blind-signs tokens, redeems them, keeps the spent set and provider balances.
-3. **Mock paid API.** Returns an x402 `402` offering the `cashu` scheme and serves data once it gets a valid token.
-4. **Agent wallet SDK.** Holds the tokens, handles the x402 handshake and retries with payment.
-5. **Simple agent.** Checks the vault's reserves onchain, then makes at least one paid call through the wallet.
+The [vault notes](design/01-vault.md#10-implementation-notes-and-decisions) record localnet and devnet acceptance on November 14, 2026. The reproducible acceptance command is `pnpm --filter @blindfold/scripts e2e` with a deployed vault, funded devnet keys and PostgreSQL. Local tests exercise the same application components with a fake chain; they do not prove current devnet availability.
 
-### Done when
+Acceptance requires:
 
-- [x] The owner deposits USDC into the vault and receives tokens.
-- [x] The agent calls the mock API, gets a 402, pays with a token and gets the data.
-- [x] The mint rejects a replayed token.
-- [x] The agent reads the vault balance from Solana and refuses to pay when reserves don't cover outstanding tokens.
-- [x] `settle_batch` pays the provider in USDC on devnet.
+1. The owner deposits USDC and receives tokens.
+2. The agent buys data after checking onchain reserves.
+3. A replay is rejected without a second provider credit.
+4. `settle_batch` pays the provider in USDC.
+5. Reconciliation matches the isolated test's deposits and payouts.
+6. The agent refuses payment when reported liabilities exceed the vault balance.
 
 ## Add-ons
 
-In priority order.
+Planned, in priority order. Existing hooks and tests are not complete demos.
 
-1. **Competitor bot and split screen.** Run the same research task over normal x402 (`exact` scheme) and over Blindfold (`cashu` scheme), against one provider endpoint that offers both. The bot copies the trade in the first case and sees nothing in the second. This is the core of the demo.
-2. **Prompt injection beat.** A poisoned API response tells the agent to pay an unknown provider. The payment fails because the tokens are locked to allowlisted providers.
-3. **QuickNode Stream.** Watches vault deposits, triggers the top-up and feeds the bot. Qualifies us for the $500 bounty.
-4. **Owner approval.** A small allowance the agent can spend alone, plus a reserve that needs the owner's co-signature, signed from the CLI.
-5. **Temporal top-up workflow.** Deposit, sign and issue as one durable workflow. Demo moment: kill the worker mid-top-up and it recovers.
-6. **Issuance log and reconciliation view.** Show that issued minus paid out matches the vault balance.
-7. **Hidden provider revenue.** Fresh payout addresses, fixed-size chunks, and the mint pays the fees.
+1. **Competitor bot and baseline comparison.** Add a standard `exact` option to the provider and compare the public-chain observations with the `cashu` flow. Neither the baseline nor bot is implemented.
+2. **Prompt-injection demo.** Use the hostile-response hook to show an attempted payment outside the token signer set being refused. Also show that an allowed provider can still consume the budget.
+3. **QuickNode Stream.** Trigger the deposit poller from a webhook and feed the bot. No Stream or webhook configuration exists yet.
+4. **Owner approval.** Add a co-signed reserve pocket. Current 1-of-N locks and redemption validation do not support this.
+5. **Temporal top-up.** Recover multi-step funding through a durable workflow; do not equate the current checkpoint files with exactly-once execution.
+6. **Onchain issuance log and reconciliation view.** The admin reconciliation endpoint exists; public issuance evidence does not.
+7. **Hidden provider revenue.** Revisit fixed payout accounts, fees and registry trust before implementing fresh addresses or chunked withdrawals.
 
-**Cut order if behind:** drop add-ons from the bottom up. Split screen can shrink to a terminal view. **Don't cut** add-ons 1 and 2; they are the demo.
+Cut lower-priority add-ons first. Refunds, key rotation, an approval UI, Tor/OHTTP and standard Cashu-wallet support are deferred. Mainnet, multiple mint operators and an onchain escape hatch are outside the current scope.
 
-**Deferred:** refunds, key rotation, approval UI, Tor / Oblivious HTTP, a standard Cashu wallet holding our tokens.
+## Submission checklist
 
-**Out of scope:** mainnet, real providers, our own crypto, multiple mint operators, an onchain escape hatch (pitch as future work).
-
-## Submission README must include
-
-Decision loop, safety limits, program IDs, Stream config (network, dataset, filter, destination), threat model.
+Document the decision loop, spending limits, program ID, deployment evidence and threat model. If a Stream is built, include its network, dataset, filter and destination; otherwise state that the mint uses polling.

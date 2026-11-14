@@ -22,7 +22,7 @@ function better(a: WireProof[], b: WireProof[]): boolean {
   return false;
 }
 
-/** Deterministic exact-sum subset selection (04 section 5.4). Pure. */
+/** Deterministic exact-sum subset selection (04-wallet-sdk.md, Exact-sum selection). Pure. */
 export function selectExact(
   proofs: WireProof[],
   amount: number,
