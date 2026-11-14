@@ -138,6 +138,43 @@ importers:
         specifier: 4.13.18
         version: 4.13.18
 
+  scripts:
+    dependencies:
+      '@blindfold/protocol':
+        specifier: workspace:*
+        version: link:../packages/protocol
+      '@blindfold/wallet':
+        specifier: workspace:*
+        version: link:../packages/wallet
+      '@cashu/cashu-ts':
+        specifier: 4.13.1
+        version: 4.13.1
+      '@hono/node-server':
+        specifier: 2.1.8
+        version: 2.1.8(hono@4.13.18)
+      '@solana/spl-token':
+        specifier: 0.4.15
+        version: 0.4.15(@solana/web3.js@1.99.0(bufferutil@4.2.0)(typescript@7.0.2))(bufferutil@4.2.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@7.0.2)
+      '@solana/web3.js':
+        specifier: 1.99.0
+        version: 1.99.0(bufferutil@4.2.0)(typescript@7.0.2)(utf-8-validate@6.0.6)
+      '@x402/fetch':
+        specifier: 2.31.0
+        version: 2.31.0
+      hono:
+        specifier: 4.13.18
+        version: 4.13.18
+      pg:
+        specifier: 8.23.1
+        version: 8.23.1
+    devDependencies:
+      '@types/pg':
+        specifier: 8.23.1
+        version: 8.23.1
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
+
   scripts/devnet:
     dependencies:
       '@blindfold/protocol':
@@ -186,6 +223,36 @@ importers:
       tsx:
         specifier: 4.23.15
         version: 4.23.15
+
+  tests/integration:
+    devDependencies:
+      '@anchor-lang/core':
+        specifier: 1.2.2
+        version: 1.2.2(bufferutil@4.2.0)(typescript@7.0.2)(utf-8-validate@6.0.6)
+      '@blindfold/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@blindfold/testkit':
+        specifier: workspace:*
+        version: link:../../packages/testkit
+      '@blindfold/wallet':
+        specifier: workspace:*
+        version: link:../../packages/wallet
+      '@cashu/cashu-ts':
+        specifier: 4.13.1
+        version: 4.13.1
+      '@hono/node-server':
+        specifier: 2.1.8
+        version: 2.1.8(hono@4.13.18)
+      '@solana/web3.js':
+        specifier: 1.99.0
+        version: 1.99.0(bufferutil@4.2.0)(typescript@7.0.2)(utf-8-validate@6.0.6)
+      '@types/pg':
+        specifier: 8.23.1
+        version: 8.23.1
+      pg:
+        specifier: 8.23.1
+        version: 8.23.1
 
 packages:
 
