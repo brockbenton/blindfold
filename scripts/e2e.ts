@@ -27,7 +27,7 @@ import {
 import { createMint, getOrCreateAssociatedTokenAccount, mintTo, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import {
   DEFAULT_VAULT_PROGRAM_ID, MAX_DEPOSIT_CENTS, SOLANA_COMMITMENT, USDC_DEVNET_MINT, buildInitializeIx,
-  buildRegisterProviderIx, centsToBaseUnits, configPda, decodeConfig, vaultAta,
+  buildDeactivateProviderIx, buildRegisterProviderIx, centsToBaseUnits, configPda, decodeConfig, vaultAta,
 } from "@blindfold/protocol";
 import { AgentWallet, SolanaDepositor, ownerFund } from "@blindfold/wallet";
 import { createApp } from "../apps/mock-api/src/app.js";
@@ -153,6 +153,11 @@ async function main() {
   const providerId = config.providerCount;
   await send([buildRegisterProviderIx({ programId, admin: admin.publicKey, providerId, cashuPubkey: providerPubkey, payoutToken: payoutAta })], [admin]);
   log(`provider ${providerId} registered (${providerPubkey.slice(0, 12)}...)`);
+  // The throwaway provider key is discarded at exit, so take it off the global allowlist (00: all active providers).
+  cleanups.push(async () => {
+    await send([buildDeactivateProviderIx({ programId, admin: admin.publicKey, providerId })], [admin]);
+    log(`provider ${providerId} deactivated`);
+  });
   const vaultToken = vaultAta(usdcMint, programId);
   const vaultBefore = await tokenBalance(connection, vaultToken).catch(() => 0n);
 

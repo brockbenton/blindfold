@@ -7,6 +7,7 @@
     "typecheck": "tsc --noEmit",
     "initialize": "node --experimental-strip-types initialize.ts",
     "register-provider": "node --experimental-strip-types register-provider.ts",
+    "deactivate-provider": "node --experimental-strip-types deactivate-provider.ts",
     "deposit-smoke": "node --experimental-strip-types deposit-smoke.ts"
   },
   "dependencies": {

@@ -257,7 +257,9 @@ Devnet:
 | Provider 0 cashu pubkey | `034cce6c9c3d0a06d6b1934bb97430dfba5a942209012415db816662ea2193ca21` (secret in `.keys/provider-secret.hex`) |
 | Provider 0 payout (USDC ATA) | `2RJKKB3dHqNeVMj9hKNg6NfQcifPbR8KNHuNZCdxH3MS` (owner `.keys/provider-payout.json`) |
 
-`max_deposit` = 50,000,000 base units ($50). `.keys/` is gitignored; share these keys with the team out of band.
+`max_deposit` = 50,000,000 base units ($50).
+
+**Devnet e2e (00 §10) passed 2026-11-14** via `pnpm --filter @blindfold/scripts e2e`: deposit `2wqG6sQW6J7p87XLbofJPfTKWPuyEZvThkYrwxzM9QGMkNuSvUmyenydFmp6AChCbrYqXhrHUeYQewnQQHsTw9Tr`, settle_batch `5fgAGsP4ShE3PHLX52Lf3sNwyUMSCQK9o3yGw3Lqd3iMyAqid8K91rX7kmJzdy3WMHqD1iZKPvpbMqWtmFcxTuSh`. That run registered provider 1 with a throwaway key; it is deactivated (`4gSShfQ9...`). The e2e now deactivates its provider on exit. Owner `7nx3ouFdFhf4PorVb8LfZ9aDADyPTdFNpQQ1JzPni7WR` (`.keys/owner.json`) holds the remaining devnet USDC. `.keys/` is gitignored; share these keys with the team out of band.
 - **Dependencies:** `anchor-spl 1.2.2` needs features `token`, `associated_token`, `token_2022`, `solana-v3`. `token_2022` is required only because anchor-spl's `idl-build` references `token_interface`; the program itself uses the classic token program only.
 - **`initialize` deviation from 5.3:** `vault_token` is an `UncheckedAccount` (address constrained to the ATA of `config` and `usdc_mint`, else `WrongVaultAccount`) and the ATA is created by a CPI in the handler. With `init` Anchor creates the ATA before field constraints run, so a Token-2022 mint failed inside the ATA program instead of returning `WrongMint`. The account list, order and flags are unchanged from 00 §4.3.
 - **Errors where 5.4 was silent:** `deposit` with a vault account that is not `config.vault_token` returns `WrongVaultAccount`; `register_provider` with `payout_token_account.key() != payout_token` returns `PayoutAccountMismatch`; a non-writable or undecodable payout account in `settle_batch` returns `PayoutAccountMismatch` / `WrongMint`. `deposit` with a foreign mint account returns `WrongMint` (the `usdc_mint` address constraint).
