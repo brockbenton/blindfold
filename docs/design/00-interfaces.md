@@ -266,6 +266,18 @@ Errors: `11013` unit not `usd`; `11006` amount outside `1..5000`; `20009` missin
 
 A registered provider missing from the file is listed with `name: null, url: null, price_cents: null, topics: []`. Inactive providers are listed with `active: false`. Used by the owner CLI to build the global allowlist (active entries only) and by the agent to find APIs.
 
+### 5.5a Reserves (public) [BF]
+
+`GET /v1/blindfold/reserves` → `200`:
+
+```json
+{ "issued": 1000, "settled": 400, "outstanding": 600, "keyset_id": "<active keyset id>", "updated_at": 1763166400 }
+```
+
+All cents. `outstanding = issued - settled`: tokens not yet redeemed plus redeemed-but-unpaid provider balances, i.e. everything the vault still owes. The agent compares it with the vault balance it reads **itself** from the chain (§7.6).
+
+Trust limit: `issued` is mint-reported until the issuance-log add-on puts it onchain. The check catches a vault that was drained or underfunded; it does not catch a mint that under-reports issuance.
+
 ### 5.6 Redeem [BF]
 
 `POST /v1/blindfold/redeem`, called by the provider's x402 facilitator during settle (§7.3).
@@ -412,6 +424,16 @@ On failure: `{ "success": false, "errorReason": "<reason>", "transaction": "", "
 
 Fake, deterministic per topic. `GET /health` is free.
 
+### 7.6 Agent reserve check [BF]
+
+Before its first paid call in a session, and again every `RESERVE_CHECK_EVERY` paid calls (default 10), the agent:
+
+1. Reads the vault token account (`vaultAta`, §4.1) balance from Solana RPC itself (`getTokenAccountBalance`, `confirmed`), and the `Config` account to confirm it is owned by the vault program and `usdc_mint` matches `USDC_MINT`.
+2. Fetches `GET /v1/blindfold/reserves` (§5.5a).
+3. Proceeds only if `baseUnitsToCents(vault_balance) >= outstanding`. Otherwise, or if RPC or the mint is unreachable, it refuses to pay (**fail closed**) and reports why.
+
+This is the agent's onchain read (track requirement) and a safety limit in its decision loop: the agent doesn't take the custodial mint's word that its tokens are backed.
+
 ## 8. Shared TypeScript package: `packages/protocol`
 
 Built **first**, before the components, by whoever starts. Every TS component imports it.
@@ -423,6 +445,7 @@ Built **first**, before the components, by whoever starts. Every TS component im
 | `lock` | `buildLockOptions(allowlist: string[]): P2PKOptions` (sorted, §3.3); `signerSet(secret: string): string[]` |
 | `x402` | `CASHU_SCHEME`, `SOLANA_DEVNET_CAIP2`; types `CashuExtra`, `CashuPayload` (`{ token }`); `parseCashuRequirements(req): { cents, mints, unit, providerPubkey }` (throws if `amount` is not whole cents or `payTo != nut10.d`); `cashuExtra({ mintUrl, providerPubkey })` |
 | `units` | `centsToBaseUnits`, `baseUnitsToCents` (throws if not whole cents) |
+| `reserves` | `checkReserves({ connection, programId, usdcMint, mintUrl }): Promise<{ ok: boolean; vaultCents: number; outstandingCents: number; reason?: string }>` (§7.6) |
 | `vault` | PDA helpers (`configPda`, `depositPda(index)`, `providerPda(id)`, `vaultAta`), account decoders and instruction builders from the Anchor IDL (`@anchor-lang/core`) |
 | `env` | Zod-validated loader for §9 |
 
@@ -454,6 +477,7 @@ programs/vault/        01: Anchor program
 services/mint/         02: mint server
 apps/mock-api/         03: mock paid API
 packages/protocol/     00: shared TS contract code
+packages/testkit/      shared test helpers (fake keyset, locked token issuance)
 packages/wallet/       04: wallet SDK + owner CLI
 agents/simple/         05: simple agent
 config/providers.json  provider_id → name, url
@@ -472,6 +496,7 @@ docker-compose.yml     Postgres
 | `DATABASE_URL`, `MINT_SEED` (32-byte hex), `MINT_AUTHORITY_KEYPAIR` (path), `MINT_ADMIN_TOKEN`, `PORT` (3338) | mint |
 | `PROVIDER_SECRET_KEY` (secp256k1 hex), `PROVIDER_ID`, `PRICE_CENTS` (5), `PORT` (4000), `PUBLIC_URL` (for x402 `resource.url`) | mock API |
 | `OWNER_KEYPAIR` (path) | owner CLI |
+| `RESERVE_CHECK_EVERY` (10) | agent |
 | `TOKEN_FILE`, `MAX_PER_CALL_CENTS` (10), `WALLET_ALLOWLIST` (comma list of provider pubkeys; default: union of the proofs' signer sets) | wallet SDK, agent |
 
 **Test networks:** unit tests run against `solana-test-validator` (or LiteSVM) with a locally created 6-decimal SPL mint standing in for USDC. The demo runs on devnet with Circle devnet USDC from faucet.circle.com.
@@ -481,7 +506,8 @@ docker-compose.yml     Postgres
 `scripts/e2e.ts` on devnet:
 
 1. Owner CLI: quote $1.00 (100 cents), deposit, wait until `amount_paid == 100`, mint tokens locked to the mock API's key, write the token file.
-2. Agent: one paid call to the mock API through the wallet SDK. Gets `402` with `PAYMENT-REQUIRED` offering scheme `cashu`, retries with `PAYMENT-SIGNATURE`, gets `200` with data and a `PAYMENT-RESPONSE` whose `transaction` is a redemption id. Token file balance drops by `PRICE_CENTS`.
+2. Agent: reserve check passes (§7.6), then one paid call to the mock API through the wallet SDK. Gets `402` with `PAYMENT-REQUIRED` offering scheme `cashu`, retries with `PAYMENT-SIGNATURE`, gets `200` with data and a `PAYMENT-RESPONSE` whose `transaction` is a redemption id. Token file balance drops by `PRICE_CENTS`.
 3. Replay: resend the same `PAYMENT-SIGNATURE` header. Gets `402`; the provider's settle logged `redeem_failed_11001`; its mint balance is unchanged.
 4. `POST /v1/blindfold/admin/settle`. The provider's payout account receives `PRICE_CENTS * 10_000` base units of USDC on devnet.
 5. `GET /v1/blindfold/admin/reconcile`: `vault_balance == deposited - settled`.
+6. Reserve check fails closed: with a stub reserves endpoint reporting `outstanding` above the vault balance, the agent refuses to pay and exits non-zero.
