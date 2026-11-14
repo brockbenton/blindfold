@@ -9,7 +9,7 @@ flowchart LR
     Owner["Owner<br/>budget + rules"] -->|1 deposit USDC| Vault["Vault<br/>Anchor program"]
     Owner <-->|2 blind sign| Mint["Mint<br/>Cashu-compatible"]
     Owner -->|locked tokens| Agent["Agent"]
-    Agent -->|3 HTTP 402 + token| Provider["Provider<br/>middleware"]
+    Agent -->|3 x402, scheme cashu| Provider["Provider<br/>middleware"]
     Provider -->|4 redeem| Mint
     Mint -->|5 batch settle| Vault
     Vault -->|USDC| Payout["Provider payout"]
@@ -19,7 +19,7 @@ flowchart LR
 
 1. **Deposit.** The owner deposits devnet USDC into the vault, ideally ahead of and independent from any research task. The mint confirms the deposit from the vault program's state. *(Add-ons 3, 5: a QuickNode Stream sees the deposit and starts a Temporal top-up workflow.)*
 2. **Issue.** The owner builds the token secrets with their locks, blinds them, and gets the mint's signatures. The owner unblinds and hands the finished tokens to the agent. *(Add-on 6: the blinded values and signatures are logged onchain.)*
-3. **Pay.** The provider answers `402 Payment Required` with a NUT-24 `X-Cashu` payment request (e.g. 10¢). The agent retries with matching tokens.
+3. **Pay.** The provider answers `402 Payment Required` with an x402 v2 `PAYMENT-REQUIRED` header offering the `cashu` scheme (e.g. 5¢). The agent retries with matching tokens in `PAYMENT-SIGNATURE`. Wire details: [`design/00-interfaces.md`](design/00-interfaces.md) §7.
 4. **Redeem.** The provider supplies the signature the token lock requires. The mint checks the signature, the lock and the spent set, credits that provider, and the provider serves the data. This is a database lookup, well under 100 ms.
 5. **Settle.** On fixed, shared windows (demo: 60 s), `settle_batch` pays each provider's balance in USDC.
 
@@ -36,7 +36,7 @@ Cashu's **BDHKE** on **secp256k1**, via `cashu-ts`: compatible with Cashu wallet
 
 The random `r` means the mint can't connect what it signed to what it later redeems, and `B_`/`C_` can be posted onchain without revealing anything.
 
-**Cashu specs used:** NUT-00–05 (tokens, keysets, swaps), NUT-04 with a custom `solana-usdc` mint method (a vault deposit replaces a Lightning invoice), unit `usd`, NUT-10/11 (locks), NUT-12 (DLEQ proofs), NUT-24 (HTTP 402). An x402 `accepts` entry for the same scheme is deferred: a custom x402 scheme needs support in clients and payment infrastructure ([x402](https://github.com/x402-foundation/x402)).
+**Cashu specs used:** NUT-00–05 (tokens, keysets, swaps), NUT-04 with a custom `solana-usdc` mint method (a vault deposit replaces a Lightning invoice), unit `usd`, NUT-10/11 (locks), NUT-12 (DLEQ proofs), NUT-20 (signed mint quotes). Payments use [x402 v2](https://github.com/x402-foundation/x402) with a custom `cashu` scheme instead of Cashu's own NUT-24 headers, so standard x402 SDKs carry them. The provider acts as its own x402 facilitator: settle means redeem at the mint, and USDC moves later, like x402's `batch-settlement` scheme.
 
 ## Guardrails in the tokens
 
@@ -96,8 +96,8 @@ The demo shows what a **public chain observer** sees. ([Cashu privacy FAQ](https
 |---|---|---|---|
 | **Vault** | Holds USDC; `deposit`, `register_provider`, `settle_batch` (mint authority) | Anchor, Solana devnet, SPL USDC (classic Token program) | MVP |
 | **Mint** | Cashu API; signing; redemption with lock checks and spent set; balances | TypeScript, Postgres, `cashu-ts` | MVP |
-| **Provider middleware + mock API** | NUT-24 402 handshake; redeem, then serve | Express/Hono | MVP (1 API; 2–3 for the demo) |
-| **Wallet SDK** | Holds tokens; picks tokens matching the lock; handles 402s | TypeScript, `cashu-ts` | MVP |
+| **Provider middleware + mock API** | x402 v2 `cashu` scheme via `@x402/hono`; redeem, then serve | Hono | MVP (1 API; 2–3 for the demo) |
+| **Wallet SDK** | Holds tokens; picks tokens matching the lock; handles 402s via `@x402/fetch` | TypeScript, `cashu-ts`, `@x402/fetch` | MVP |
 | **Agent** | Makes paid calls. Demo version: LLM tools `balance`, `list_providers`, `call_paid_api`, `request_approval`, `report` | TypeScript | MVP (simple) |
 | **Competitor bot + split screen** | Reads public chain events only, guesses the research topic; baseline vs Blindfold view | Script; Next.js or terminal | Add-on 1 |
 | **QuickNode Stream** | Filters vault deposits → top-up webhook; feeds the bot | Streams, Solana devnet | Add-on 3 |

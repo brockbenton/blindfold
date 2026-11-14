@@ -8,7 +8,7 @@ Two halves in one package:
 
 | Half | Runs as | Job |
 |---|---|---|
-| Agent wallet | Library inside the agent process | Holds the token file, pays 402s by itself, and refuses any provider outside the proofs' signer set. Holds no key and no USDC |
+| Agent wallet | Library inside the agent process | Holds the token file, pays x402 `402`s by itself, and refuses any provider outside the proofs' signer set. Holds no key and no USDC |
 | Owner client + CLI | `owner` command, run by the human | Quote, deposit, mint locked tokens, write the token file |
 
 ## 2. Depends on / used by
@@ -18,10 +18,10 @@ Two halves in one package:
 | 00 §3.3, §3.4 | Lock shape, token file |
 | 00 §5.1, §5.3, §5.4, §5.5 | checkstate, quote, mint, providers |
 | 00 §4.3 | `deposit` instruction (via `packages/protocol` `vault`) |
-| 00 §7 | 402 handshake |
-| 00 §8 `packages/protocol` | `lock`, `paymentRequest`, `units`, `vault`, `env`, `types` |
+| 00 §7 | x402 v2 handshake, scheme `cashu` |
+| 00 §8 `packages/protocol` | `lock`, `x402` (`parseCashuRequirements`, constants), `units`, `vault`, `env`, `types` |
 | 00 §9 env | `MINT_URL`, `TOKEN_FILE`, `MAX_PER_CALL_CENTS`, `OWNER_KEYPAIR`, `SOLANA_RPC_URL` |
-| `@cashu/cashu-ts` 4.13.1, `@anchor-lang/core` 1.2.2, `@solana/web3.js`, `commander` | Libraries |
+| `@cashu/cashu-ts` 4.13.1, `@x402/core`, `@x402/fetch` 2.31.x, `@anchor-lang/core` 1.2.2, `@solana/web3.js`, `commander` | Libraries |
 
 Used by: `agents/simple` (05, imports `AgentWallet`), `scripts/e2e.ts` (00 §10 step 1 calls `ownerFund`), mock API tests (a fake paying client).
 
@@ -72,15 +72,14 @@ export interface WalletOptions {
 export interface MintLike { check(p: { Ys: string[] }): Promise<{ states: { Y: string; state: 'UNSPENT' | 'SPENT' | 'PENDING' }[] }>; }
 
 export type RefusalReason =
-  | 'bad_request'            // X-Cashu missing, undecodable, or no amount/provider key
-  | 'unit'                   // u != 'usd'
-  | 'mint'                   // token file mint not in m
-  | 'over_cap'               // a > MAX_PER_CALL_CENTS
-  | 'provider_not_allowed'   // d not in configured allowlist
-  | 'provider_not_in_signer_set' // d not in the signer set of the proofs
-  | 'insufficient_exact'     // no subset sums to exactly a
-  | 'insufficient_balance'   // total < a
-  | 'amount_mismatch';       // JSON body amount disagrees with creq amount (only if body parses)
+  | 'bad_request'            // PAYMENT-REQUIRED missing a usable cashu entry, or amount not whole cents, or no provider key
+  | 'unit'                   // extra.unit != 'usd'
+  | 'mint'                   // token file mint not in extra.mints
+  | 'over_cap'               // cents > MAX_PER_CALL_CENTS (also enforced by x402 spend controls)
+  | 'provider_not_allowed'   // nut10.d not in configured allowlist
+  | 'provider_not_in_signer_set' // nut10.d not in the signer set of the proofs
+  | 'insufficient_exact'     // no subset sums to exactly the price
+  | 'insufficient_balance';  // total < price
 
 export class PaymentRefused extends Error {
   constructor(public reason: RefusalReason, public detail: Record<string, unknown>);
@@ -119,7 +118,7 @@ export function planDenominations(cents: number, prices: number[]): number[];  /
 export async function ownerBalance(tokenFile: string): Promise<{ spendable: number; pending: number; byDenom: Record<number, number> }>;
 ```
 
-`payFetch` never throws for non-402 responses; it returns them. It throws `PaymentRefused` before any proof leaves the file, `PaymentFailed` after a bad paid retry.
+`payFetch` wraps `@x402/fetch` `wrapFetchWithPayment` (5.3). It never throws for non-402 responses; it returns them. It throws `PaymentRefused` before any proof leaves the file, `PaymentFailed` after a bad paid retry.
 
 ### 5.2 Token file handling
 
@@ -150,29 +149,49 @@ Spend state machine for one call:
 | non-2xx or network error | checkstate (5.4). Move `UNSPENT` back to `proofs`, drop `SPENT`, delete entry. Write |
 | crash between mark and result | `open()` runs `recoverPending()`: same checkstate treatment for every entry. If checkstate itself fails, entries stay pending (never returned blindly) |
 
-### 5.3 `payFetch` algorithm
+### 5.3 `payFetch` via x402
 
-All under the spend mutex (5.7).
+`CashuClientScheme` implements `SchemeNetworkClient` (`@x402/core/types`) with `scheme: "cashu"`. The wallet builds one `x402Client` and wraps fetch once:
 
-1. `res = await fetch(url, init)`. If `res.status !== 402`, return it.
-2. `h = res.headers.get('x-cashu')`. Missing: `PaymentRefused('bad_request')`.
-3. `req = parsePaymentRequest(h)` (protocol; wraps `decodePaymentRequest`, handles `creqA` and `creqB`). Need `amount`, `unit`, `mints`, `providerPubkey` (`nut10.k === 'P2PK'`, `nut10.d`). Anything missing: `bad_request`.
-4. Validate in this order, first failure throws:
+```ts
+const client = new x402Client()
+  .register(SOLANA_DEVNET_CAIP2, new CashuClientScheme(this /* store, mint, allowlist, mutex */))
+  .setSpendControls({ allowedAssets: [{ network: SOLANA_DEVNET_CAIP2, asset: USDC_MINT,
+      maxAmountPerPayment: String(maxPerCallCents * 10_000) }] });   // atomic units, as a string
+const x402Fetch = wrapFetchWithPayment(opts.fetch ?? fetch, client);
+```
+
+Only `cashu` is registered, so the wallet never signs any other scheme. `allowedAssets` is required (x402 rejects non-default assets for custom schemes) and doubles as the first per-call cap. `payFetch` runs `x402Fetch(url, init)` under the spend mutex (5.7). The SDK does the 402 detection, `accepts` selection among registered schemes, and the paid retry with `PAYMENT-SIGNATURE` (same method, URL, body; a stream body is refused up front with `bad_request`, as it cannot be replayed).
+
+`createPaymentPayload(x402Version, req)` is where the wallet logic lives:
+
+1. `parseCashuRequirements(req)` (protocol, 00 §8) gives `{ cents, mints, unit, providerPubkey }`. It throws on a non-whole-cent amount or `payTo != nut10.d`: `bad_request`.
+2. Validate in this order, first failure throws `PaymentRefused`:
 
 | # | Check | Reason |
 |---|---|---|
-| 1 | `req.unit === 'usd'` and file unit is `usd` | `unit` |
-| 2 | `normalize(file.mint)` equals `normalize(m)` for some `m` (strip trailing `/`, lowercase scheme and host) | `mint` |
-| 3 | `req.amount` is a positive integer and `<= maxPerCallCents` | `over_cap` |
-| 4 | `req.providerPubkey` in `this.allowlist` (hex compare, lowercase) | `provider_not_allowed` |
-| 5 | `req.providerPubkey` in `signerSet(secret)` of **every** candidate proof (see selection) | `provider_not_in_signer_set` |
+| 1 | `unit === 'usd'` and file unit is `usd` | `unit` |
+| 2 | `req.asset === USDC_MINT` and `normalize(file.mint)` equals `normalize(m)` for some `m` in `mints` (strip trailing `/`, lowercase scheme and host) | `mint` |
+| 3 | `cents` is a positive integer and `<= maxPerCallCents` | `over_cap` |
+| 4 | `providerPubkey` in `this.allowlist` (hex compare, lowercase) | `provider_not_allowed` |
+| 5 | `providerPubkey` in `signerSet(secret)` of **every** candidate proof (see selection) | `provider_not_in_signer_set` |
 
-5. `selectExact(proofs, amount, providerPubkey)` (5.4). Error maps to the refusal of the same name.
-6. Mark pending (5.2).
-7. `token = getEncodedToken({ mint: file.mint, unit: 'usd', proofs: chosen }, { removeDleq: true })`. Retry `fetch(url, { ...init, headers: new Headers(init?.headers) + 'X-Cashu': token })`. Same method, URL, body. If `init.body` is a stream, refuse up front with `bad_request` (cannot replay).
-8. 2xx: drop the pending entry, return the response. Otherwise failure path (5.4 step 3), then throw `PaymentFailed` carrying the status and body. Do not auto-retry a failed payment.
+3. `selectExact(proofs, cents, providerPubkey)` (5.4). Error maps to the refusal of the same name.
+4. Mark pending (5.2).
+5. `token = getEncodedToken({ mint: file.mint, unit: 'usd', proofs: chosen }, { removeDleq: true })`. Return `{ x402Version, payload: { token } }`.
 
-The creq mint list is advisory input from an untrusted server. The wallet only ever pays the mint named in its own file, so a hostile `m` can only cause a refusal.
+`schemeHooks.onPaymentResponse(ctx)` (`PaymentResponseContext`: `paymentPayload`, `requirements`, `settleResponse?`, `error?`) closes the spend state machine:
+
+| Context | Action |
+|---|---|
+| `settleResponse?.success` | Drop the pending entry, write |
+| Otherwise (failure, no `settleResponse`, or `error`) | Failure path (5.4 checkstate) for that entry |
+
+After the wrapped fetch returns, `payFetch` returns a 2xx response. If a payment was attempted and the final response is not 2xx (the SDK returns the repeated `402`), the hook has already recovered the proofs, so `payFetch` throws `PaymentFailed` with the status, body and `recovered` counts. Do not auto-retry a failed payment (the hook must not return `{ recovered: true }`).
+
+**Error unwrapping.** x402 wraps errors thrown inside a scheme ("Failed to create payment payload: ..."), and its spend controls refuse an over-cap amount before our scheme runs. `payFetch` catches both: a wrapped `PaymentRefused` (found by walking `cause`, or by the `PaymentRefused:<reason>` message) is rethrown as is, a spend-control rejection becomes `PaymentRefused('over_cap')`, and anything else propagates. No proof has left the file in either case.
+
+The `extra.mints` list is advisory input from an untrusted server. The wallet only ever pays the mint named in its own file, so a hostile `mints` can only cause a refusal.
 
 ### 5.4 Exact-sum selection (deterministic)
 
@@ -183,7 +202,7 @@ The creq mint list is advisory input from an untrusted server. The wallet only e
 3. Sort by `(amount desc, secret asc)`. Subset-sum DP over sums `0..target` (target is at most `MAX_PER_CALL_CENTS`, so at most about 10 columns and a few hundred rows): `best[s]` = the best subset reaching `s`, where better means fewer proofs, then lexicographically smaller list of `secret`s. Process proofs in the sorted order, iterate `s` downward, replace only when strictly better.
 4. `best[target]` empty: `insufficient_exact`. Else return it.
 
-Fewest-coins keeps `X-Cashu` small and preserves the owner's exact-P bundles (section 5.5). Same inputs always give the same output; unit-test with a shuffled input.
+Fewest-coins keeps the `PAYMENT-SIGNATURE` header small and preserves the owner's exact-P bundles (section 5.5). Same inputs always give the same output; unit-test with a shuffled input.
 
 Checkstate (00 §7.4, NUT-07): `Ys = chosen.map(p => bytesToHex(hashToCurve(utf8(p.secret)).toBytes(true)))` (verify the point-to-hex helper in cashu-ts at build time; there is also `Y` computed inside `OutputData`/`Wallet`). Call `mint.check({ Ys })` (low-level `Mint.check(CheckStatePayload)`; do not instantiate `Wallet`). Map `states[i]` back by `Y`. `UNSPENT` returns to `proofs`; `SPENT` dropped; `PENDING` stays pending, retried on the next `open()` or `recoverPending()`.
 
@@ -219,7 +238,7 @@ Each step persists `FundState` (`stateDir/<quoteKeyPubkey>.json`, mode `0600`, a
 | 7 | Unblind, verify | `proofs = outputs.map((o, i) => o.toProof(signatures[i], keyset))` (unblinds). Run `verifyMintSignatures(proofs, () => keyset, { require: true })`; any entry in `invalid` aborts without writing. Check `sum(amount) === cents`. Check every proof's `signerSet(secret)` equals the allowlist (catches a lock bug before the agent hits it) |
 | 8 | Write | `FileTokenStore.write({ version: 1, mint, unit: 'usd', proofs })` with `dleq` kept, `witness` absent. If the file already has proofs, append to them (top-up) |
 
-DLEQ check uses `verifyMintSignatures` (returns `{ valid, invalid }`, never throws per proof). `hasValidDleq` is deprecated in 4.13.1 and removed in v5, so it is not used. Wrap it in `src/dleq.ts`. Amounts in cashu-ts are `Amount` objects; use `.toNumber()` at the boundary.
+DLEQ check uses `verifyMintSignatures` (returns `{ valid, invalid }`, never throws per proof). `hasValidDleq` is deprecated in 4.13.1 and removed in v5, so it is not used. Wrap it in `src/dleq.ts`. Amounts in cashu-ts are `Amount` objects; use `.toNumber()` at the boundary (implicit numeric coercion is deprecated and throws in v5).
 
 ### 5.7 Concurrency
 
@@ -243,7 +262,8 @@ packages/wallet/
   package.json            type: module, bin: { owner: dist/cli.js }, deps in section 2
   tsconfig.json
   src/index.ts            re-exports
-  src/agent-wallet.ts     AgentWallet, payFetch
+  src/agent-wallet.ts     AgentWallet, payFetch (wrapFetchWithPayment, error unwrapping)
+  src/cashu-scheme.ts     CashuClientScheme (createPaymentPayload, onPaymentResponse hook)
   src/select.ts           selectExact
   src/store.ts            TokenStore, FileTokenStore, lock file, atomic write
   src/errors.ts           PaymentRefused, PaymentFailed, TokenFileError
@@ -264,7 +284,7 @@ packages/wallet/
 | Fake | Implements | Notes |
 |---|---|---|
 | `FakeMint` (in-process `http.createServer` on port 0) | `GET /v1/info`, `/v1/keysets`, `/v1/keys`, `POST /v1/mint/quote/solana-usdc`, `GET .../{quote}`, `POST /v1/mint/solana-usdc`, `POST /v1/checkstate`, `GET /v1/blindfold/providers` | Keys from `createNewMintKeys(13, seed, { unit: 'usd' })` (amounts 1..4096). Signing: `createBlindSignature(B_, privateKeys[amount], id)` with DLEQ included. Verifies NUT-20 sig with `schnorr.verify` over the signMintQuote message. `amount_paid` set by the test via `fakeMint.markPaid(quote, cents)`. Spent set test-controlled: `fakeMint.spend(secret)`; checkstate reads it |
-| `FakeProvider` | A 402 server | Takes a provider keypair, price, mint URL. Emits `X-Cashu` built with protocol `buildPaymentRequest`. On retry: decode token, check exact sum, signer set contains its key, then 200. Modes to force failures: `reject400`, `drop200` (marks proofs spent in FakeMint, returns 502), `hostile` (returns `d` = attacker key or amount 10000) |
+| `FakeProvider` | An x402 server | The real `@x402/hono` `paymentMiddleware` + `x402ResourceServer` with a fake in-process facilitator and a `cashu` server scheme, as in `spikes/x402-cashu/spike.ts`. Takes a provider keypair, price, mint URL. Facilitator `settle`: decode token, check exact sum, signer set contains its key, then `success: true` with a fake `transaction`. Modes to force failures: `rejectSettle` (`success: false`, proofs stay unspent in FakeMint), `dropResponse` (marks proofs spent in FakeMint, then `success: false`), `hostile` (advertises `nut10.d` = attacker key or amount 10000 cents) |
 | `FakeDepositor` | `Depositor` | Records the call, returns a fake signature, then calls `fakeMint.markPaid(quote, cents)` for the quote whose `request` equals `depositRef` |
 
 Owner flow tests use FakeMint plus FakeDepositor, so no Solana is needed. A separate opt-in test (`SOLANA_TEST=1`) runs `SolanaDepositor` against `solana-test-validator` once the vault exists.
@@ -278,10 +298,10 @@ All with vitest, no network.
 | 1 | `selectExact`: given proofs `[4,1,1,2,8]` target 5 returns `4+1`; shuffled input gives identical output; target 7 with `[4,4]` gives `insufficient_exact`; total below target gives `insufficient_balance`; proofs locked to other keys give `provider_not_in_signer_set` |
 | 2 | `planDenominations(100, [5])`: sums to 100, all powers of two, contains 16 copies of `{4,1}`. `(100,[5,3])` and `(1,[5])` also sum correctly. Property test: for random price in 1..10 and 100 cents, `selectExact` succeeds for the first `n` payments in a row |
 | 3 | Store: write is atomic (kill-before-rename leaves the old file intact), mode 0600, extra fields preserved, version or unit mismatch throws, second `open()` on a held lock throws |
-| 4 | Happy path: owner flow against FakeMint+FakeDepositor writes a file whose proofs all pass `verifyMintSignatures`, have the sorted allowlist signer set, sum to 100. Then `payFetch` to FakeProvider (price 5) returns 200, balance is 95, `pending` is empty |
-| 5 | Refusals, each asserts the exact `reason` and that **no** paid retry reached the server and the file is unchanged: wrong unit, mint not in `m`, amount 11 over cap 10, provider key not in allowlist, provider key in allowlist but not in proof signer set, `creqB` variant parses and pays |
-| 6 | Hostile provider (`hostile` mode asking for an attacker key): `provider_not_allowed`; balance unchanged |
-| 7 | Failure recovery: FakeProvider `reject400` returns 400, proofs unspent in FakeMint, so they return to `proofs`, `PaymentFailed.recovered = {returned: n, dropped: 0}`. `drop200`: proofs spent, so dropped, balance falls by 5 |
+| 4 | Happy path: owner flow against FakeMint+FakeDepositor writes a file whose proofs all pass `verifyMintSignatures`, have the sorted allowlist signer set, sum to 100. Then `payFetch` to FakeProvider (price 5) returns 200, the `PAYMENT-RESPONSE` has a `transaction`, balance is 95, `pending` is empty |
+| 5 | Refusals, each asserts the exact `reason` and that **no** paid retry reached the server and the file is unchanged: wrong unit, mint not in `extra.mints`, wrong asset, amount 11 over cap 10 (rejected by spend controls, mapped to `over_cap`), provider key not in allowlist, provider key in allowlist but not in proof signer set, `payTo != nut10.d` (`bad_request`), unwrapped error text has no "Failed to create payment payload" prefix |
+| 6 | Hostile provider (`hostile` mode advertising an attacker key): `provider_not_allowed`; balance unchanged |
+| 7 | Failure recovery: FakeProvider `rejectSettle` returns `402`, proofs unspent in FakeMint, so they return to `proofs`, `PaymentFailed.recovered = {returned: n, dropped: 0}`. `dropResponse`: proofs spent, so dropped, balance falls by 5 |
 | 8 | Crash recovery: write a file with a `pending` entry, mark half the Ys spent in FakeMint, `open()` returns the unspent to `proofs` and drops the rest |
 | 9 | Concurrency: 10 parallel `payFetch` calls against a provider; no proof is sent twice, each success is exactly 5, final balance is consistent |
 | 10 | Owner errors: lost mint response then identical resend returns the stored signatures; plan over 256 outputs is chunked; bad DLEQ (FakeMint corrupts one) aborts without writing the file; empty or inactive provider list refuses; resume from a state saved after deposit does not deposit twice |
@@ -292,3 +312,5 @@ All with vitest, no network.
 | # | Question | Proposed answer |
 |---|---|---|
 | Q1 | 00 §5.3 quote `amount` is the target; `amount_paid` may differ. If an owner overpays, mint only what was planned | Wallet mints `min(cents, amount_paid - amount_issued)` and re-plans the split to that amount |
+| Q2 | x402 spend controls reject over-cap before our scheme runs, so the refusal reason is inferred from the SDK error text | Match on the error shape in `payFetch`; pin `@x402/*` to 2.31.x and cover it with test 5 so an SDK upgrade fails loudly |
+| Q3 | Does the SDK retry a paid request after `onPaymentResponse` returns, or after a `402` to the paid retry? | Spike showed one retry only. Re-check on upgrade; the hook returns nothing so no recovery retry is requested |

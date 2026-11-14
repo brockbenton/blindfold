@@ -12,7 +12,7 @@ Cashu mint for method `solana-usdc`: issues blind-signed `usd` proofs against va
 | Calls | `Config`, `DepositRecord`, `ProviderRecord` account reads | 00 §4.1 |
 | Calls | `settle_batch` instruction | 00 §4.3 |
 | Imports | `packages/protocol`: `constants`, `types`, `lock.signerSet`, `units`, `vault`, `env` | 00 §8 |
-| Used by | Owner CLI / wallet SDK (quote, mint, providers), mock API (redeem), agent (checkstate), `scripts/e2e.ts` (admin) | 00 §1 |
+| Used by | Owner CLI / wallet SDK (quote, mint, providers), provider's x402 facilitator inside the mock API (redeem, during settle), agent (checkstate), `scripts/e2e.ts` (admin) | 00 §1 |
 | Config | `DATABASE_URL`, `MINT_SEED`, `MINT_AUTHORITY_KEYPAIR`, `MINT_ADMIN_TOKEN`, `PORT`, `SOLANA_RPC_URL`, `VAULT_PROGRAM_ID`, `USDC_MINT`, `MINT_URL`, `config/providers.json` | 00 §9 |
 
 ## 2. MVP scope
@@ -39,7 +39,7 @@ Cashu mint for method `solana-usdc`: issues blind-signed `usd` proofs against va
 
 | Need | Choice |
 |---|---|
-| Cashu | `@cashu/cashu-ts` 4.13.1 (ESM only, wallet lib with mint-side helpers; no NUT-24 helper, none needed here) |
+| Cashu | `@cashu/cashu-ts` 4.13.1 (ESM only, wallet lib with mint-side helpers; no x402 helper needed here) |
 | Solana | `@solana/web3.js` 1.x with `@anchor-lang/core` 1.2.2 (Anchor's `Program` and `Connection` types are web3.js 1.x; `@solana/kit` does not plug into it) |
 | Postgres | `pg` with plain SQL |
 
@@ -133,7 +133,7 @@ Provider sync (every 30 s and at boot): read `provider_count` from `Config`, fet
 
 ### 4.7 Redeem algorithm
 
-Input `proofs` in the 00 §3.4 wire form: `amount` a number, `witness` a JSON string. Normalize on input: also accept `amount` as a numeric string and `witness` as an object (cashu-ts v4 shapes). Steps map to 00 §5.6.
+Input `proofs` in the 00 §3.4 wire form: `amount` a number, `witness` a JSON string. Normalize on input: also accept `amount` as a numeric string and `witness` as an object (cashu-ts v4 shapes). Steps map to 00 §5.6. The caller is the provider's x402 facilitator (00 §7.3) during settle; the mint API is unchanged and knows nothing about x402.
 
 ```
 1. n in 1..64 else 11014; Set(secret).size == n else 11007

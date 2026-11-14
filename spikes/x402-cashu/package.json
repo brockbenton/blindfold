@@ -1,0 +1,17 @@
+{
+  "name": "spike-x402-cashu",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx spike.ts"
+  },
+  "dependencies": {
+    "@cashu/cashu-ts": "^4.13.1",
+    "@hono/node-server": "^2.1.8",
+    "@x402/core": "^2.31.0",
+    "@x402/fetch": "^2.31.0",
+    "@x402/hono": "^2.31.0",
+    "hono": "^4.13.18",
+    "tsx": "^4.23.15"
+  }
+}

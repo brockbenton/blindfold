@@ -10,8 +10,8 @@ What we build. Why is in [`README.md`](../README.md), how in [`design.md`](desig
 
 1. **Vault** (Anchor program). Holds devnet USDC. Instructions: `deposit`, `register_provider`, `settle_batch`.
 2. **Mint** (TypeScript + Postgres, `cashu-ts`). Blind-signs tokens, redeems them, keeps the spent set and provider balances.
-3. **Mock paid API.** Returns HTTP 402 and serves data once it gets a valid token.
-4. **Agent wallet SDK.** Holds the tokens, handles the 402 handshake and retries with payment.
+3. **Mock paid API.** Returns an x402 `402` offering the `cashu` scheme and serves data once it gets a valid token.
+4. **Agent wallet SDK.** Holds the tokens, handles the x402 handshake and retries with payment.
 5. **Simple agent.** Makes at least one paid call through the wallet.
 
 ### Done when
@@ -25,7 +25,7 @@ What we build. Why is in [`README.md`](../README.md), how in [`design.md`](desig
 
 In priority order.
 
-1. **Competitor bot and split screen.** Run the same research task over normal x402 and over Blindfold. The bot copies the trade in the first case and sees nothing in the second. This is the core of the demo.
+1. **Competitor bot and split screen.** Run the same research task over normal x402 (`exact` scheme) and over Blindfold (`cashu` scheme), against one provider endpoint that offers both. The bot copies the trade in the first case and sees nothing in the second. This is the core of the demo.
 2. **Prompt injection beat.** A poisoned API response tells the agent to pay an unknown provider. The payment fails because the tokens are locked to allowlisted providers.
 3. **QuickNode Stream.** Watches vault deposits, triggers the top-up and feeds the bot. Qualifies us for the $500 bounty.
 4. **Owner approval.** A small allowance the agent can spend alone, plus a reserve that needs the owner's co-signature, signed from the CLI.
@@ -35,7 +35,7 @@ In priority order.
 
 **Cut order if behind:** drop add-ons from the bottom up. Split screen can shrink to a terminal view. **Don't cut** add-ons 1 and 2; they are the demo.
 
-**Deferred:** custom x402 scheme, refunds, key rotation, approval UI, Tor / Oblivious HTTP, a standard Cashu wallet holding our tokens.
+**Deferred:** refunds, key rotation, approval UI, Tor / Oblivious HTTP, a standard Cashu wallet holding our tokens.
 
 **Out of scope:** mainnet, real providers, our own crypto, multiple mint operators, an onchain escape hatch (pitch as future work).
 

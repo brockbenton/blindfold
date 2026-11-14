@@ -1,6 +1,6 @@
 # Blindfold
 
-**Agent wallets that can't be drained and can't be watched.** An AI agent pays for data APIs over HTTP 402 with ecash tokens backed by USDC on Solana. The spending rules are inside the tokens, so the agent can't be drained or tricked into paying the wrong party. The tokens are blind-signed, so the chain, the providers and the mint can't link the agent to the APIs it buys from.
+**Agent wallets that can't be drained and can't be watched.** An AI agent pays for data APIs over [x402](https://github.com/x402-foundation/x402) with ecash tokens backed by USDC on Solana. Blindfold is a custom x402 v2 payment scheme (`cashu`), so providers and agents use the standard x402 SDKs. The spending rules are inside the tokens, so the agent can't be drained or tricked into paying the wrong party. The tokens are blind-signed, so the chain, the providers and the mint can't link the agent to the APIs it buys from.
 
 Tracks: **Agentic Payments & AI**, **Best use of Solana**, **QuickNode Streams**.
 
@@ -51,20 +51,22 @@ Privacy alone is crowded; safety plus privacy is not. Expected objections are in
 
 ## Competitors
 
-| | Normal x402 | [Circle Nanopayments](https://developers.circle.com/gateway/nanopayments/concepts/batched-settlement) | [bigrceo/hush](https://github.com/bigrceo/hush) | [TACEO](https://financialit.net/news/payments/taceo-merces-brings-confidential-payments-x402-new-internet-payment-standard) / [Curvy](https://curvy.box/x402-privacy/) | **Blindfold** |
-|---|---|---|---|---|---|
-| Hidden from chain | ✗ | per call (batched) | ✓ | amounts / addresses | ✓ |
-| Hidden from provider | ✗ | ✗ | ✓ | ✗ | ✓ |
-| Hidden from operator | n/a | ✗ | ✗ | n/a | **✓ blind signatures** |
-| Guardrails enforced by | agent code | agent code | server | agent code | **the tokens** |
+| | Normal x402 | [x402 `batch-settlement` on Solana](https://github.com/x402-foundation/x402/blob/main/specs/schemes/batch-settlement/scheme_batch_settlement_svm.md) | [Circle Nanopayments](https://developers.circle.com/gateway/nanopayments/concepts/batched-settlement) | [bigrceo/hush](https://github.com/bigrceo/hush) | [TACEO](https://financialit.net/news/payments/taceo-merces-brings-confidential-payments-x402-new-internet-payment-standard) / [Curvy](https://curvy.box/x402-privacy/) | **Blindfold** |
+|---|---|---|---|---|---|---|
+| Hidden from chain | ✗ | ✗ (one public channel per payer and provider) | per call (batched) | ✓ | amounts / addresses | ✓ |
+| Hidden from provider | ✗ | ✗ | ✗ | ✓ | ✗ | ✓ |
+| Hidden from operator | n/a | n/a | ✗ | ✗ | n/a | **✓ blind signatures** |
+| Guardrails enforced by | agent code | channel (one provider per funded channel) | agent code | server | agent code | **the tokens** |
 
-Ecash for HTTP 402 already exists on Bitcoin/Lightning: [Cashu NUT-24](https://cashubtc.github.io/nuts/24), [x402-cashu](https://www.pkgstats.com/pkg:x402-cashu), [xcashu](https://github.com/callebtc/xcashu). We **reuse** those specs; what's new is USDC on Solana, provider-locked tokens for agents, and auditable issuance. [Shinjuku Shielded](https://github.com/ShinjukuStaition/shinjuku-shielded) (private x402 facilitator on Solana) was archived Oct 2026. Inspiration: [kshinn/umbra-gateway](https://github.com/kshinn/umbra-gateway) (reference only; no building on pre-existing projects).
+Ecash for HTTP 402 already exists on Bitcoin/Lightning: [Cashu NUT-24](https://cashubtc.github.io/nuts/24), [xcashu](https://github.com/callebtc/xcashu), and [x402-cashu](https://github.com/orangerabbit-io/x402-cashu), which carries sat-denominated Cashu tokens over x402 (scheme `exact`, network `cashu:mainnet`, settled by a swap at the mint). We use the same payload shape but a distinct scheme on Solana: our tokens are USDC-backed by a Solana vault, locked 1-of-N to registered providers, and redeemed rather than swapped. We **reuse** the Cashu token specs; what's new is USDC on Solana, provider-locked tokens for agents, auditable issuance, and shipping it as an x402 v2 scheme.
+
+The closest Solana competitor is x402's own `batch-settlement` scheme (Solana Foundation payment-channels program): deposit once, sign vouchers offchain, redeem in a batch. A channel to one provider also limits where money can go. Blindfold differs in three ways: the chain can't see who pays whom, the agent holds no signing key, and one deposit covers every allowlisted provider instead of one funded channel each. [Shinjuku Shielded](https://github.com/ShinjukuStaition/shinjuku-shielded) (private x402 facilitator on Solana) was archived Oct 2026. Inspiration: [kshinn/umbra-gateway](https://github.com/kshinn/umbra-gateway) (reference only; no building on pre-existing projects).
 
 ## Demo (3 minutes)
 
 1. **Prompt injection (45 s):** a hostile server could drain an x402 agent's wallet. That was patched in client code, not in the structure. A poisoned API response tells our agent to pay `evil-provider.xyz`; the payment fails because no token can be redeemed there. (With add-on 4: a call above the allowance makes the agent ask the owner to co-sign.)
-2. **The leak (45 s):** same research task over normal x402. The competitor bot watches the chain, sees the agent paying for token X data, and copies the trade.
-3. **Blindfold (45 s):** same task. The bot sees one deposit and nothing else.
+2. **The leak (45 s):** same research task, same provider endpoint, paying with x402's standard `exact` scheme. The competitor bot watches the chain, sees the agent paying for token X data, and copies the trade.
+3. **Blindfold (45 s):** same task and endpoint, paying with the `cashu` scheme. The bot sees one deposit and nothing else.
 4. **Settlement (30 s):** one transaction pays providers. With add-on 6, issuance and payouts reconcile with the vault balance.
 5. **Close (15 s):** "Agent wallets that can't be drained and can't be watched."
 
