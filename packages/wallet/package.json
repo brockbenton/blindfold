@@ -1,0 +1,31 @@
+{
+  "name": "@blindfold/wallet",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "bin": { "owner": "./dist/cli.js" },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@blindfold/protocol": "workspace:*",
+    "@cashu/cashu-ts": "4.13.1",
+    "@solana/spl-token": "0.4.15",
+    "@solana/web3.js": "1.99.0",
+    "@x402/core": "2.31.0",
+    "@x402/fetch": "2.31.0",
+    "commander": "14.0.1"
+  },
+  "devDependencies": {
+    "@blindfold/testkit": "workspace:*",
+    "@hono/node-server": "2.1.8",
+    "@x402/hono": "2.31.0",
+    "hono": "4.13.18"
+  }
+}
