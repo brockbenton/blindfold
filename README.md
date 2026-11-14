@@ -25,7 +25,7 @@ Tracks: **Agentic Payments & AI**, **Best use of Solana**, **QuickNode Streams**
 
 In normal x402 the agent holds a wallet key, and its limits are just code. In August 2026 V12 reported that the default x402 client had **no spending limit**: a hostile server could request the wallet's whole balance. It was patched within days, but the fix is a limit in client code, which a bug or a compromised agent can get around. Separately, a USENIX Security 2026 study found that every x402 facilitator it tested broke at least one security rule. Details and how to cite them: [`docs/security-sources.md`](docs/security-sources.md).
 
-**Ours:** the agent never holds USDC or a key, only tokens, and the rules are in the tokens: a budget it can't exceed and a lock so only allowlisted providers can redeem them. Add-ons: an owner co-signature for anything beyond a small allowance, and a time lock that returns unspent tokens. See [`docs/design.md`](docs/design.md#guardrails-in-the-tokens).
+**Ours:** the agent never holds USDC or a key, only tokens, and the rules are in the tokens: a budget it can't exceed and a lock so only allowlisted providers can redeem them. The agent also doesn't trust our mint: before spending, it reads the vault's USDC balance from Solana and refuses to pay if it doesn't cover the tokens outstanding. Add-ons: an owner co-signature for anything beyond a small allowance, and a time lock that returns unspent tokens. See [`docs/design.md`](docs/design.md#guardrails-in-the-tokens).
 
 **Doesn't solve:** an injected agent can still waste its budget on allowed providers; a malicious allowlisted provider can overcharge up to the per-call cap (enforced in the wallet SDK, not the tokens); poisoned data; a dishonest mint. We don't claim to fix x402 security in general.
 
@@ -58,9 +58,14 @@ Privacy alone is crowded; safety plus privacy is not. Expected objections are in
 | Hidden from operator | n/a | n/a | ✗ | ✗ | n/a | **✓ blind signatures** |
 | Guardrails enforced by | agent code | channel (one provider per funded channel) | agent code | server | agent code | **the tokens** |
 
-Ecash for HTTP 402 already exists on Bitcoin/Lightning: [Cashu NUT-24](https://cashubtc.github.io/nuts/24), [xcashu](https://github.com/callebtc/xcashu), and [x402-cashu](https://github.com/orangerabbit-io/x402-cashu), which carries sat-denominated Cashu tokens over x402 (scheme `exact`, network `cashu:mainnet`, settled by a swap at the mint). We use the same payload shape but a distinct scheme on Solana: our tokens are USDC-backed by a Solana vault, locked 1-of-N to registered providers, and redeemed rather than swapped. We **reuse** the Cashu token specs; what's new is USDC on Solana, provider-locked tokens for agents, auditable issuance, and shipping it as an x402 v2 scheme.
+**What's new.** Cashu ecash over HTTP 402 already exists for Bitcoin agents ([Cashu NUT-24](https://cashubtc.github.io/nuts/24), [xcashu](https://github.com/callebtc/xcashu), [x402-cashu](https://github.com/orangerabbit-io/x402-cashu) and several hackathon wallets). Those pay a Lightning-backed mint in sats, and the agent holds spendable tokens it could send anywhere. Blindfold is the first we know of to:
 
-The closest Solana competitor is x402's own `batch-settlement` scheme (Solana Foundation payment-channels program): deposit once, sign vouchers offchain, redeem in a batch. A channel to one provider also limits where money can go. Blindfold differs in three ways: the chain can't see who pays whom, the agent holds no signing key, and one deposit covers every allowlisted provider instead of one funded channel each. [Shinjuku Shielded](https://github.com/ShinjukuStaition/shinjuku-shielded) (private x402 facilitator on Solana) was archived Oct 2026. Inspiration: [kshinn/umbra-gateway](https://github.com/kshinn/umbra-gateway) (reference only; no building on pre-existing projects).
+1. Back Cashu with **USDC on Solana**: an Anchor vault holds the dollars, deposits mint tokens, and providers are paid in batched USDC payouts onchain.
+2. Use the token lock as the **agent guardrail**: every token is locked 1-of-N to registered providers, so a compromised agent has nothing it can redirect.
+3. Make the custodial mint **auditable onchain**: deposits, payouts and the vault balance are all onchain, and the issuance-log add-on makes tokens issued public too.
+4. Ship it as a standard **x402 v2 scheme**, so it sits next to normal `exact` payments on the same endpoint.
+
+We reuse Cashu's token specs and the x402 SDKs rather than reinventing them. [Shinjuku Shielded](https://github.com/ShinjukuStaition/shinjuku-shielded) (private x402 facilitator on Solana) was archived Oct 2026. Inspiration: [kshinn/umbra-gateway](https://github.com/kshinn/umbra-gateway) (reference only; no building on pre-existing projects).
 
 ## Demo (3 minutes)
 
