@@ -1,117 +1,80 @@
 # Blindfold: Design
 
-How it works. Pitch is in [`README.md`](../README.md), scope in [`mvp.md`](mvp.md). Parts marked *(add-on N)* are outside the MVP; see [`mvp.md`](mvp.md#add-ons).
+[Run locally](RUNNING.md) · [Interfaces](design/00-interfaces.md) · [Scope](mvp.md)
 
 ## One purchase end to end
 
 ```mermaid
 flowchart LR
-    Owner["Owner<br/>budget + rules"] -->|1 deposit USDC| Vault["Vault<br/>Anchor program"]
-    Owner <-->|2 blind sign| Mint["Mint<br/>Cashu-compatible"]
-    Owner -->|locked tokens| Agent["Agent"]
-    Agent -->|3 x402, scheme cashu| Provider["Provider<br/>middleware"]
-    Provider -->|4 redeem| Mint
-    Mint -->|5 batch settle| Vault
-    Vault -->|USDC| Payout["Provider payout"]
-    Stream["QuickNode Stream"] -.-> Temporal["Temporal"]
-    Stream -.-> Bot["Competitor bot"]
+    Owner[Owner] -->|deposit USDC| Vault[Solana vault]
+    Owner <-->|blinded outputs / signatures| Mint[Mint]
+    Owner -->|locked tokens| Agent[Agent wallet]
+    Agent -->|x402 cashu payment| Provider[Provider]
+    Provider -->|sign and redeem| Mint
+    Mint -->|settle_batch| Vault
+    Vault -->|USDC| Payout[Registered payout account]
 ```
 
-1. **Deposit.** The owner deposits devnet USDC into the vault, ideally ahead of and independent from any research task. The mint confirms the deposit from the vault program's state. *(Add-ons 3, 5: a QuickNode Stream sees the deposit and starts a Temporal top-up workflow.)*
-2. **Issue.** The owner builds the token secrets with their locks, blinds them, and gets the mint's signatures. The owner unblinds and hands the finished tokens to the agent. *(Add-on 6: the blinded values and signatures are logged onchain.)*
-3. **Pay.** The provider answers `402 Payment Required` with an x402 v2 `PAYMENT-REQUIRED` header offering the `cashu` scheme (e.g. 5¢). The agent retries with matching tokens in `PAYMENT-SIGNATURE`. Wire details: [`design/00-interfaces.md`](design/00-interfaces.md) §7.
-4. **Redeem.** The provider supplies the signature the token lock requires. The mint checks the signature, the lock and the spent set, credits that provider, and the provider serves the data. This is a database lookup, well under 100 ms.
-5. **Settle.** On fixed, shared windows (demo: 60 s), `settle_batch` pays each provider's balance in USDC.
+1. **Deposit.** The owner obtains a quote with a random `deposit_ref` and deposits whole-cent USDC into the vault. The mint polls `Config.deposit_count` and the program's `DepositRecord` accounts; it does not infer payment from raw transaction instructions.
+2. **Issue.** The owner builds secrets locked 1-of-N to all active provider keys, blinds them and obtains mint signatures. NUT-20 binds mint requests to the owner's quote key. The owner unblinds, checks DLEQ proofs and writes the tokens to the agent's file.
+3. **Pay.** The provider offers x402 v2 scheme `cashu`. The wallet checks mint, unit, asset, provider and price, selects an exact amount and persists it as pending before sending it.
+4. **Redeem.** The provider signs the proofs. The mint verifies signatures and locks, atomically marks proofs spent and credits that provider. The provider serves data only after successful redemption. This includes cryptographic verification and a database transaction; no latency bound is guaranteed.
+5. **Settle.** A timer (default 60 seconds) or admin request pays up to eight active providers per batch. Timers are relative to process startup, not globally synchronized settlement windows.
 
-## Blind signatures
+## Blind signatures and compatibility
 
-Cashu's **BDHKE** on **secp256k1**, via `cashu-ts`: compatible with Cashu wallets and test vectors. The mint verifies offchain, so ed25519 being native to Solana doesn't matter. **We don't write curve maths.**
+Cashu's BDHKE scheme on secp256k1 is implemented through `@cashu/cashu-ts`. For secret `x` and random blinding factor `r`, the owner sends `B_ = hash_to_curve(x) + rG`. The mint returns `C_ = kB_`; the owner computes `C = C_ - rK`. At redemption the mint checks `C = k·hash_to_curve(x)`.
 
-| Step | Who | What |
-|---|---|---|
-| Blind | Owner | Secret `x` (carries the lock), random `r`; `Y = hash_to_curve(x)`; sends `B_ = Y + rG` |
-| Sign | Mint | `C_ = k·B_` (never sees `x` or `Y`) |
-| Unblind | Owner | `C = C_ − r·K = k·Y`; token = `(amount, x, C)` |
-| Redeem | Mint | `C == k·hash_to_curve(x)`, lock satisfied, `x` not spent → mark spent |
+Blinding prevents matching signatures to redeemed secrets from the cryptographic transcript alone. It does not hide amounts, timing or network metadata. Publishing blinded outputs would not publish secrets, but their amounts and timestamps could still aid correlation.
 
-The random `r` means the mint can't connect what it signed to what it later redeems, and `B_`/`C_` can be posted onchain without revealing anything.
+The implementation uses Cashu keysets (NUT-01/02), a custom `solana-usdc` mint method (NUT-04), checkstate (NUT-07), restricted P2PK locks (NUT-10/11), DLEQ proofs (NUT-12) and signed quotes (NUT-20). It uses `cashuB` token encoding. Swap (NUT-03), melt (NUT-05), refunds and general Cashu-wallet interoperability are not implemented. A standard wallet would need support for this mint method and payment scheme.
 
-**Cashu specs used:** NUT-00–05 (tokens, keysets, swaps), NUT-04 with a custom `solana-usdc` mint method (a vault deposit replaces a Lightning invoice), unit `usd`, NUT-10/11 (locks), NUT-12 (DLEQ proofs), NUT-20 (signed mint quotes). Payments use [x402 v2](https://github.com/x402-foundation/x402) with a custom `cashu` scheme instead of Cashu's own NUT-24 headers, so standard x402 SDKs carry them. The provider acts as its own x402 facilitator: settle means redeem at the mint, and USDC moves later, like x402's `batch-settlement` scheme.
+The provider acts as an in-process x402 facilitator. Its successful x402 `transaction` value is the mint's redemption ID. USDC moves in a later vault transaction.
 
-## Guardrails in the tokens
+## Spending controls
 
-| Rule | Enforcement |
+| Control | Enforcement and limit |
 |---|---|
-| **Budget** | The agent only has the tokens it was given |
-| **Allowlist** *(add-on 2)* | Tokens are locked **1-of-N** to the allowlisted providers' keys (NUT-11). Nobody else can redeem them. The list is global (all registered providers), so every owner's tokens look the same to the mint |
-| **Approval: two pockets** *(add-on 4)* | The *allowance* (e.g. $1) is spendable by the agent alone. The *reserve* is locked 2-of-2 (agent + owner) and must be swapped at the mint with the owner's CLI signature before spending. Unilateral spending is capped at the allowance, so many small notes can't bypass approval |
-| **Expiry** *(deferred)* | Time lock + owner refund key returns unspent tokens |
-| **Per-call price cap** | In the wallet SDK (code, not tokens); the budget still bounds the total |
+| Budget | Agent can spend the tokens it holds; it can waste all of them at allowed providers |
+| Provider lock | Owner-created 1-of-N P2PK lock includes active registered providers at funding time; mint credits the key that signed |
+| Narrower allowlist | `WALLET_ALLOWLIST` is wallet policy, not an additional token restriction |
+| Per-call price cap | Wallet and x402 spend controls; not encoded in tokens |
+| Exact amount | No change or swap; wallet must find proofs summing to the price |
+| Reserve gate | Agent reads the vault and compares against mint-reported liabilities; errors stop payment |
 
-**Mint-side rules (MVP):** bind the verified provider key to the account that gets credited, and mark each proof spent in the **same database transaction** as the credit, so a replayed proof is rejected and never credited twice.
+The mint cannot inspect a blinded secret at issuance. It validates its lock at redemption. The owner must build and verify the lock correctly. New providers do not acquire access to old tokens, and deactivated providers cannot redeem after the mint syncs their status.
 
-## Settlement and hiding provider revenue
+## Custody and reserves
 
-**Base design (MVP):** the vault pays each provider's registered address once per window. Customers are hidden, but anyone can add up a provider's payouts.
+The vault holds a configured classic SPL mint; the deployment must choose the intended six-decimal USDC mint. It pays only registered payout accounts, but the mint authority chooses amounts. A compromised mint can drain reserves to those accounts. The admin controls registration and deactivation; the upgrade authority can change program behavior. `initialize` is first-caller-wins and is not restricted to the deployer.
 
-**Hiding revenue (add-on 7):**
-1. **A fresh payout address per batch,** given by the provider or derived from a key it registered offchain.
-2. **Fixed-size chunks** (e.g. $10), remainders carried forward, all providers paid in **one shared transaction**.
-3. **The mint pays fees.** A fresh address needs SOL to move its USDC, and funding it from the provider's main wallet would link them. Solana allows a separate fee payer; the vault also pays rent for new USDC accounts.
+`outstanding = issued - settled` includes both unredeemed tokens and redeemed balances awaiting payout. Issuance and settlement accounting come from the mint's database. The agent rounds the public vault balance down to whole cents so a direct sub-cent transfer cannot disable the check, but that does not prove the reported liabilities are complete. Reads of RPC state and database state are not an atomic snapshot, so a concurrent payout can also cause a conservative refusal.
 
-Simpler alternative: providers **hold earnings as ecash** and withdraw when they like, in any chunks, to fresh addresses (same fee-payer fix).
+The admin reconciliation endpoint reports `vault_balance`, `deposited`, `issued`, `redeemed` and `settled`. In an isolated test with no direct transfers, `vault_balance == deposited - settled`. Direct transfers, unprocessed deposits or pending confirmations can break that identity without proving theft. There is no public onchain issuance log yet.
 
-**Still visible:** the vault's total outflow, each provider's revenue to the mint, and any consolidation the provider does into a known wallet.
+## Privacy and failure limits
 
-**Cost:** with fresh addresses the vault can't check that payouts go to registered providers, so the registry moves offchain to the mint. Softeners: auditable registry, refunds still only to the depositor (onchain), per-window outflow cap. Open question in [`plan.md`](plan.md#open-questions).
-
-## Trust and not-a-mixer
-
-**Custodial mint.** The vault balance is public. With the issuance log *(add-on 6)*, total issued per keyset is public too, and payouts are onchain, so anyone can check `vault ≥ issued − paid out − refunded`. But redemption totals are mint-reported and `settle_batch` is mint-signed: a **trusted mint with auditable issuance**, not a trustless one.
-
-**Not a mixer:**
-- Tokens are redeemable only by **registered providers**; no cash-out to arbitrary addresses.
-- Refunds (deferred) go **only** to the depositing address.
-- Deposits are screened against a sanctions list (mocked for the demo; the README says so).
-- Per-deposit cap (demo: $50).
-
-## Leaks and threats
-
-| Leak / threat | Mitigation | Still exposed |
-|---|---|---|
-| **Timing** | Prefund independently of tasks; fixed, shared settlement windows; roll small balances forward | Mint and provider see redemption times; a fresh deposit then a burst can correlate |
-| **Amounts** | Few top-up sizes, common denominations, a keyset shared across users, one payout per provider per window | Deposit and payout totals public; rare amounts or one-purchase batches stand out |
-| **IP addresses** | Shared HTTPS relay; providers redeem without forwarding client IPs; Tor / Oblivious HTTP deferred | Query content; cookies or account IDs; a basic relay can correlate |
-| **Small anonymity set** | Say it plainly: privacy grows with users | Few users = weak privacy |
-| **Custodial mint** | Auditable issuance, public reserves, deposit cap | Operator can steal or censor. Future: onchain escape hatch, multiple operators |
-| **Fake deposit** | Mint reads deposits from vault program state, not raw instructions (see V12 Critical 2 in [`security-sources.md`](security-sources.md)) | — |
-| **Double spend** | Online redemption against the spent set before serving | — |
-| **Crypto bugs** | `cashu-ts`, test vectors, DLEQ | — |
-
-The demo shows what a **public chain observer** sees. ([Cashu privacy FAQ](https://docs.cashu.space/faq), [Oblivious HTTP](https://www.rfc-editor.org/rfc/rfc9458.html))
-
-## Components
-
-| Component | Does | Tech | Phase |
-|---|---|---|---|
-| **Vault** | Holds USDC; `deposit`, `register_provider`, `settle_batch` (mint authority) | Anchor, Solana devnet, SPL USDC (classic Token program) | MVP |
-| **Mint** | Cashu API; signing; redemption with lock checks and spent set; balances | TypeScript, Postgres, `cashu-ts` | MVP |
-| **Provider middleware + mock API** | x402 v2 `cashu` scheme via `@x402/hono`; redeem, then serve | Hono | MVP (1 API; 2–3 for the demo) |
-| **Wallet SDK** | Holds tokens; picks tokens matching the lock; handles 402s via `@x402/fetch` | TypeScript, `cashu-ts`, `@x402/fetch` | MVP |
-| **Agent** | Makes paid calls. Demo version: LLM tools `balance`, `list_providers`, `call_paid_api`, `request_approval`, `report` | TypeScript | MVP (simple) |
-| **Competitor bot + split screen** | Reads public chain events only, guesses the research topic; baseline vs Blindfold view | Script; Next.js or terminal | Add-on 1 |
-| **QuickNode Stream** | Filters vault deposits → top-up webhook; feeds the bot | Streams, Solana devnet | Add-on 3 |
-| **Temporal workers** | See below | Temporal TypeScript SDK | Add-on 5 |
-| **Issuance log + reconciliation** | Onchain blinded values; issued vs payouts vs vault balance | Vault + view | Add-on 6 |
-
-## Temporal (add-on 5)
-
-| Workflow | Why |
+| Observation or failure | Current behavior |
 |---|---|
-| **Top-up** (deposit → sign → optional onchain log → unblind) | Multi-step with outside confirmations; a crash mid-way would leave "deposited, no tokens." Idempotent per deposit |
-| **Approval** (if add-on 4 exists) | Durable wait on the owner's CLI co-signature, as a signal |
-| **Settlement** | Optional, as a Temporal Schedule; cron otherwise |
+| Public chain | Shows depositor, amount, deposit reference and registered provider payouts; no per-call onchain payment |
+| Provider | Sees query and token proofs; can also observe client network metadata |
+| Mint | Sees deposits, issuance amounts, provider redemptions and timing; blinding hides the direct issuance-to-proof link |
+| Small population or distinctive amounts | Can make correlation easy; privacy is not guaranteed |
+| Leaked tokens | Anyone holding them can submit payments to allowed providers; locks prevent arbitrary-recipient redemption, not budget theft through allowed services |
+| Double spend | Online redemption and a unique spent-proof key prevent double credit |
+| Lost redemption response | Provider may be paid without serving data; wallet uses checkstate to drop spent proofs or recover unspent ones |
+| Mint outage | No online redemption, so provider serves no paid data; unresolved wallet proofs remain pending |
 
-**Pros:** built-in recovery, retries and idempotency; a visible demo beat (kill the worker mid-top-up, restart, tokens still issued); Eli owns it, so it runs in parallel.
-**Cons:** token guardrails removed its strongest reason (a crash can't cause overspending anyway); one more system to run and explain; workflow code can't use random values, so BDHKE must run in activities.
-**Without it:** top-up is a webhook handler plus a status column.
+The current provider does not log client IPs, token headers or secrets. Omitting those logs is not network anonymity. There is no shared relay, Tor/OHTTP layer, sanctions screening or refund path. The $50 default is a per-deposit cap, not an aggregate budget or identity control.
+
+## Planned work
+
+See [MVP and add-ons](mvp.md#add-ons) for priority. These are design options, not current features:
+
+- An `exact` baseline and competitor bot to compare public-chain observations with `cashu` payments.
+- A complete prompt-injection demo using the existing hostile-response test hooks.
+- QuickNode Streams to trigger deposit polling; the mint currently polls without a webhook.
+- Owner approval through a second, co-signed reserve pocket. Current locks accept only 1-of-N and reject refund/time-lock tags; this requires protocol changes.
+- Temporal for durable top-ups. Workflow randomness and signing would run in activities; existing persisted funding checkpoints still have recovery limits.
+- Onchain issuance logging and an external reconciliation view.
+- Hidden provider revenue through fresh payout accounts or chunked withdrawals. This would require changing the current fixed payout registry and reassessing the trust model; current provider revenue remains public.

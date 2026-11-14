@@ -1,4 +1,4 @@
-// In-process fake mint over HTTP (04 section 7), also serving redeem and reserves so e2e tests can reuse it.
+// In-process fake mint over HTTP (04-wallet-sdk.md, Source and tests), also serving redeem and reserves so e2e tests can reuse it.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import {

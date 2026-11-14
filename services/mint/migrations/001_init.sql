@@ -1,4 +1,4 @@
--- Mint schema (docs/design/02-mint.md 4.2). Money columns are cents unless named *_base.
+-- Mint schema (docs/design/02-mint.md, Data and transaction boundaries). Money columns are cents unless named *_base.
 create table keysets (
   id text primary key,
   unit text not null,

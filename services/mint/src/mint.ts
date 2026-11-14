@@ -20,7 +20,7 @@ export interface MintDeps {
   confirmTimeoutMs?: number;
 }
 
-/** Boot steps 1 to 3 (02 section 4.3): migrate, keyset, first provider sync. Jobs start with `start()`. */
+/** Boot steps 1 to 3 (02-mint.md, Boot and jobs): migrate, keyset, first provider sync. Jobs start with `start()`. */
 export async function createMint(deps: MintDeps) {
   const { db, cfg, vault, sender } = deps;
   await migrate(db);

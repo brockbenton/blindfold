@@ -18,7 +18,7 @@ export interface VerifyInput {
 
 const trimSlash = (u: string) => u.replace(/\/+$/, "");
 
-/** Pure validation of 03 section 5.5, in order. `mint_unavailable` if the keysets cannot be fetched. */
+/** Pure validation of 03-mock-api.md, Token validation, in order. `mint_unavailable` if the keysets cannot be fetched. */
 export async function verifyToken(i: VerifyInput): Promise<VerifyResult> {
   const fail = (reason: string): VerifyResult => ({ ok: false, reason });
   const t = i.token;

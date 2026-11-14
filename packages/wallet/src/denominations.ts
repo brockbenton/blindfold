@@ -16,7 +16,7 @@ function binary(n: number): number[] {
 }
 
 /**
- * Denomination plan (04 section 5.5): 80% of the funds as exact bundles per expected price
+ * Denomination plan (04-wallet-sdk.md, Exact-sum selection): 80% of the funds as exact bundles per expected price
  * (binary decomposition of the price), the rest as a unary-pair ladder 1,1,2,2,4,4... then binary.
  */
 export function planDenominations(cents: number, prices: number[]): number[] {

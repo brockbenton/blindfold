@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-The Anchor program that custodies deposited USDC and pays registered providers in batches when the mint authority signs. It is the only component that moves real money, so it stays small and checks everything itself.
+The Anchor program that custodies deposited USDC and pays registered providers in batches when the mint authority signs. It validates deposit and payout account relationships and amounts. The mint still controls settlement amounts, and deployment authorities remain trusted.
 
 ## 2. Depends on / used by
 
@@ -20,7 +20,7 @@ The Anchor program that custodies deposited USDC and pays registered providers i
 ## 3. MVP scope
 
 - All five instructions, four events, all 15 errors, exactly as in 00 §4.
-- USDC only, classic SPL Token program (`anchor_spl::token`, `transfer_checked`). `initialize` rejects a `usdc_mint` not owned by the SPL Token program, so Token-2022 mints are rejected.
+- Configured classic SPL mint (six-decimal USDC in the intended deployment), classic SPL Token program (`anchor_spl::token`, `transfer_checked`). `initialize` rejects a `usdc_mint` not owned by the SPL Token program, so Token-2022 mints are rejected.
 - Tests on a local validator or LiteSVM with a 6-decimal fake USDC mint, then a devnet deployment with Circle devnet USDC.
 - The Anchor IDL is the deliverable consumed by `packages/protocol`.
 
@@ -73,8 +73,8 @@ Read the bump from the stored `Config.bump`, not by re-deriving it. In `settle_b
 
 **`initialize(mint_authority, max_deposit)`**
 1. `config` is `init` with seeds `[b"config"]`, payer `admin`.
-2. `vault_token` is `init` with `associated_token::mint = usdc_mint`, `associated_token::authority = config`, `associated_token::token_program = token_program`.
-3. `usdc_mint` is `Account<Mint>` and `token_program` is `Program<Token>`. Constraint on `usdc_mint`: `*usdc_mint.to_account_info().owner == token::ID` (`WrongMint` otherwise), so a Token-2022 mint is rejected even if the account types are loosened later.
+2. `vault_token` is a writable `UncheckedAccount` constrained to the expected ATA of `config` and `usdc_mint`. The handler creates it through an associated-token-program CPI after mint-owner validation.
+3. `usdc_mint` is an `UncheckedAccount` with an explicit owner constraint, and `token_program` is `Program<Token>`. Constraint on `usdc_mint`: `*usdc_mint.to_account_info().owner == token::ID` (`WrongMint` otherwise), so a Token-2022 mint is rejected even if the account types are loosened later.
 4. Set `admin = admin.key()`, `mint_authority`, `usdc_mint`, `vault_token = vault_token.key()`, `max_deposit`, counts to 0, `bump = ctx.bumps.config`.
 5. `max_deposit` must be greater than 0 (else `InvalidAmount`). The deploy script passes `MAX_DEPOSIT_CENTS * 10_000 = 50_000_000`.
 
@@ -90,7 +90,7 @@ Read the bump from the stored `Config.bump`, not by re-deriving it. In `settle_b
 2. `cashu_pubkey[0]` is 2 or 3 else `InvalidPubkey`. This is a prefix check only, not a curve check (see Open questions).
 3. `payout_token_account` is `Account<TokenAccount>`, `key() == payout_token`, `mint == config.usdc_mint` else `WrongMint` (`usdc_mint` is not in this instruction's account list, so compare against `config`).
 4. Write record with `active = true`; `provider_count` checked add; emit `ProviderRegistered`.
-5. No uniqueness check on `cashu_pubkey` or `payout_token` in the MVP (admin-only; the mint should reject duplicate keys when loading providers).
+5. No uniqueness check on `cashu_pubkey` or `payout_token` in the MVP (admin-only; the mint rejects duplicate active keys; deactivate the old record before re-registering a key. Old balances stay attached to the old ID).
 
 **`deactivate_provider(provider_id)`**
 1. `admin` must equal `config.admin` (`has_one = admin @ Unauthorized`).
@@ -151,7 +151,7 @@ Not in the enum, left to the token program: insufficient vault balance in `settl
 | Overflow | `checked_add` on counters, batch id and totals; no unchecked casts (`count` cast is safe as len <= 8) |
 | Reentrancy | Only CPI is to the token program; state (`last_batch_id`) is written before transfers or, equally safe, in the same tx |
 | Arbitrary signer | `mint_authority` and `admin` compared against `Config` fields, not just `Signer` |
-| Unauthorized `initialize` | Anyone can call it once (the PDA is a singleton, the first caller becomes admin). The deploy script initializes immediately after deploy (accepted hackathon risk). Upgrade authority is not checked |
+| Unauthorized `initialize` | Anyone can call it once (the PDA is a singleton, the first caller becomes admin). Initialize immediately after deployment. Deployment and initialization are separate; no script makes them atomic. Upgrade authority is not checked |
 
 Two deposits built against the same `deposit_count` collide on the `DepositRecord` seed; the second fails and the client rebuilds it with the new count and resends.
 
@@ -170,8 +170,10 @@ programs/vault/src/state.rs         Config, DepositRecord, ProviderRecord, Payou
 programs/vault/src/errors.rs        VaultError (the 15 variants, in the 00 §4.5 order)
 programs/vault/src/events.rs        DepositMade, ProviderRegistered, ProviderDeactivated, BatchSettled
 programs/vault/src/instructions/    mod.rs, initialize.rs, deposit.rs, register_provider.rs, deactivate_provider.rs, settle_batch.rs
-tests/vault.ts                      anchor tests (mocha, @anchor-lang/core), or tests/vault.rs if LiteSVM
-scripts/init-devnet.ts              initialize + register provider (see §7)
+programs/vault/tests/vault.rs       Rust LiteSVM tests (requires target/deploy/vault.so)
+scripts/devnet/initialize.ts        initialize vault
+scripts/devnet/register-provider.ts register provider
+scripts/devnet/deactivate-provider.ts deactivate provider
 ```
 
 Keep `anchor-lang` and `anchor-spl` on the same version (1.2.2). Constants (`BASE_UNITS_PER_CENT = 10_000`, `MAX_PAYOUTS_PER_BATCH = 8`) live in `state.rs`.
@@ -182,14 +184,14 @@ Nothing else needs to exist. The vault is testable alone.
 
 | Need | How |
 |---|---|
-| Fake USDC | In test setup, create a 6-decimal mint with `@solana/spl-token` `createMint(..., 6)` (classic program). Mint test tokens to depositor ATAs. Add a Token-2022 mint only to test that `initialize` rejects it |
-| Runner | `anchor test` (starts `solana-test-validator`, deploys, runs `tests/*.ts`). Faster alternative: LiteSVM (`litesvm` crate or npm `litesvm`) loading `target/deploy/vault.so`. Pick one; the test list in §8 is the same |
-| Keypairs | Generate `admin`, `mintAuthority`, `depositor`, `attacker`, `provider` in the test; airdrop SOL on the local validator |
+| Fake USDC | Rust tests use `litesvm-token` to create a six-decimal classic mint, fund accounts and test Token-2022 rejection |
+| Runner | `anchor build`, then `cargo test --locked -p vault`: Rust LiteSVM tests load `target/deploy/vault.so`. No TypeScript/Mocha vault suite is configured |
+| Keypairs | Generate test keypairs and fund them through LiteSVM |
 | Provider payout | Create a token account for the fake mint owned by a throwaway keypair |
-| Devnet script | `scripts/init-devnet.ts`: read `ADMIN_KEYPAIR`, `SOLANA_RPC_URL`, `VAULT_PROGRAM_ID`, `USDC_MINT` (default Circle devnet mint); call `initialize(mint_authority_pubkey, 50_000_000)`; then `register_provider(cashu_pubkey, payout_token)` from CLI args; print `Config`, vault ATA and provider id. Idempotent: skip `initialize` if `Config` exists |
+| Devnet script | `scripts/devnet/initialize.ts` reads `ADMIN_KEYPAIR`, `SOLANA_RPC_URL`, `VAULT_PROGRAM_ID`, `USDC_MINT` and `MINT_AUTHORITY` (public key, defaults to admin), and skips initialization if Config exists. `register-provider.ts <cashu-pubkey> <payout-token-account>` registers a provider separately |
 | Devnet USDC | Open faucet.circle.com, choose Solana and Devnet, USDC, paste the depositor wallet address. Needs devnet SOL too (`solana airdrop 2` or the Solana faucet). Provider payout token account: `spl-token create-account 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU --owner <provider>` |
-| Mint stub | Until 02 exists, the test's `mintAuthority` keypair sends `settle_batch` directly |
-| IDL hand-off | After `anchor build`, copy `target/idl/vault.json` to `packages/protocol` (00 §8) and post the program id |
+| Mint stub | The test's `mint_auth` keypair sends `settle_batch` directly |
+| IDL hand-off | After `anchor build`, compare `target/idl/vault.json` with `packages/protocol/src/idl.ts` and update the checked-in IDL when interfaces change (00 §8) |
 
 ## 8. Done when
 
@@ -232,19 +234,18 @@ Local (all must pass, each failure asserts the exact error name from 00 §4.5):
 Devnet:
 
 1. `anchor deploy --provider.cluster devnet`; program id in `.env.example` and `Anchor.toml`.
-2. `init-devnet.ts` creates `Config` and vault ATA for the Circle mint; register one provider.
+2. `scripts/devnet/initialize.ts` creates `Config` and vault ATA for the Circle mint; `scripts/devnet/register-provider.ts` registers a provider.
 3. Deposit 1 devnet USDC from a faucet-funded wallet; `DepositRecord` 0 readable with `confirmed` commitment.
 4. `settle_batch` from the mint authority key pays the provider's token account on Solana Explorer (devnet).
 
 ## 9. Open questions
 
-1. **`cashu_pubkey` validity.** Only the 0x02/0x03 prefix is checked, so an off-curve key can be registered. Fix: scripts validate the point offchain before registering; onchain curve decompression is not worth the compute.
-2. **Unverified Anchor 1.x details.** No toolchain was available when writing this doc. Verify against the Anchor 1.2.2 docs before coding: `anchor-spl` feature names (`token`, `associated_token`, `idl-build` wiring), `ctx.bumps` struct access, `#[derive(InitSpace)]` with arrays, that a PDA seed expression can use `config.deposit_count` from an earlier account in the struct, and `Account::try_from` on `remaining_accounts`. If a seed expression fails, pass `index` as an instruction arg, check it equals `deposit_count`, and keep the same PDA.
+1. **`cashu_pubkey` validity.** Only the 0x02/0x03 prefix is checked, so an off-curve key can be registered. The registration script validates curve membership with `ECDH.convertKey` before sending. Direct calls can bypass that offchain validation; onchain validation remains prefix-only.
 
 ## 10. Implementation notes and decisions
 
 - **Program id:** `3nVcHrZ9PC2kEPGYxvqedudeCfHXtZj1BRzwfxWqAanT` (from `anchor keys sync`; the keypair is `target/deploy/vault-keypair.json`, gitignored and never committed, so keep it to deploy at this id; otherwise run `anchor keys sync` again and rebuild, then update `packages/protocol/src/idl.ts`).
-- **Devnet status:** deployed 2026-11-14 (slot 522349681), initialized, provider 0 registered.
+- **Recorded devnet status:** deployed 2026-11-14 (slot 522349681), initialized, provider 0 registered.
 
 | Item | Address |
 |---|---|
@@ -259,9 +260,9 @@ Devnet:
 
 `max_deposit` = 50,000,000 base units ($50).
 
-**Devnet e2e (00 §10) passed 2026-11-14** via `pnpm --filter @blindfold/scripts e2e`: deposit `2wqG6sQW6J7p87XLbofJPfTKWPuyEZvThkYrwxzM9QGMkNuSvUmyenydFmp6AChCbrYqXhrHUeYQewnQQHsTw9Tr`, settle_batch `5fgAGsP4ShE3PHLX52Lf3sNwyUMSCQK9o3yGw3Lqd3iMyAqid8K91rX7kmJzdy3WMHqD1iZKPvpbMqWtmFcxTuSh`. That run registered provider 1 with a throwaway key; it is deactivated (`4gSShfQ9...`). The e2e now deactivates its provider on exit. Owner `7nx3ouFdFhf4PorVb8LfZ9aDADyPTdFNpQQ1JzPni7WR` (`.keys/owner.json`) holds the remaining devnet USDC. `.keys/` is gitignored; share these keys with the team out of band.
+**Devnet e2e (00 §10) passed 2026-11-14** via `pnpm --filter @blindfold/scripts e2e`: deposit `2wqG6sQW6J7p87XLbofJPfTKWPuyEZvThkYrwxzM9QGMkNuSvUmyenydFmp6AChCbrYqXhrHUeYQewnQQHsTw9Tr`, settle_batch `5fgAGsP4ShE3PHLX52Lf3sNwyUMSCQK9o3yGw3Lqd3iMyAqid8K91rX7kmJzdy3WMHqD1iZKPvpbMqWtmFcxTuSh`. That run registered provider 1 with a throwaway key; it is deactivated (`4gSShfQ9...`). The e2e now deactivates its provider on exit. Owner `7nx3ouFdFhf4PorVb8LfZ9aDADyPTdFNpQQ1JzPni7WR` (`.keys/owner.json`) holds the remaining devnet USDC. These local key paths are historical and are not included in Git. The addresses and transaction IDs are deployment records, not proof of current access or availability.
 - **Dependencies:** `anchor-spl 1.2.2` needs features `token`, `associated_token`, `token_2022`, `solana-v3`. `token_2022` is required only because anchor-spl's `idl-build` references `token_interface`; the program itself uses the classic token program only.
-- **`initialize` deviation from 5.3:** `vault_token` is an `UncheckedAccount` (address constrained to the ATA of `config` and `usdc_mint`, else `WrongVaultAccount`) and the ATA is created by a CPI in the handler. With `init` Anchor creates the ATA before field constraints run, so a Token-2022 mint failed inside the ATA program instead of returning `WrongMint`. The account list, order and flags are unchanged from 00 §4.3.
+- **`initialize` implementation:** `vault_token` is an `UncheckedAccount` (address constrained to the ATA of `config` and `usdc_mint`, else `WrongVaultAccount`) and the ATA is created by a CPI in the handler. With an ATA `init` constraint Anchor creates the ATA before field constraints run, so a Token-2022 mint failed inside the ATA program instead of returning `WrongMint`. The account list, order and flags are unchanged from 00 §4.3.
 - **Errors where 5.4 was silent:** `deposit` with a vault account that is not `config.vault_token` returns `WrongVaultAccount`; `register_provider` with `payout_token_account.key() != payout_token` returns `PayoutAccountMismatch`; a non-writable or undecodable payout account in `settle_batch` returns `PayoutAccountMismatch` / `WrongMint`. `deposit` with a foreign mint account returns `WrongMint` (the `usdc_mint` address constraint).
-- **Tests:** `programs/vault/tests/vault.rs`, 34 LiteSVM tests (`litesvm 0.15`, `litesvm-token =0.15.2`; 0.18.x needs a newer Rust than the pinned 1.89). `anchor build` first, then `anchor test` or `cargo test -p vault`.
-- **IDL:** the generated IDL lists instructions alphabetically and adds `pda`, `relations` and `docs` metadata; names, arg types, account order and writable/signer flags equal the hand-written one.
+- **Tests:** `programs/vault/tests/vault.rs`, 34 LiteSVM tests (`litesvm 0.15`, `litesvm-token =0.15.2`; 0.18.x needs a newer Rust than the pinned 1.89). `anchor build` first, then `cargo test --locked -p vault`. The Rust suite loads the SBF artifact; the default TypeScript suite does not run it.
+- **IDL:** the generated IDL lists instructions alphabetically and adds `pda`, `relations` and `docs` metadata; keep names, arg types, account order and writable/signer flags aligned with the checked-in TypeScript IDL.

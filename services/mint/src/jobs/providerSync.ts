@@ -4,7 +4,7 @@ import type { VaultReader } from "../chain/vaultReader.js";
 
 const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
 
-/** Mirror ProviderRecord accounts into `providers`, joined with config/providers.json (02 section 4.6). */
+/** Mirror ProviderRecord accounts into `providers`, joined with config/providers.json (02-mint.md, Provider sync). */
 export async function syncProviders(db: Db, vault: VaultReader, meta: ProviderMeta[]): Promise<void> {
   const { providerCount } = await vault.getConfig();
   const byId = new Map(meta.map((m) => [m.provider_id, m]));
