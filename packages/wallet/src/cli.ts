@@ -44,13 +44,14 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<void> 
     .requiredOption("--cents <n>", "amount in cents", (v) => Number.parseInt(v, 10))
     .option("--prices <list>", "expected provider prices in cents, comma separated")
     .option("--token-file <path>")
+    .option("--state-dir <path>", "directory for funding recovery state (default ~/.blindfold/owner)")
     .option("--dev-deposit", "dev only: deposit through the mint's /dev/deposit (fake-chain mint, needs MINT_ADMIN_TOKEN)")
-    .action(async (o: { cents: number; prices?: string; tokenFile?: string; devDeposit?: boolean }) => {
+    .action(async (o: { cents: number; prices?: string; tokenFile?: string; stateDir?: string; devDeposit?: boolean }) => {
       const tokenFile = tokenFileOf(o.tokenFile);
       const prices = o.prices ? Object.fromEntries(o.prices.split(",").map((p, i) => [i, Number.parseInt(p, 10)])) : undefined;
       const r = await ownerFund({
         mintUrl: mintUrl(), cents: o.cents, prices, tokenFile, depositor: depositor(o.devDeposit),
-        stateDir: deps.stateDir, pollMs: deps.pollMs, onProgress: (s) => out(`step ${s}`),
+        stateDir: o.stateDir ?? deps.stateDir, pollMs: deps.pollMs, onProgress: (s) => out(`step ${s}`),
       });
       const b = await ownerBalance(tokenFile);
       out(`quote ${r.quote}`);
@@ -59,8 +60,10 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<void> 
     });
 
   program.command("resume <quote-pubkey>").description("resume an interrupted fund")
-    .action(async (pk: string) => {
-      const r = await ownerResume(pk, { depositor: depositor(), stateDir: deps.stateDir, pollMs: deps.pollMs });
+    .option("--state-dir <path>", "directory containing the saved funding state")
+    .option("--dev-deposit", "dev only: resume using the fake-chain mint (needs MINT_ADMIN_TOKEN)")
+    .action(async (pk: string, o: { stateDir?: string; devDeposit?: boolean }) => {
+      const r = await ownerResume(pk, { depositor: depositor(o.devDeposit), stateDir: o.stateDir ?? deps.stateDir, pollMs: deps.pollMs });
       out(`quote ${r.quote}`);
       out(`deposit ${r.depositTx}`);
       out(`proofs ${r.proofs}`);
