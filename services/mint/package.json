@@ -1,0 +1,30 @@
+{
+  "name": "@blindfold/mint",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "migrate": "tsx src/migrate.ts"
+  },
+  "dependencies": {
+    "@blindfold/protocol": "workspace:*",
+    "@cashu/cashu-ts": "4.13.1",
+    "@hono/node-server": "2.1.8",
+    "@solana/web3.js": "1.99.0",
+    "hono": "4.13.18",
+    "pg": "8.23.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@anchor-lang/core": "1.2.2",
+    "@blindfold/testkit": "workspace:*",
+    "@types/pg": "8.23.1",
+    "tsx": "4.23.15"
+  }
+}
