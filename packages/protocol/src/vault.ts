@@ -1,0 +1,175 @@
+// Vault program helpers: PDAs, account decoders, instruction builders (00 section 4 and 8).
+// Uses the hand-written IDL in idl.ts; swap it for target/idl/vault.json once the vault is built.
+import { BN, BorshAccountsCoder, BorshInstructionCoder, type Idl } from "@anchor-lang/core";
+import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
+import { MAX_PAYOUTS_PER_BATCH } from "./constants.js";
+import { PLACEHOLDER_VAULT_PROGRAM_ID, VAULT_IDL } from "./idl.js";
+
+export { VAULT_IDL, PLACEHOLDER_VAULT_PROGRAM_ID };
+export const DEFAULT_VAULT_PROGRAM_ID = new PublicKey(PLACEHOLDER_VAULT_PROGRAM_ID);
+
+// The raw Anchor coders use the IDL field names (snake_case), unlike the Program client.
+const accountsCoder = new BorshAccountsCoder(VAULT_IDL);
+const ixCoder = new BorshInstructionCoder(VAULT_IDL);
+
+const u64le = (n: bigint | number) => {
+  const b = Buffer.alloc(8);
+  b.writeBigUInt64LE(BigInt(n));
+  return b;
+};
+const u32le = (n: number) => {
+  const b = Buffer.alloc(4);
+  b.writeUInt32LE(n);
+  return b;
+};
+
+// ---- PDAs ----
+export function configPda(programId: PublicKey = DEFAULT_VAULT_PROGRAM_ID): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from("config")], programId)[0];
+}
+export function depositPda(index: bigint | number, programId: PublicKey = DEFAULT_VAULT_PROGRAM_ID): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from("deposit"), u64le(index)], programId)[0];
+}
+export function providerPda(id: number, programId: PublicKey = DEFAULT_VAULT_PROGRAM_ID): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from("provider"), u32le(id)], programId)[0];
+}
+/** Vault token account: ATA of the Config PDA (classic SPL Token program). */
+export function vaultAta(usdcMint: PublicKey, programId: PublicKey = DEFAULT_VAULT_PROGRAM_ID): PublicKey {
+  return getAssociatedTokenAddressSync(usdcMint, configPda(programId), true);
+}
+
+// ---- Accounts ----
+export interface ConfigAccount {
+  admin: PublicKey;
+  mintAuthority: PublicKey;
+  usdcMint: PublicKey;
+  vaultToken: PublicKey;
+  maxDeposit: bigint;
+  depositCount: bigint;
+  providerCount: number;
+  lastBatchId: bigint;
+  bump: number;
+}
+export interface DepositRecordAccount {
+  index: bigint;
+  depositor: PublicKey;
+  amount: bigint;
+  depositRef: Uint8Array;
+  slot: bigint;
+  timestamp: bigint;
+  bump: number;
+}
+export interface ProviderRecordAccount {
+  providerId: number;
+  cashuPubkey: Uint8Array;
+  payoutToken: PublicKey;
+  active: boolean;
+  bump: number;
+}
+
+const big = (x: { toString(): string }) => BigInt(x.toString());
+
+export function decodeConfig(data: Uint8Array): ConfigAccount {
+  const a = accountsCoder.decode("Config", Buffer.from(data));
+  return {
+    admin: a.admin, mintAuthority: a.mint_authority, usdcMint: a.usdc_mint, vaultToken: a.vault_token,
+    maxDeposit: big(a.max_deposit), depositCount: big(a.deposit_count), providerCount: a.provider_count,
+    lastBatchId: big(a.last_batch_id), bump: a.bump,
+  };
+}
+export function decodeDepositRecord(data: Uint8Array): DepositRecordAccount {
+  const a = accountsCoder.decode("DepositRecord", Buffer.from(data));
+  return {
+    index: big(a.index), depositor: a.depositor, amount: big(a.amount), depositRef: Uint8Array.from(a.deposit_ref),
+    slot: big(a.slot), timestamp: big(a.timestamp), bump: a.bump,
+  };
+}
+export function decodeProviderRecord(data: Uint8Array): ProviderRecordAccount {
+  const a = accountsCoder.decode("ProviderRecord", Buffer.from(data));
+  return {
+    providerId: a.provider_id, cashuPubkey: Uint8Array.from(a.cashu_pubkey), payoutToken: a.payout_token,
+    active: a.active, bump: a.bump,
+  };
+}
+
+// ---- Instruction builders (account order per 00 section 4.3) ----
+type Meta = { pubkey: PublicKey; isSigner?: boolean; isWritable?: boolean };
+const m = (pubkey: PublicKey, isWritable = false, isSigner = false): Meta => ({ pubkey, isWritable, isSigner });
+
+function ix(programId: PublicKey, name: string, args: object, keys: Meta[]): TransactionInstruction {
+  const meta = keys.map((k) => ({ pubkey: k.pubkey, isSigner: !!k.isSigner, isWritable: !!k.isWritable }));
+  return new TransactionInstruction({ programId, keys: meta, data: ixCoder.encode(name, args) });
+}
+const toBn = (n: bigint | number) => new BN(n.toString());
+
+function hexOrBytes(v: string | Uint8Array, len: number, what: string): number[] {
+  const b = typeof v === "string" ? Buffer.from(v, "hex") : Buffer.from(v);
+  if (b.length !== len) throw new Error(`${what} must be ${len} bytes`);
+  return [...b];
+}
+
+interface Base { programId?: PublicKey }
+
+export function buildInitializeIx(o: Base & { admin: PublicKey; usdcMint: PublicKey; mintAuthority: PublicKey; maxDeposit: bigint }) {
+  const pid = o.programId ?? DEFAULT_VAULT_PROGRAM_ID;
+  return ix(pid, "initialize", { mint_authority: o.mintAuthority, max_deposit: toBn(o.maxDeposit) }, [
+    m(o.admin, true, true), m(configPda(pid), true), m(o.usdcMint), m(vaultAta(o.usdcMint, pid), true),
+    m(TOKEN_PROGRAM_ID), m(ASSOCIATED_TOKEN_PROGRAM_ID), m(SystemProgram.programId),
+  ]);
+}
+
+/** `depositIndex` must be the current Config.deposit_count. */
+export function buildDepositIx(o: Base & {
+  depositor: PublicKey; depositorToken: PublicKey; usdcMint: PublicKey;
+  amount: bigint; depositRef: Uint8Array | string; depositIndex: bigint | number;
+}) {
+  const pid = o.programId ?? DEFAULT_VAULT_PROGRAM_ID;
+  return ix(pid, "deposit", { amount: toBn(o.amount), deposit_ref: hexOrBytes(o.depositRef, 32, "depositRef") }, [
+    m(o.depositor, true, true), m(configPda(pid), true), m(depositPda(o.depositIndex, pid), true),
+    m(o.depositorToken, true), m(vaultAta(o.usdcMint, pid), true), m(o.usdcMint),
+    m(TOKEN_PROGRAM_ID), m(SystemProgram.programId),
+  ]);
+}
+
+/** `providerId` must be the current Config.provider_count. */
+export function buildRegisterProviderIx(o: Base & {
+  admin: PublicKey; providerId: number; cashuPubkey: Uint8Array | string; payoutToken: PublicKey;
+}) {
+  const pid = o.programId ?? DEFAULT_VAULT_PROGRAM_ID;
+  return ix(pid, "register_provider", { cashu_pubkey: hexOrBytes(o.cashuPubkey, 33, "cashuPubkey"), payout_token: o.payoutToken }, [
+    m(o.admin, true, true), m(configPda(pid), true), m(providerPda(o.providerId, pid), true),
+    m(o.payoutToken), m(SystemProgram.programId),
+  ]);
+}
+
+export function buildDeactivateProviderIx(o: Base & { admin: PublicKey; providerId: number }) {
+  const pid = o.programId ?? DEFAULT_VAULT_PROGRAM_ID;
+  return ix(pid, "deactivate_provider", { provider_id: o.providerId }, [
+    m(o.admin, false, true), m(configPda(pid)), m(providerPda(o.providerId, pid), true),
+  ]);
+}
+
+export interface SettlePayout { providerId: number; amount: bigint; payoutToken: PublicKey }
+
+/** Amounts are base units. remaining_accounts are [provider_record, payout_token (mut)] pairs in payout order. */
+export function buildSettleBatchIx(o: Base & {
+  mintAuthority: PublicKey; usdcMint: PublicKey; batchId: bigint | number; payouts: SettlePayout[];
+}) {
+  const pid = o.programId ?? DEFAULT_VAULT_PROGRAM_ID;
+  if (o.payouts.length < 1 || o.payouts.length > MAX_PAYOUTS_PER_BATCH) {
+    throw new Error(`payouts must be 1..${MAX_PAYOUTS_PER_BATCH}`);
+  }
+  const args = { batch_id: toBn(o.batchId), payouts: o.payouts.map((p) => ({ provider_id: p.providerId, amount: toBn(p.amount) })) };
+  return ix(pid, "settle_batch", args, [
+    m(o.mintAuthority, false, true), m(configPda(pid), true), m(vaultAta(o.usdcMint, pid), true), m(o.usdcMint), m(TOKEN_PROGRAM_ID),
+    ...o.payouts.flatMap((p) => [m(providerPda(p.providerId, pid)), m(p.payoutToken, true)]),
+  ]);
+}
+
+/** Decode instruction data back (used by tests and tooling). */
+export function decodeInstruction(data: Uint8Array) {
+  return ixCoder.decode(Buffer.from(data));
+}
+
+export type { Idl };

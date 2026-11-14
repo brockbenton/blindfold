@@ -1,0 +1,3 @@
+[
+  { "provider_id": 0, "name": "mock-api", "url": "http://localhost:4000", "price_cents": 5, "topics": ["sol", "btc", "eth"] }
+]
