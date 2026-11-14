@@ -244,7 +244,20 @@ Devnet:
 ## 10. Implementation notes and decisions
 
 - **Program id:** `3nVcHrZ9PC2kEPGYxvqedudeCfHXtZj1BRzwfxWqAanT` (from `anchor keys sync`; the keypair is `target/deploy/vault-keypair.json`, gitignored and never committed, so keep it to deploy at this id; otherwise run `anchor keys sync` again and rebuild, then update `packages/protocol/src/idl.ts`).
-- **Devnet status:** not deployed yet. Deployer `CL1w6cXwbVcDdD7urQr9nvf59ysHCrxeKxMhMnd7hyzv` (`.keys/deployer.json`, gitignored) could not get an airdrop (devnet faucet rate limited). Needs about 2.5 SOL (program rent 1.11 SOL plus a refundable deploy buffer). Then: `anchor deploy --provider.cluster devnet --provider.wallet .keys/deployer.json`, then `ADMIN_KEYPAIR=.keys/deployer.json pnpm --filter @blindfold/devnet-scripts initialize`. Config PDA: derive with `configPda()`; record it here after deploy.
+- **Devnet status:** deployed 2026-11-14 (slot 522349681), initialized, provider 0 registered.
+
+| Item | Address |
+|---|---|
+| Program | `3nVcHrZ9PC2kEPGYxvqedudeCfHXtZj1BRzwfxWqAanT` (upgrade authority = admin) |
+| Config PDA | `HyDdZdb7CW6wsnY5dsENUSJsdfnHsC127fn9Xm3nhCTa` |
+| Vault USDC ATA | `EbMCEhEhykQf6kc8jUAtRFSYA4fVByUvtB1HA7NJwzE7` |
+| Admin / deployer | `CL1w6cXwbVcDdD7urQr9nvf59ysHCrxeKxMhMnd7hyzv` (`.keys/deployer.json`) |
+| Mint authority | `291d6BVexqBnckgSgDVXwe6ZbEuFCEigYVKLrXANr7A8` (`.keys/mint-authority.json`) |
+| Provider 0 record | `Cdftv5dQw2WENDEdW3LVFNPb11doet4JX4wQ1VLc1Eoh` |
+| Provider 0 cashu pubkey | `034cce6c9c3d0a06d6b1934bb97430dfba5a942209012415db816662ea2193ca21` (secret in `.keys/provider-secret.hex`) |
+| Provider 0 payout (USDC ATA) | `2RJKKB3dHqNeVMj9hKNg6NfQcifPbR8KNHuNZCdxH3MS` (owner `.keys/provider-payout.json`) |
+
+`max_deposit` = 50,000,000 base units ($50). `.keys/` is gitignored; share these keys with the team out of band.
 - **Dependencies:** `anchor-spl 1.2.2` needs features `token`, `associated_token`, `token_2022`, `solana-v3`. `token_2022` is required only because anchor-spl's `idl-build` references `token_interface`; the program itself uses the classic token program only.
 - **`initialize` deviation from 5.3:** `vault_token` is an `UncheckedAccount` (address constrained to the ATA of `config` and `usdc_mint`, else `WrongVaultAccount`) and the ATA is created by a CPI in the handler. With `init` Anchor creates the ATA before field constraints run, so a Token-2022 mint failed inside the ATA program instead of returning `WrongMint`. The account list, order and flags are unchanged from 00 §4.3.
 - **Errors where 5.4 was silent:** `deposit` with a vault account that is not `config.vault_token` returns `WrongVaultAccount`; `register_provider` with `payout_token_account.key() != payout_token` returns `PayoutAccountMismatch`; a non-writable or undecodable payout account in `settle_batch` returns `PayoutAccountMismatch` / `WrongMint`. `deposit` with a foreign mint account returns `WrongMint` (the `usdc_mint` address constraint).
