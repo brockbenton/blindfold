@@ -9,6 +9,7 @@ Tracks: **Agentic Payments & AI**, **Best use of Solana**, **QuickNode Streams**
 | **README.md** (this) | Problem, what we solve and don't, competitors, demo |
 | [`docs/mvp.md`](docs/mvp.md) | MVP scope, add-ons in priority order, cut rules |
 | [`docs/design.md`](docs/design.md) | How it works: flow, crypto, guardrails, settlement, Temporal, trust model, leaks |
+| [`docs/design/`](docs/design/00-interfaces.md) | Per-component build briefs: interface contract (00), vault, mint, mock API, wallet SDK, agent |
 | [`docs/plan.md`](docs/plan.md) | Week plan, repo layout, risks, open questions |
 | [`docs/security-sources.md`](docs/security-sources.md) | The x402 security research we cite, and how to cite it |
 
