@@ -33,6 +33,10 @@ export function programErrorFrom(e: unknown): ProgramError | null {
   const text = [...logs, (e as Error)?.message ?? ""].join("\n");
   const m = /Error Code: (\w+)/.exec(text);
   if (m && errorNames.has(m[1])) return new ProgramError(m[1], text.slice(0, 500));
+  // The SPL Token program rejecting the transfer (vault short of funds) is just as deterministic (02 section 4.8).
+  if (/Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA failed: custom program error: 0x1\b/.test(text)) {
+    return new ProgramError("InsufficientFunds", text.slice(0, 500));
+  }
   return null;
 }
 
