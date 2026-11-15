@@ -99,5 +99,13 @@ describe("SolanaSettleSender", () => {
     conn.sendRawTransaction = async () => { throw new Error("fetch failed"); };
     await expect(s.submit(9n, [{ providerId: 2, payoutToken: payout.toBase58(), amountBase: 10_000n }])).rejects.not.toBeInstanceOf(ProgramError);
     expect(programErrorFrom(new Error("Error Code: NotAnError"))).toBeNull();
+    // Vault short of funds: logs as captured from the vault's LiteSVM test settle_vault_short_of_funds.
+    const short = Object.assign(new Error("Simulation failed"), { logs: [
+      "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]", "Program log: Error: insufficient funds",
+      "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA failed: custom program error: 0x1",
+      `Program ${program.toBase58()} failed: custom program error: 0x1`,
+    ] });
+    expect(programErrorFrom(short)).toMatchObject({ name: "ProgramError", program: "InsufficientFunds" });
+    expect(programErrorFrom(Object.assign(new Error("x"), { logs: ["Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA failed: custom program error: 0x11"] }))).toBeNull();
   });
 });
