@@ -29,7 +29,7 @@ try {
 
 The JSON format has `version: 1`, `mint`, `unit: "usd"`, `proofs`, and optional `pending: [{proofs, url, sent_at}]`. Stored amounts are numbers; witnesses are stripped. Reads preserve unknown top-level fields and keep the first occurrence of each secret across spendable and pending entries.
 
-Writes use a same-directory temporary file, file `fsync` and rename, with mode 0600. `AgentWallet.open` takes `<file>.lock` containing the PID. A live PID blocks another wallet; a dead PID's lock can be replaced. Locks do not expire after an arbitrary age. One wallet process per file is supported. The owner funding path does not acquire that lock: stop the agent before funding, and do not run concurrent funding operations on the same file.
+Writes use a same-directory temporary file, file `fsync` and rename, with mode 0600. `AgentWallet.open` takes `<file>.lock` containing the PID. A live PID blocks another wallet; a dead PID's lock can be replaced. Locks do not expire after an arbitrary age. One wallet process per file is supported. The owner takes the same lock only while appending minted proofs. If an agent holds it, funding stops after minting and tells you to stop the agent and run `owner resume`. Do not run concurrent funding operations on the same file.
 
 | Payment stage | Persisted action |
 |---|---|
@@ -67,9 +67,9 @@ Funding always plans the requested amount. Extra deposits to the quote do not au
 
 ### Recovery limits
 
-Resume skips a deposit **when `depositTx` was successfully persisted**. It is not an exactly-once guarantee: a transaction can land before its result is saved, and a confirmation timeout can leave its outcome uncertain. `SolanaDepositor` currently retries failures with a rebuilt transaction up to three times. Inspect the chain and quote state before resuming an uncertain deposit; a duplicate deposit is possible and has no refund path.
+Resume skips a deposit **when `depositTx` was successfully persisted**. It is not an exactly-once guarantee: a transaction can land before its result is saved, and a confirmation timeout can leave its outcome uncertain. `SolanaDepositor` rebuilds and resends, up to three attempts, only when an earlier attempt provably moved no funds (preflight rejection, onchain failure, or blockhash expiry without landing). An undetermined outcome throws with the signature instead. Inspect the chain and quote state before resuming an uncertain deposit; a duplicate deposit is possible and has no refund path.
 
-A crash after the token file is written but before recovery-state removal also needs inspection before resuming, because the state may still describe proofs already appended. Keep the agent stopped during recovery. The current files are checkpoint recovery for a prototype, not a durable distributed transaction protocol.
+A crash after the token file is written but before recovery-state removal also needs inspection before resuming, because the state may still describe proofs already appended. Keep the agent stopped during recovery so the final write can take the token-file lock. The current files are checkpoint recovery for a prototype, not a durable distributed transaction protocol.
 
 Fake-chain mint memory resets on restart. Use a fresh database, token file and recovery session after restarting it; saved tokens and funding checkpoints from its previous in-memory vault should not be treated as a new funded session.
 
