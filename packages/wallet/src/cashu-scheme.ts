@@ -25,9 +25,12 @@ export interface SpendHost {
 const normalizeMint = (u: string) => {
   try {
     const x = new URL(u);
-    return `${x.protocol}//${x.host}${x.pathname.replace(/\/+$/, "")}`.toLowerCase();
+    // URL normalizes scheme/host. Paths and query strings remain case-sensitive
+    // and can identify distinct mints on the same server.
+    x.pathname = x.pathname.replace(/\/+$/, "");
+    return x.href;
   } catch {
-    return u.replace(/\/+$/, "").toLowerCase();
+    return u.replace(/\/+$/, "");
   }
 };
 

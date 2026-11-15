@@ -96,6 +96,31 @@ describe("refusals (nothing leaves the wallet, file unchanged)", () => {
     const g = good();
     await refused("mint", await rawServer(accept({ payTo: g.payTo }, { ...g.extra, mints: ["http://evil.example"] })), await w.open());
   });
+  it.each([
+    ["/Mint", "/mint"],
+    ["/mint?tenant=owner", "/mint?tenant=other"],
+    ["/mint?tenant=Owner", "/mint?tenant=owner"],
+  ])("does not treat mint %s as mint %s", async (configured, advertised) => {
+    await setup();
+    const file = w.file();
+    file.mint = `${w.mint.url}${configured}`;
+    writeFileSync(w.tokenFile, JSON.stringify(file));
+    const g = good();
+    const wallet = await w.open({ mint: { check: async ({ Ys }) => ({ states: Ys.map((Y) => ({ Y, state: "UNSPENT" as const })) }) } });
+    await refused("mint", await rawServer(accept({ payTo: g.payTo }, { ...g.extra, mints: [`${w.mint.url}${advertised}`] })), wallet);
+  });
+  it("still matches mint host case and trailing slashes", async () => {
+    await setup();
+    const file = w.file();
+    const port = new URL(w.mint.url).port;
+    file.mint = `http://LOCALHOST:${port}/Mint`;
+    writeFileSync(w.tokenFile, JSON.stringify(file));
+    const g = good();
+    const srv = await rawServer(accept({ payTo: g.payTo }, { ...g.extra, mints: [`http://localhost:${port}/Mint///`] }));
+    const wallet = await w.open({ mint: { check: async ({ Ys }) => ({ states: Ys.map((Y) => ({ Y, state: "UNSPENT" as const })) }) } });
+    expect((await wallet.payFetch(srv.url)).status).toBe(200);
+    expect(srv.state.paid).toBe(1);
+  });
   it("wrong asset", async () => {
     await setup();
     const g = good();

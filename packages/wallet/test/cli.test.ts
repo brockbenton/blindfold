@@ -37,6 +37,15 @@ describe("owner CLI", () => {
     })).rejects.toThrow(/cents/);
   });
 
+  it.each(["1.5", "10c", "1e999"])("rejects invalid cents %s before depositing", async (cents) => {
+    w = await makeWorld();
+    await expect(runCli(["fund", "--cents", cents, "--token-file", w.tokenFile], {
+      out: () => undefined, makeDepositor: () => w.depositor, env: { MINT_URL: w.mint.url },
+      stateDir: join(w.dir, "state"),
+    })).rejects.toThrow(/cents/);
+    expect(w.depositor.calls).toHaveLength(0);
+  });
+
   it("resumes fake-chain funding from an explicit state directory without an owner key", async () => {
     w = await makeWorld();
     const stateDir = join(w.dir, "recovery");
