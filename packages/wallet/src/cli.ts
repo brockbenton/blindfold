@@ -41,7 +41,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<void> 
   const program = new Command("owner").exitOverride().configureOutput({ writeOut: out, writeErr: () => undefined });
 
   program.command("fund").description("quote, deposit, mint locked tokens, write the token file")
-    .requiredOption("--cents <n>", "amount in cents", (v) => Number.parseInt(v, 10))
+    .requiredOption("--cents <n>", "amount in whole cents", (v) => Number(v))
     .option("--prices <list>", "expected provider prices in cents, comma separated")
     .option("--token-file <path>")
     .option("--state-dir <path>", "directory for funding recovery state (default ~/.blindfold/owner)")
