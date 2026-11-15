@@ -1,7 +1,7 @@
 // The Solana-backed classes against a fake Connection (no validator).
 import { BN, BorshAccountsCoder } from "@anchor-lang/core";
 import { Keypair, PublicKey, Transaction } from "@solana/web3.js";
-import { PLACEHOLDER_VAULT_PROGRAM_ID, USDC_DEVNET_MINT, VAULT_IDL, configPda, decodeInstruction, depositPda, providerPda } from "@blindfold/protocol";
+import { PLACEHOLDER_VAULT_PROGRAM_ID, USDC_DEVNET_MINT, VAULT_IDL, configPda, decodeInstruction, depositPda, providerPda, vaultAta } from "@blindfold/protocol";
 import { describe, expect, it } from "vitest";
 import { ProgramError, SolanaSettleSender, programErrorFrom } from "../src/chain/settleSender.js";
 import { SolanaVaultReader } from "../src/chain/vaultReader.js";
@@ -18,7 +18,7 @@ describe("SolanaVaultReader", () => {
     const accounts = new Map<string, { owner: PublicKey; data: Buffer }>();
     accounts.set(configPda(program).toBase58(), {
       owner: program,
-      data: await coder.encode("Config", { admin: k(), mint_authority: k(), usdc_mint: usdc, vault_token: k(), max_deposit: bn(5), deposit_count: bn(2), provider_count: 1, last_batch_id: bn(3), bump: 1 }),
+      data: await coder.encode("Config", { admin: k(), mint_authority: k(), usdc_mint: usdc, vault_token: vaultAta(usdc, program), max_deposit: bn(5), deposit_count: bn(2), provider_count: 1, last_batch_id: bn(3), bump: 1 }),
     });
     accounts.set(depositPda(0, program).toBase58(), {
       owner: program,
@@ -48,9 +48,30 @@ describe("SolanaVaultReader", () => {
     expect(await r.getProvider(4)).toBeNull();
     expect(await r.getVaultBalanceBase()).toBe(123456n);
   });
+
+  it.each(["mint", "vault"])("rejects Config with a mismatched %s before using its deposits", async (wrong) => {
+    const data = await coder.encode("Config", {
+      admin: k(), mint_authority: k(), usdc_mint: wrong === "mint" ? k() : usdc,
+      vault_token: wrong === "vault" ? k() : vaultAta(usdc, program),
+      max_deposit: bn(5), deposit_count: bn(2), provider_count: 0, last_batch_id: bn(0), bump: 1,
+    });
+    const conn: any = { getAccountInfo: async () => ({ owner: program, data }) };
+    await expect(new SolanaVaultReader(conn, program, usdc).getConfig()).rejects.toThrow(/does not match/);
+  });
 });
 
 describe("SolanaSettleSender", () => {
+  it.each([
+    ["processed", { InstructionError: [0, "InvalidArgument"] }, "pending"],
+    ["processed", null, "pending"],
+    ["confirmed", { InstructionError: [0, "InvalidArgument"] }, "failed"],
+    ["finalized", { InstructionError: [0, "InvalidArgument"] }, "failed"],
+    ["confirmed", null, "confirmed"],
+    ["finalized", null, "confirmed"],
+  ])("waits for confirmed commitment before classifying %s (%j)", async (confirmationStatus, err, expected) => {
+    const conn: any = { getSignatureStatuses: async () => ({ value: [{ confirmationStatus, err }] }) };
+    expect(await new SolanaSettleSender(conn, program, usdc, Keypair.generate()).confirm("sig")).toBe(expected);
+  });
   it("builds a signed settle_batch with provider/payout account pairs and maps program errors", async () => {
     const authority = Keypair.generate();
     const payout = k();

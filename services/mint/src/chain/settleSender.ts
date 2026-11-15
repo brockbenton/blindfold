@@ -67,8 +67,11 @@ export class SolanaSettleSender implements SettleSender {
     const { value } = await this.connection.getSignatureStatuses([tx], { searchTransactionHistory: true });
     const s = value[0];
     if (!s) return "pending";
+    // A processed failure can still disappear with its fork. Do not restore
+    // provider balances until the error reaches our confirmation commitment.
+    if (s.confirmationStatus !== "confirmed" && s.confirmationStatus !== "finalized") return "pending";
     if (s.err) return "failed";
-    return s.confirmationStatus === "confirmed" || s.confirmationStatus === "finalized" ? "confirmed" : "pending";
+    return "confirmed";
   }
 
   async isExpired(validUntil: number): Promise<boolean> {
