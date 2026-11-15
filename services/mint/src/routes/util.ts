@@ -28,3 +28,4 @@ export async function rawBody(c: Context): Promise<Record<string, unknown>> {
 
 export const unixNow = () => Math.floor(Date.now() / 1000);
 export const HEX66 = /^0[23][0-9a-fA-F]{64}$/;
+export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

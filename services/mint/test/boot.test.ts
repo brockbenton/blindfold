@@ -40,6 +40,12 @@ describe("quotes", () => {
     expect(r).toMatchObject({ status: 404, json: { code: 20001 } });
     expect((await h.req("/v1/mint/quote/solana-usdc/not-a-uuid")).status).toBe(404);
   });
+  it.each(["-".repeat(36), "f".repeat(36)])("rejects a malformed quote ID without a database error: %s", async (id) => {
+    expect(await h.req(`/v1/mint/quote/solana-usdc/${id}`)).toMatchObject({ status: 404, json: { code: 20001 } });
+    expect(await h.req("/v1/mint/solana-usdc", {
+      body: { quote: id, signature: "00", outputs: [{ amount: 1, id: (await h.keyset()).id, B_: newKey().pubkey }] },
+    })).toMatchObject({ status: 400, json: { code: 20001 } });
+  });
   it("validates unit, amount and pubkey", async () => {
     const pubkey = newKey().pubkey;
     const post = (body: object) => h.req("/v1/mint/quote/solana-usdc", { body });

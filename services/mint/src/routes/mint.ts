@@ -7,7 +7,7 @@ import { signOutput, type SignedOutput } from "../crypto/blind.js";
 import { isUniqueViolation, tx } from "../db.js";
 import { MintError } from "../errors.js";
 import type { Ctx } from "../ctx.js";
-import { HEX66, rawBody } from "./util.js";
+import { HEX66, UUID, rawBody } from "./util.js";
 
 const output = z.object({
   amount: z.union([z.number(), z.string().regex(/^\d+$/).transform(Number)]).pipe(z.number().int().positive().safe()),
@@ -35,7 +35,7 @@ export function mintRoutes(ctx: Ctx) {
     if (new Set(bs).size !== bs.length) throw new MintError(11008, "duplicate outputs");
     const { quote: quoteId, signature } = h.data;
     const total = outputs.reduce((s, o) => s + o.amount, 0);
-    const isUuid = /^[0-9a-f-]{36}$/i.test(quoteId);
+    const isUuid = UUID.test(quoteId);
 
     const signatures = await tx(ctx.db, async (c) => {
       const q = isUuid ? (await c.query("select * from mint_quotes where id = $1 for update", [quoteId])).rows[0] : undefined;
