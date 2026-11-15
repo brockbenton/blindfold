@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { MintError, uuidv7 } from "../errors.js";
 import type { Ctx } from "../ctx.js";
-import { HEX66, rawBody, unixNow } from "./util.js";
+import { HEX66, UUID, rawBody, unixNow } from "./util.js";
 
 interface QuoteRow {
   id: string; deposit_ref: string; unit: string; amount: number; pubkey: string; expiry: number;
@@ -46,7 +46,7 @@ export function quoteRoutes(ctx: Ctx) {
 
   app.get("/v1/mint/quote/solana-usdc/:id", async (c) => {
     const id = c.req.param("id");
-    const r = /^[0-9a-f-]{36}$/i.test(id) ? await ctx.db.query<QuoteRow>("select * from mint_quotes where id = $1", [id]) : { rows: [] as QuoteRow[] };
+    const r = UUID.test(id) ? await ctx.db.query<QuoteRow>("select * from mint_quotes where id = $1", [id]) : { rows: [] as QuoteRow[] };
     if (!r.rows.length) throw new MintError(20001, "quote not found", 404);
     return c.json(json(r.rows[0]));
   });
