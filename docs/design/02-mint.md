@@ -20,7 +20,7 @@ Supported Cashu pieces: keys/keysets, signed quotes, minting with DLEQ, restrict
 
 ## 3. Boot and jobs
 
-`loadConfig` validates environment and provider metadata. `createMint` runs migrations, loads the keyset and syncs providers. `start()` installs non-overlapping timers for deposit polling, provider sync (30 seconds) and settlement. `index.ts` then serves the Hono app.
+`loadConfig` validates environment and provider metadata. `createMint` runs migrations, loads the keyset and syncs providers. `start()` installs non-overlapping timers for deposit polling, provider sync (30 seconds) and settlement. `index.ts` then serves the Hono app. The Solana reader rejects a Config whose mint or vault account disagrees with the configured deployment, so mismatched backing cannot silently reach issuance.
 
 Jobs log errors and try again on later ticks. Each timer is relative to process startup; the service does not synchronize windows across deployments. `createMint` also returns the app and context for in-process tests.
 
@@ -75,7 +75,7 @@ pending -> submitted -> confirmed
 1. Lock positive balances of active providers, largest first, up to eight. Debit them and persist the planned batch/payouts in one transaction. New redemptions add to the remaining balances.
 2. Submit `settle_batch`, then persist its signature and last-valid block height. `SettleSender` exposes `submit`, `confirm` and `isExpired`; it is not a single send-and-forget method.
 3. On recovery, `Config.last_batch_id >= batch_id` means the batch landed; do not resend. Otherwise confirm the known transaction, wait while it can still land, or resubmit after expiry.
-4. A deterministic program failure marks the attempt failed and restores balances atomically. A transient error leaves it open for recovery. Batch IDs prevent duplicate payouts, assuming this database is the sole settlement writer for the vault.
+4. A deterministic program failure marks the attempt failed and restores balances atomically. Signature-status errors are terminal only at `confirmed` or `finalized` commitment; a `processed` error stays pending because its fork can disappear. A transient error leaves it open for recovery. Batch IDs prevent duplicate payouts, assuming this database is the sole settlement writer for the vault.
 
 A submitted batch may need more than one job tick or admin call to finish. HTTP 409 codes `70010` and `70011` mean a run is busy/in flight; HTTP 502 `70012` means an attempt failed and its balances were restored.
 

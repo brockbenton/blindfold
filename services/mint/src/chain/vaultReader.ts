@@ -33,6 +33,8 @@ export class SolanaVaultReader implements VaultReader {
     const info = await this.connection.getAccountInfo(configPda(this.programId), SOLANA_COMMITMENT);
     if (!info) throw new Error("vault Config account not found");
     const c = decodeConfig(this.owned(info, "Config"));
+    if (!c.usdcMint.equals(this.usdcMint)) throw new Error("vault Config usdc_mint does not match USDC_MINT");
+    if (!c.vaultToken.equals(vaultAta(this.usdcMint, this.programId))) throw new Error("vault Config vault_token does not match the expected vault account");
     return { depositCount: c.depositCount, providerCount: c.providerCount, lastBatchId: c.lastBatchId };
   }
 
