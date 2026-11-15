@@ -120,6 +120,34 @@ describe("redeem rejections", () => {
     expect((await h.req("/v1/checkstate", { body: { Ys: await ys([d2]) } })).json.states[0].state).toBe("UNSPENT");
   });
 
+  it("a deactivated key re-registered as a new record redeems to the new provider id", async () => {
+    const R = await addProvider(h);
+    h.vault.setActive(R.id, false);
+    const rec = h.vault.addProvider({ cashuPubkey: R.pubkey });
+    await h.ctx.tick();
+    const list = (await h.req("/v1/blindfold/providers")).json as any[];
+    expect(list.find((p) => p.provider_id === R.id).active).toBe(false);
+    expect(list.find((p) => p.provider_id === rec.providerId).active).toBe(true);
+    const [p] = await issue(h, [R.pubkey], [1]);
+    const r = await redeem(h, sign([p], R.sk));
+    expect(r.status).toBe(200);
+    expect(r.json.provider_id).toBe(rec.providerId);
+  });
+
+  it("a duplicate active key is cached inactive and does not block later providers", async () => {
+    const K = await addProvider(h);
+    const dup = h.vault.addProvider({ cashuPubkey: K.pubkey });
+    const later = newKey();
+    const laterRec = h.vault.addProvider({ cashuPubkey: later.pubkey });
+    await h.ctx.tick();
+    const list = (await h.req("/v1/blindfold/providers")).json as any[];
+    expect(list.find((p) => p.provider_id === K.id).active).toBe(true);
+    expect(list.find((p) => p.provider_id === dup.providerId).active).toBe(false);
+    expect(list.find((p) => p.provider_id === laterRec.providerId)).toMatchObject({ pubkey: later.pubkey, active: true });
+    const [p] = await issue(h, [K.pubkey], [1]);
+    expect((await redeem(h, sign([p], K.sk))).json.provider_id).toBe(K.id);
+  });
+
   it("two providers in one request is 70003 and nothing is spent", async () => {
     const [p, q] = await issue(h, [A.pubkey, B.pubkey], [2, 1]);
     const mixed = [...sign([p], A.sk), ...sign([q], B.sk)];

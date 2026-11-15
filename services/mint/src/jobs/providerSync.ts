@@ -1,5 +1,5 @@
 import type { ProviderMeta } from "../config.js";
-import { tx, type Db } from "../db.js";
+import { isUniqueViolation, tx, type Db } from "../db.js";
 import type { VaultReader } from "../chain/vaultReader.js";
 
 const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
@@ -12,15 +12,24 @@ export async function syncProviders(db: Db, vault: VaultReader, meta: ProviderMe
     const rec = await vault.getProvider(id);
     if (!rec) return; // RPC lag, retry on the next sync
     const m = byId.get(id);
-    await tx(db, async (c) => {
+    const write = (active: boolean) => tx(db, async (c) => {
       await c.query(
         `insert into providers (provider_id, pubkey, payout_token, active, name, url, price_cents, topics, synced_at)
          values ($1, $2, $3, $4, $5, $6, $7, $8, now())
          on conflict (provider_id) do update set pubkey = $2, payout_token = $3, active = $4,
            name = $5, url = $6, price_cents = $7, topics = $8, synced_at = now()`,
-        [id, hex(rec.cashuPubkey), rec.payoutToken.toBase58(), rec.active, m?.name ?? null, m?.url ?? null, m?.price_cents ?? null, JSON.stringify(m?.topics ?? [])],
+        [id, hex(rec.cashuPubkey), rec.payoutToken.toBase58(), active, m?.name ?? null, m?.url ?? null, m?.price_cents ?? null, JSON.stringify(m?.topics ?? [])],
       );
       await c.query("insert into provider_balances (provider_id) values ($1) on conflict do nothing", [id]);
     });
+    try {
+      await write(rec.active);
+    } catch (e) {
+      if (!isUniqueViolation(e) || !rec.active) throw e;
+      // Another active provider already has this Cashu key (01 section 5.3: the mint rejects duplicate keys).
+      // Keep this one inactive in the cache and carry on, so one bad registration never blocks the providers after it.
+      console.error(`provider ${id}: cashu key is already used by an active provider; treated as inactive`);
+      await write(false);
+    }
   }
 }
