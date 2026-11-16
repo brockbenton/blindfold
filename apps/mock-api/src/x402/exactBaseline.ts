@@ -13,6 +13,12 @@ export interface ExactOptions {
   payTo: string;
   /** Facilitator that verifies and submits the payer's transfer; see `exactFacilitator`. */
   facilitator: FacilitatorClient;
+  /**
+   * Tokens whose `exact` payments carry an onchain memo naming the feed and token, e.g. `whale-flow/SOL` (x402
+   * `extra.memo`, which sellers use to reconcile payments). Without it the payer adds a random nonce memo instead.
+   * Lowercase letters and digits only.
+   */
+  memoTopics?: string[];
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

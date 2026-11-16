@@ -69,7 +69,7 @@ The current provider does not log client IPs, token headers or secrets. Omitting
 
 ## Baseline comparison
 
-The mock API can also accept the standard x402 `exact` scheme on the same routes, and `scripts/bot.ts` observes the chain like a competitor would. With `exact`, every call is a USDC transfer from the agent's wallet to the provider, so the observer learns the payer, the provider, each amount and each time. With `cashu`, it sees owner deposits into the vault and batched vault payouts, with no agent wallet and no per-call transaction. `pnpm demo` runs both flows side by side ([demo](DEMO.md)).
+The mock API can also accept the standard x402 `exact` scheme on the same routes, and Copycat (`scripts/bot.ts`, `scripts/lib/copycat.ts`) observes the chain like a front-running competitor would. With `exact`, every call is a USDC transfer from the agent's wallet to the provider, so the observer learns the payer, the provider, each amount and each time, plus the token when the seller tags payments with a memo. Copycat turns repeated research on one token into a signal such as `BUY SOL`. With `cashu`, it sees owner deposits into the vault and batched vault payouts, with no agent wallet and no per-call transaction. `pnpm demo` runs both flows side by side ([demo](DEMO.md)).
 
 ## Planned work
 
