@@ -1,5 +1,5 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": { "noEmit": true },
-  "include": ["e2e.ts"]
+  "include": ["e2e.ts", "demo.ts", "bot.ts", "lib"]
 }
