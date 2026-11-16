@@ -244,23 +244,24 @@ Devnet:
 
 ## 10. Implementation notes and decisions
 
-- **Program id:** `3nVcHrZ9PC2kEPGYxvqedudeCfHXtZj1BRzwfxWqAanT` (from `anchor keys sync`; the keypair is `target/deploy/vault-keypair.json`, gitignored and never committed, so keep it to deploy at this id; otherwise run `anchor keys sync` again and rebuild, then update `packages/protocol/src/idl.ts`).
-- **Recorded devnet status:** deployed 2026-11-14 (slot 522349681), initialized, provider 0 registered.
+- **Program id:** `EsB6NfKVPipU5kEVm2jq14cjopbE7w9hPEFZWVu8jtMo`. The program keypair is `.keys/vault-keypair.json`, copied to `target/deploy/vault-keypair.json` for `anchor deploy`; both paths are gitignored. Keep it to upgrade at this id; otherwise run `anchor keys sync`, rebuild, then update `packages/protocol/src/idl.ts`.
+- **Redeployed 2026-11-16.** The 2026-11-14 deployment (`3nVcHrZ9PC2kEPGYxvqedudeCfHXtZj1BRzwfxWqAanT`) lost its admin and mint authority keys, so it can no longer register providers, settle or be upgraded. Do not use it. Keep every key in `.keys/` with an offline backup; never deploy from a temporary directory.
+- **Recorded devnet status:** deployed 2026-11-16 (slot 522942459), initialized, provider 0 registered.
 
 | Item | Address |
 |---|---|
-| Program | `3nVcHrZ9PC2kEPGYxvqedudeCfHXtZj1BRzwfxWqAanT` (upgrade authority = admin) |
-| Config PDA | `HyDdZdb7CW6wsnY5dsENUSJsdfnHsC127fn9Xm3nhCTa` |
-| Vault USDC ATA | `EbMCEhEhykQf6kc8jUAtRFSYA4fVByUvtB1HA7NJwzE7` |
-| Admin / deployer | `CL1w6cXwbVcDdD7urQr9nvf59ysHCrxeKxMhMnd7hyzv` (`.keys/deployer.json`) |
-| Mint authority | `291d6BVexqBnckgSgDVXwe6ZbEuFCEigYVKLrXANr7A8` (`.keys/mint-authority.json`) |
-| Provider 0 record | `Cdftv5dQw2WENDEdW3LVFNPb11doet4JX4wQ1VLc1Eoh` |
-| Provider 0 cashu pubkey | `034cce6c9c3d0a06d6b1934bb97430dfba5a942209012415db816662ea2193ca21` (secret in `.keys/provider-secret.hex`) |
-| Provider 0 payout (USDC ATA) | `2RJKKB3dHqNeVMj9hKNg6NfQcifPbR8KNHuNZCdxH3MS` (owner `.keys/provider-payout.json`) |
+| Program | `EsB6NfKVPipU5kEVm2jq14cjopbE7w9hPEFZWVu8jtMo` (upgrade authority = admin) |
+| Config PDA | `mb1FNxcJ3bqyBZEA6Sxo8AUsYcThp7aVKA8GbzbX3n2` |
+| Vault USDC ATA | `Bg9e9gBW5gDBqWCvV2o2YfcX4E5esER1uPrf7bj4DWuD` |
+| Admin / deployer | `3LTGrCEhfZYxR6EKSE9dGthJEij65k2CSfRrE2tmvRi7` (`.keys/deployer.json`) |
+| Mint authority | `88v4wTeaFJmWxThVSwj476ZbsR2BaFteR3aWGsvfzpXS` (`.keys/mint-authority.json`) |
+| Provider 0 record | `5kkKoRhsaR1PhE2rV8sc98hZUAaAY6ByeT4UYkbjCZHx` |
+| Provider 0 cashu pubkey | `02ecccaa03363b841d81e5f9ea3532aed78d6afd007ce9c8ccd4accdd6b206db28` (secret in `.keys/provider-secret.hex`) |
+| Provider 0 payout (USDC ATA) | `GVaF8JseaBhMCKWWyTzdxW3Z3SDzSB3ZeX6AWK1WVECe` (owner `.keys/provider-payout.json`) |
 
 `max_deposit` = 50,000,000 base units ($50).
 
-**Devnet e2e (00 §10) passed 2026-11-14** via `pnpm --filter @blindfold/scripts e2e`: deposit `2wqG6sQW6J7p87XLbofJPfTKWPuyEZvThkYrwxzM9QGMkNuSvUmyenydFmp6AChCbrYqXhrHUeYQewnQQHsTw9Tr`, settle_batch `5fgAGsP4ShE3PHLX52Lf3sNwyUMSCQK9o3yGw3Lqd3iMyAqid8K91rX7kmJzdy3WMHqD1iZKPvpbMqWtmFcxTuSh`. That run registered provider 1 with a throwaway key; it is deactivated (`4gSShfQ9...`). The e2e now deactivates its provider on exit. Owner `7nx3ouFdFhf4PorVb8LfZ9aDADyPTdFNpQQ1JzPni7WR` (`.keys/owner.json`) holds the remaining devnet USDC. These local key paths are historical and are not included in Git. The addresses and transaction IDs are deployment records, not proof of current access or availability.
+**Devnet e2e (00 §10) passed 2026-11-16** via `pnpm --filter @blindfold/scripts e2e`: deposit `2oKFkSFeqVevKKtyi9HMY5iLkN9xHQ7WJZt9LtHAcgwcqJzSuQ9z4n9QXHvVHdX2wMxzsgAeN34zTB9JKyF8Mpcg`, settle_batch `nPKEiF8GVBENWPKYVxzTLCc9nSgyqbwmABK1Lrd16mXGK74RcMMX8EZRbR7n7gEwTLknzHrkd1SDyTUPAL7Ret9`. The run registered provider 1 with a throwaway key and deactivated it on exit. Owner `2DnMnsBJzzyHaecLX7Rmgz7E7muDDUQPs7cwTEdcxFru` (`.keys/owner.json`) holds the remaining devnet USDC. Key files are not in Git. The addresses and transaction IDs are deployment records, not proof of current access or availability.
 - **Dependencies:** `anchor-spl 1.2.2` needs features `token`, `associated_token`, `token_2022`, `solana-v3`. `token_2022` is required only because anchor-spl's `idl-build` references `token_interface`; the program itself uses the classic token program only.
 - **`initialize` implementation:** `vault_token` is an `UncheckedAccount` (address constrained to the ATA of `config` and `usdc_mint`, else `WrongVaultAccount`) and the ATA is created by a CPI in the handler. With an ATA `init` constraint Anchor creates the ATA before field constraints run, so a Token-2022 mint failed inside the ATA program instead of returning `WrongMint`. The account list, order and flags are unchanged from 00 §4.3.
 - **Errors where 5.4 was silent:** `deposit` with a vault account that is not `config.vault_token` returns `WrongVaultAccount`; `register_provider` with `payout_token_account.key() != payout_token` returns `PayoutAccountMismatch`; a non-writable or undecodable payout account in `settle_batch` returns `PayoutAccountMismatch` / `WrongMint`. `deposit` with a foreign mint account returns `WrongMint` (the `usdc_mint` address constraint).

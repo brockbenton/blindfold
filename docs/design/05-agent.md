@@ -78,6 +78,6 @@ The reserve gate is enforced by `runScripted`, not by each individual tool. A fu
 | `FAKE_FAIL_STATUS` | Forced `PaymentFailed` status |
 | `FAKE_RESERVES_FAIL=1` | Fail the reserve check |
 
-`scripted.test.ts` covers decisions, gate cadence, refusals and exit reporting. `e2e-local.test.ts` uses wallet/provider/mint fakes. `tests/integration/test/real-mint.test.ts` uses the actual mint and mock API with PostgreSQL and an injected fake chain. The separate real-vault acceptance script validates onchain reserve and settlement behavior; [historical deployment notes](01-vault.md#10-implementation-notes-and-decisions) record a November 14, 2026 pass.
+`scripted.test.ts` covers decisions, gate cadence, refusals and exit reporting. `e2e-local.test.ts` uses wallet/provider/mint fakes. `tests/integration/test/real-mint.test.ts` uses the actual mint and mock API with PostgreSQL and an injected fake chain. The separate real-vault acceptance script validates onchain reserve and settlement behavior; [historical deployment notes](01-vault.md#10-implementation-notes-and-decisions) record a November 16, 2026 pass.
 
 LLM tool use, competitor tracking, a complete injection demo and owner approval remain planned work. No model vendor, model version or LLM SDK is selected by the current implementation.
