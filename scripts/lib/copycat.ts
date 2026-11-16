@@ -59,7 +59,7 @@ export function infer(obs: Observation[]): Signal[] {
       reason = `Agent ${short(payer)} is researching ${token} hard: ${reads(tokenCalls)}${within}. A trade is coming; buy ${token} before it does.`;
     } else if (token) {
       action = `WATCH ${token}`;
-      reason = `Agent ${short(payer)} bought ${feedList} data about ${token}. One read is not a pattern yet.`;
+      reason = `Agent ${short(payer)} paid for ${token} data once. One read is not a pattern yet; keep watching.`;
     } else {
       action = "WATCH WALLET";
       reason = `Agent ${short(payer)} bought token data ${plural(ps.length, "time")}${within}. The token is not tagged, but the wallet is: follow its next trade.`;
