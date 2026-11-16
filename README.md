@@ -1,10 +1,14 @@
 # Blindfold
 
-Agent payments with provider-locked ecash, backed by USDC in a Solana vault.
+**Every time your agent pays for data with standard x402, it publishes what it's researching onchain.** Blindfold lets it pay per call without a public record.
 
-An owner deposits USDC and receives blind-signed tokens locked to the mint's registered providers. An agent uses those tokens to buy API data through a custom x402 v2 `cashu` scheme. Providers redeem tokens at the mint before serving data and receive batched USDC payouts later.
+Data vendors such as CoinGecko, CoinMarketCap, Birdeye and Messari already sell market data per request over x402. With the standard `exact` scheme, each call is a USDC transfer from the agent's wallet to the provider. Anyone reading Solana sees which wallet bought which feed, how often and when. A burst of purchases about one token is a trading signal that copy-trading bots can act on before the agent does. Finance already pays to hide intent: dark pools exist so large orders don't move the price. [Why Blindfold](docs/why-blindfold.md) has the evidence, use cases and landscape.
 
-The agent holds tokens, not a Solana signing key. It cannot redeem them to an arbitrary recipient. A compromised agent can still spend its entire token budget at allowed providers. Blind signatures hide the cryptographic link between issuance and redemption; amounts, timing, IP addresses and small user populations can still reveal activity.
+Blindfold is a custom x402 v2 scheme, `cashu`. An owner deposits USDC into a Solana vault and gets blind-signed ecash tokens for the agent. The agent pays each call with a token in an HTTP header: no transaction, no wallet, no onchain identity. Providers redeem tokens at the mint and receive one batched USDC payout from the vault that covers many calls. A watcher sees a deposit go in and a batch payout come out, not who bought what.
+
+**Privacy without giving up safety.** The agent holds tokens, not a Solana key. Tokens are locked to registered providers, so a hijacked agent cannot pay an attacker. Before paying, the agent reads the vault's USDC balance on Solana itself and refuses to pay a mint that claims more liabilities than the vault holds.
+
+What it does not hide: deposits and payouts are public, providers see the queries and IP addresses, and with few users or distinctive amounts and timing, deposits and payouts can still be correlated. See [Limits and trust](#limits-and-trust).
 
 ## Run and test
 
@@ -25,24 +29,26 @@ The real-vault path additionally needs Rust 1.89.0, Anchor 1.2.2 and Solana tool
 
 ## What works
 
+`pnpm demo` runs the whole story on Solana devnet with real transactions, then repeats the same purchases with standard x402 `exact` while a competitor bot reads the chain. See [Run the demo](docs/DEMO.md).
+
 | Component | Current behavior |
 |---|---|
-| Vault | Accepts whole-cent deposits in a configured classic SPL mint; admin registers and deactivates providers; mint authority settles batches of up to eight providers |
-| Mint | Confirms vault deposit records, issues tokens with DLEQ proofs, checks provider signatures, rejects spent proofs, tracks balances and recovers settlement attempts |
-| Mock API | Offers `cashu` payments over x402; redeems before serving deterministic market data; supports per-route pricing; optionally also accepts standard x402 `exact` as a baseline |
-| Wallet and owner CLI | Funds provider-locked tokens, selects exact payment amounts, applies per-call caps and reconciles pending payments |
-| Scripted agent | Chooses a provider by topic, checks reserves before paying and periodically thereafter, reports results and refusals |
-| Demo and competitor bot | `pnpm demo` runs the full flow on devnet and compares it with `exact`; the bot shows what a public-chain observer learns from each |
+| Vault (Anchor program, devnet) | Holds deposited USDC; admin registers and deactivates providers; the mint authority pays batches of up to eight providers |
+| Mint | Confirms vault deposits, issues blind-signed tokens with DLEQ proofs, checks provider signatures, rejects spent tokens, tracks balances and settles batches |
+| Provider (mock market data API) | Sells market data and order-book depth per call over x402 `cashu`; redeems before serving; optionally also accepts standard `exact` as a baseline |
+| Wallet and owner CLI | Funds provider-locked tokens, pays exact amounts, applies per-call caps and reconciles pending payments |
+| Agent | Checks vault reserves before paying and periodically after, buys data, reports results and refusals |
+| Competitor bot | Reads only public Solana data and reports what it learns from `exact` payments and from Blindfold |
 
-A complete prompt-injection demo, QuickNode Streams, owner co-signing, Temporal, onchain issuance logging and hidden provider revenue are planned work. Test hooks for hostile responses exist, but they are not a finished demo. See [MVP and add-ons](docs/mvp.md).
+A Claude-driven trading agent with a prompt-injection act, QuickNode Streams, owner co-signing, Temporal, onchain issuance logging and hidden provider revenue are planned. See [MVP and add-ons](docs/mvp.md).
 
 ## Payment flow
 
-1. The owner requests a mint quote and deposits USDC with the quote's random deposit reference.
-2. The mint reads vault account state. The owner submits blinded outputs, receives signatures, verifies DLEQ proofs and writes provider-locked tokens to a file.
-3. The provider returns HTTP 402. The wallet checks the price, mint and provider, then retries with an exact token payment.
-4. The provider signs the tokens and redeems them online. The mint marks them spent and credits that provider in one database transaction. Only then does the provider serve data.
-5. The mint periodically signs `settle_batch` transactions to pay registered provider accounts. An x402 redemption ID records offchain redemption, not an onchain payout.
+1. **Fund.** The owner gets a mint quote, deposits USDC into the vault with the quote's random reference, and receives blind-signed tokens locked to the registered providers. The agent gets a token file, not a key. Onchain: one deposit.
+2. **Check.** Before paying, the agent compares the vault's USDC balance on Solana with the mint's reported liabilities, and refuses if they don't add up.
+3. **Pay.** The provider answers HTTP 402. The wallet checks price, mint and provider, then retries with an exact token payment in the `PAYMENT-SIGNATURE` header. Onchain: nothing.
+4. **Redeem.** The provider redeems the tokens at the mint, which marks them spent and credits the provider in one database transaction. Only then is the data served. A replayed payment is refused.
+5. **Settle.** The mint signs one `settle_batch` transaction that pays each provider's registered USDC account for many calls. Onchain: one payout from the vault, no payer.
 
 ## Limits and trust
 
