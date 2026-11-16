@@ -9,6 +9,7 @@ export const green = wrap("32");
 export const red = wrap("31");
 export const yellow = wrap("33");
 export const cyan = wrap("36");
+export const magenta = wrap("35");
 
 const out = (s = "") => console.log(s);
 

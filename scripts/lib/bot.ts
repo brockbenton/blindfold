@@ -20,6 +20,8 @@ export interface Observation {
   from: string;
   to: string;
   amountBase: bigint;
+  /** Text of a memo instruction in the same transaction (x402 `exact` adds one per payment). */
+  memo?: string;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -53,6 +55,37 @@ function movements(tx: ParsedTransactionWithMeta, watched: PublicKey, mint: stri
   return { from: owner, fromAccount: keys[senderIndex], to: toOwner, amount: received };
 }
 
+/** The first SPL Memo in a parsed transaction, if any. */
+export function memoOf(tx: ParsedTransactionWithMeta): string | undefined {
+  for (const ix of tx.transaction.message.instructions) {
+    if ("parsed" in ix && ix.program === "spl-memo" && typeof ix.parsed === "string") return ix.parsed;
+  }
+  return undefined;
+}
+
+/** What one transaction shows about USDC arriving at `account`, or null when it shows nothing. */
+export function toObservation(
+  tx: ParsedTransactionWithMeta, s: { signature: string; slot: number; blockTime?: number | null },
+  account: PublicKey, usdcMint: PublicKey, vaultToken: PublicKey,
+): Observation | null {
+  const m = movements(tx, account, usdcMint.toBase58());
+  if (!m) return null;
+  const kind: ObservationKind = account.equals(vaultToken)
+    ? "vault_deposit"
+    : m.fromAccount === vaultToken.toBase58() ? "vault_payout" : "direct_payment";
+  const memo = memoOf(tx);
+  return {
+    kind, signature: s.signature, slot: s.slot, time: s.blockTime ? new Date(s.blockTime * 1000) : null, from: m.from, to: m.to, amountBase: m.amount,
+    ...(memo !== undefined ? { memo } : {}),
+  };
+}
+
+/** Parsed transaction by signature; @x402/svm sends version 1 transactions, which web3.js 1.x types only name version 0. */
+export const getParsed = (connection: Connection, signature: string) =>
+  retry(() => connection.getParsedTransaction(signature, { commitment: SOLANA_COMMITMENT, maxSupportedTransactionVersion: 1 as 0 }));
+export const getSignatures = (connection: Connection, account: PublicKey, limit: number) =>
+  retry(() => connection.getSignaturesForAddress(account, { limit }, SOLANA_COMMITMENT));
+
 /**
  * Observes USDC arriving at `account` (a token account) since `sinceSlot`. Transfers from `vaultToken` are payouts;
  * transfers into `vaultToken` are deposits; anything else is a direct payment.
@@ -60,19 +93,13 @@ function movements(tx: ParsedTransactionWithMeta, watched: PublicKey, mint: stri
 export async function observe(o: {
   connection: Connection; account: PublicKey; usdcMint: PublicKey; vaultToken: PublicKey; sinceSlot?: number; limit?: number;
 }): Promise<Observation[]> {
-  const sigs = await retry(() => o.connection.getSignaturesForAddress(o.account, { limit: o.limit ?? 50 }, SOLANA_COMMITMENT));
+  const sigs = await getSignatures(o.connection, o.account, o.limit ?? 50);
   const out: Observation[] = [];
   for (const s of sigs) {
     if (s.err || (o.sinceSlot !== undefined && s.slot < o.sinceSlot)) continue;
-    // @x402/svm sends version 1 transactions; web3.js 1.x types only name version 0.
-    const tx = await retry(() => o.connection.getParsedTransaction(s.signature, { commitment: SOLANA_COMMITMENT, maxSupportedTransactionVersion: 1 as 0 }));
-    if (!tx) continue;
-    const m = movements(tx, o.account, o.usdcMint.toBase58());
-    if (!m) continue;
-    const kind: ObservationKind = o.account.equals(o.vaultToken)
-      ? "vault_deposit"
-      : m.fromAccount === o.vaultToken.toBase58() ? "vault_payout" : "direct_payment";
-    out.push({ kind, signature: s.signature, slot: s.slot, time: s.blockTime ? new Date(s.blockTime * 1000) : null, from: m.from, to: m.to, amountBase: m.amount });
+    const tx = await getParsed(o.connection, s.signature);
+    const ob = tx && toObservation(tx, s, o.account, o.usdcMint, o.vaultToken);
+    if (ob) out.push(ob);
   }
   return out.sort((a, b) => a.slot - b.slot);
 }

@@ -26,6 +26,9 @@ export interface AppOptions {
   exact?: ExactOptions;
 }
 
+const WHALE_FLOW = "whale flow: net USD bought by whale wallets in the last hour";
+const DEPTH = "order-book depth: five levels a side";
+
 /** No globals: each call builds an independent provider, so a demo can mount several. */
 export function createApp(o: AppOptions) {
   const price = o.priceCents ?? 5;
@@ -41,15 +44,25 @@ export function createApp(o: AppOptions) {
     SOLANA_DEVNET_CAIP2, new CashuServerScheme({ mintUrl: o.mintUrl, providerPubkey: pubkey }),
   );
   if (o.exact) resourceServer.register(SOLANA_DEVNET_CAIP2, new ExactSvmScheme());
-  const route = (cents: number, description: string) => ({
+  const route = (cents: number, description: string, memo?: string) => ({
     accepts: [
       { scheme: "cashu", network: SOLANA_DEVNET_CAIP2, payTo: pubkey, price: { amount: String(centsToBaseUnits(cents)), asset } },
       // Clients pick the scheme they have registered: the Blindfold wallet pays cashu, a standard x402 client exact.
-      ...(o.exact ? [{ scheme: "exact", network: SOLANA_DEVNET_CAIP2, payTo: o.exact.payTo, price: { amount: String(centsToBaseUnits(cents)), asset } }] : []),
+      ...(o.exact ? [{
+        scheme: "exact", network: SOLANA_DEVNET_CAIP2, payTo: o.exact.payTo, price: { amount: String(centsToBaseUnits(cents)), asset },
+        ...(memo ? { extra: { memo } } : {}),
+      }] : []),
     ],
     description,
     mimeType: "application/json",
   });
+  // Per-token routes come first (the first matching route wins) so their exact payments carry the token's memo.
+  const tagged: Record<string, ReturnType<typeof route>> = {};
+  for (const t of o.exact?.memoTopics ?? []) {
+    if (!/^[a-z0-9]{1,16}$/.test(t)) throw new Error(`memo topic must be 1-16 lowercase letters or digits: ${t}`);
+    tagged[`GET /v1/data/${t}/depth`] = route(depthPrice, DEPTH, `depth/${t.toUpperCase()}`);
+    tagged[`GET /v1/data/${t}`] = route(price, WHALE_FLOW, `whale-flow/${t.toUpperCase()}`);
+  }
 
   const app = new Hono();
   // Request log. The unpaid challenge and served lines; rejections are logged by the facilitator (it knows the reason).
@@ -63,8 +76,9 @@ export function createApp(o: AppOptions) {
   });
   app.get("/health", (c) => c.json({ ok: true, pubkey, provider_id: o.providerId ?? 0 }));
   app.use(paymentMiddleware({
-    "GET /v1/data/:topic": route(price, "market data"),
-    "GET /v1/data/:topic/depth": route(depthPrice, "order book depth"),
+    ...tagged,
+    "GET /v1/data/:topic": route(price, WHALE_FLOW),
+    "GET /v1/data/:topic/depth": route(depthPrice, DEPTH),
   } as never, resourceServer));
   app.get("/v1/data/:topic/depth", (c) => c.json(depthData(c.req.param("topic"))));
   app.get("/v1/data/:topic", (c) => {

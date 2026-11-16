@@ -158,7 +158,7 @@ Two deposits built against the same `deposit_count` collide on the `DepositRecor
 
 ### 4.4 Events
 
-Emitted with `emit!`. The MVP mint does **not** rely on events; they exist for the QuickNode Stream add-on. The competitor bot reads token account history instead.
+Emitted with `emit!`. The MVP mint does **not** rely on events; they exist for the QuickNode Stream add-on. Copycat, the demo's competitor bot, reads token account history instead.
 
 | Event | Fields |
 |---|---|
@@ -418,13 +418,22 @@ On failure: `{ "success": false, "errorReason": "<reason>", "transaction": "", "
 
 ### 7.5 Mock API paid endpoint
 
-`GET /v1/data/:topic`, priced at `PRICE_CENTS`. `200` body:
+The mock provider is a token data feed in the style of the Solana DeFi feeds that sell per call over x402.
+
+`GET /v1/data/:topic` (whale flow), priced at `PRICE_CENTS`. `200` body:
 
 ```json
-{ "topic": "sol", "price": 172.4, "change_24h_pct": -1.2, "volume_24h": 123456789, "whale_netflow": 42000, "as_of": 1763166400 }
+{ "topic": "sol", "feed": "whale-flow", "price": 114.1, "change_24h_pct": 0.9, "volume_24h": 33370933,
+  "whale_netflow": 14151, "window": "1h", "whale_buys": 7, "whale_sells": 3, "largest_trade_usd": 123456, "as_of": 1763166400 }
 ```
 
+`whale_netflow` is net USD bought by whale wallets over `window` (negative: net selling).
+
+`GET /v1/data/:topic/depth` (order-book depth), default 10 cents: `{ topic, feed: "depth", bids: [{price, size}] x5, asks: [{price, size}] x5, spread_bps, as_of }`.
+
 Fake, deterministic per topic. `GET /health` is free.
+
+**`exact` memos.** With the `exact` baseline, a provider may set x402's `extra.memo` on a route's `exact` entry; the payer's transaction then carries that text in an SPL Memo instruction, onchain. Sellers use memos to reconcile payments. The demo provider tags its listed tokens' routes `whale-flow/<TOKEN>` and `depth/<TOKEN>` (`ExactOptions.memoTopics`); other `exact` payments carry the payer's random nonce memo. `cashu` entries never carry a memo.
 
 ### 7.6 Agent reserve check [BF]
 

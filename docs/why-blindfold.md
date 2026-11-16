@@ -26,7 +26,7 @@ x402 gives agents something valuable: pay any API instantly without accounts. It
 With standard x402 `exact`, each paid call is a USDC transfer from the agent's wallet to the provider. A competitor reading the chain sees:
 
 - **Who:** the agent's wallet, often the same wallet it trades from.
-- **What:** which provider, and so which kind of data.
+- **What:** which provider, and so which kind of data. If the seller tags payments with a memo (x402's `extra.memo`, used to reconcile payments), the memo is onchain too, and can name the token.
 - **When and how often:** a burst of purchases about one token signals that something is about to happen.
 - **The link to decisions:** data purchases followed by trades from the same wallet expose the strategy, not just the trades.
 

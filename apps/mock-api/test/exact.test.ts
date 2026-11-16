@@ -46,6 +46,20 @@ describe("exact baseline routes", () => {
     }
   });
 
+  it("tag each listed token's exact payments with a feed/token memo; other tokens and cashu get none", async () => {
+    p = await startProvider({ exact: { payTo: PAY_TO, facilitator: fakeExactFacilitator().f, memoTopics: ["sol"] } });
+    const exactOf = async (path: string) => (await challenge(p.url + path)).pr.accepts;
+    const sol = await exactOf("/v1/data/sol");
+    expect(sol[1]).toMatchObject({ amount: "50000", extra: { memo: "whale-flow/SOL", feePayer: FEE_PAYER } });
+    expect(sol[0].extra?.memo).toBeUndefined();
+    expect((await exactOf("/v1/data/sol/depth"))[1]).toMatchObject({ amount: "100000", extra: { memo: "depth/SOL" } });
+    expect((await exactOf("/v1/data/btc"))[1].extra?.memo).toBeUndefined();
+  });
+
+  it("rejects memo topics that are not lowercase alphanumerics", async () => {
+    await expect(startProvider({ exact: { payTo: PAY_TO, facilitator: fakeExactFacilitator().f, memoTopics: ["SOL/x"] } })).rejects.toThrow("memo topic");
+  });
+
   it("serves data after the exact facilitator verifies and settles; the response names the onchain transaction", async () => {
     const fx = fakeExactFacilitator();
     p = await startProvider({ exact: { payTo: PAY_TO, facilitator: fx.f } });

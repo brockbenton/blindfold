@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "e2e": "tsx e2e.ts",
     "e2e:localnet": "tsx e2e.ts --localnet",
     "demo": "tsx demo.ts",
