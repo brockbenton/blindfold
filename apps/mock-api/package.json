@@ -13,8 +13,10 @@
     "@blindfold/protocol": "workspace:*",
     "@cashu/cashu-ts": "4.13.1",
     "@hono/node-server": "2.1.8",
+    "@solana/kit": "8.6.0",
     "@x402/core": "2.31.0",
     "@x402/hono": "2.31.0",
+    "@x402/svm": "2.31.0",
     "hono": "4.13.18"
   },
   "devDependencies": {

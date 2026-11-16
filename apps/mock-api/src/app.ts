@@ -4,6 +4,8 @@ import { USDC_DEVNET_MINT, SOLANA_DEVNET_CAIP2, centsToBaseUnits } from "@blindf
 import { depthData, marketData } from "./data/marketData.js";
 import { BlindfoldFacilitator, type Logger } from "./x402/blindfoldFacilitator.js";
 import { CashuServerScheme } from "./x402/cashuServerScheme.js";
+import { ExactSvmScheme } from "@x402/svm/exact/server";
+import type { ExactOptions } from "./x402/exactBaseline.js";
 import type { KeysetSource } from "./x402/keysets.js";
 import type { RedeemClient } from "./x402/redeemClient.js";
 
@@ -20,6 +22,8 @@ export interface AppOptions {
   log?: Logger;
   /** Replaces the paid data handler (runs only after settle). For demos such as a poisoned response. */
   dataHandler?: (c: Context, topic: string) => Response | Promise<Response>;
+  /** Baseline (00 section 7.1): also accept the standard x402 `exact` scheme on the paid routes (public onchain transfer). */
+  exact?: ExactOptions;
 }
 
 /** No globals: each call builds an independent provider, so a demo can mount several. */
@@ -33,14 +37,16 @@ export function createApp(o: AppOptions) {
     redeemTimeoutMs: o.redeemTimeoutMs, providerId: o.providerId, log,
   });
   const pubkey = facilitator.providerPubkey;
-  const resourceServer = new x402ResourceServer([facilitator]).register(
+  const resourceServer = new x402ResourceServer(o.exact ? [facilitator, o.exact.facilitator] : [facilitator]).register(
     SOLANA_DEVNET_CAIP2, new CashuServerScheme({ mintUrl: o.mintUrl, providerPubkey: pubkey }),
   );
+  if (o.exact) resourceServer.register(SOLANA_DEVNET_CAIP2, new ExactSvmScheme());
   const route = (cents: number, description: string) => ({
-    accepts: [{
-      scheme: "cashu", network: SOLANA_DEVNET_CAIP2, payTo: pubkey,
-      price: { amount: String(centsToBaseUnits(cents)), asset },
-    }],
+    accepts: [
+      { scheme: "cashu", network: SOLANA_DEVNET_CAIP2, payTo: pubkey, price: { amount: String(centsToBaseUnits(cents)), asset } },
+      // Clients pick the scheme they have registered: the Blindfold wallet pays cashu, a standard x402 client exact.
+      ...(o.exact ? [{ scheme: "exact", network: SOLANA_DEVNET_CAIP2, payTo: o.exact.payTo, price: { amount: String(centsToBaseUnits(cents)), asset } }] : []),
+    ],
     description,
     mimeType: "application/json",
   });
