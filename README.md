@@ -60,6 +60,7 @@ A complete prompt-injection demo, QuickNode Streams, owner co-signing, Temporal,
 |---|---|
 | [Run it locally](docs/RUNNING.md) | Installation, PostgreSQL, services, CLI and tests |
 | [Run the demo](docs/DEMO.md) | One-command devnet demo, `exact` comparison, competitor bot |
+| [Why Blindfold](docs/why-blindfold.md) | The problem, evidence, use cases, landscape and pitch lines |
 | [MVP and add-ons](docs/mvp.md) | Implemented scope and planned work |
 | [Design](docs/design.md) | Flow, trust, privacy and future options |
 | [Interfaces](docs/design/00-interfaces.md) | Wire formats, accounts, HTTP APIs and configuration |
