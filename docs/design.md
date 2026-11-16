@@ -67,11 +67,14 @@ The admin reconciliation endpoint reports `vault_balance`, `deposited`, `issued`
 
 The current provider does not log client IPs, token headers or secrets. Omitting those logs is not network anonymity. There is no shared relay, Tor/OHTTP layer, sanctions screening or refund path. The $50 default is a per-deposit cap, not an aggregate budget or identity control.
 
+## Baseline comparison
+
+The mock API can also accept the standard x402 `exact` scheme on the same routes, and `scripts/bot.ts` observes the chain like a competitor would. With `exact`, every call is a USDC transfer from the agent's wallet to the provider, so the observer learns the payer, the provider, each amount and each time. With `cashu`, it sees owner deposits into the vault and batched vault payouts, with no agent wallet and no per-call transaction. `pnpm demo` runs both flows side by side ([demo](DEMO.md)).
+
 ## Planned work
 
 See [MVP and add-ons](mvp.md#add-ons) for priority. These are design options, not current features:
 
-- An `exact` baseline and competitor bot to compare public-chain observations with `cashu` payments.
 - A complete prompt-injection demo using the existing hostile-response test hooks.
 - QuickNode Streams to trigger deposit polling; the mint currently polls without a webhook.
 - Owner approval through a second, co-signed reserve pocket. Current locks accept only 1-of-N and reject refund/time-lock tags; this requires protocol changes.

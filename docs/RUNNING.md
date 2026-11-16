@@ -153,9 +153,9 @@ npx --yes pnpm@10.33.0 --filter @blindfold/scripts e2e:localnet
 
 The Rust integration tests load `target/deploy/vault.so`; `cargo test` alone cannot build that artifact. `anchor test` also runs the configured Cargo tests, but additionally involves Anchor's deployment configuration. Use the direct Cargo command for LiteSVM tests.
 
-The localnet script starts `solana-test-validator` from `$HOME/.local/share/solana/install/active_release/bin`, or reuses an RPC already serving at `127.0.0.1:8899`. Use a fresh validator: the script generates a new mint and keys and expects the vault configuration to match them. It stops only the validator it starts, unless passed `--keep-validator`.
+The localnet script starts `solana-test-validator` from `$HOME/.local/share/solana/install/active_release/bin`, or reuses an RPC already serving at `127.0.0.1:8899`. Use a fresh validator: the script generates a new mint and keys and expects the vault configuration to match them. It stops only the validator it starts, unless passed `--keep-validator`. Its last section pays the same provider through the x402 `exact` baseline and checks what the competitor bot sees onchain.
 
-The vault's declared ID, `Anchor.toml`, protocol IDL and deployment keypair must agree. The ignored `target/deploy/vault-keypair.json` is not supplied by Git. If you generate a new program keypair, synchronize IDs and rebuild before deploying. See [vault deployment notes](design/01-vault.md#10-implementation-notes-and-decisions).
+The vault's declared ID, `Anchor.toml`, protocol IDL and deployment keypair must agree. The ignored `target/deploy/vault-keypair.json` is not supplied by Git; the deployed program's keypair is kept as `.keys/vault-keypair.json` and copied there before `anchor deploy`. If you generate a new program keypair, synchronize IDs and rebuild before deploying. See [vault deployment notes](design/01-vault.md#10-implementation-notes-and-decisions).
 
 Devnet acceptance:
 
@@ -163,4 +163,8 @@ Devnet acceptance:
 npx --yes pnpm@10.33.0 --filter @blindfold/scripts e2e
 ```
 
-Requires PostgreSQL, a deployed vault, `ADMIN_KEYPAIR`, `OWNER_KEYPAIR` (SOL and at least 1 USDC), and `MINT_AUTHORITY_KEYPAIR` (SOL, matching `Config.mint_authority`). The admin must control the vault to register the test provider. The script deactivates its temporary provider on exit. This spends devnet funds; it is separate from the default test suite.
+Requires PostgreSQL, a deployed vault, `ADMIN_KEYPAIR`, `OWNER_KEYPAIR` (SOL and at least 1 USDC), and `MINT_AUTHORITY_KEYPAIR` (SOL, matching `Config.mint_authority`). The admin must control the vault to register the test provider. The script deactivates its temporary provider on exit. Set `EXACT_AGENT_KEYPAIR` (USDC) and `EXACT_FACILITATOR_KEYPAIR` (SOL) to include the `exact` baseline section. This spends devnet funds; it is separate from the default test suite.
+
+## 8. Demo
+
+`npx --yes pnpm@10.33.0 demo` runs the narrated devnet walkthrough with the keys in `.keys/`, and `--localnet` rehearses it on a throwaway validator. See [Run the demo](DEMO.md).

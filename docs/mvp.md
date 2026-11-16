@@ -1,6 +1,6 @@
 # MVP and add-ons
 
-[Runbook](RUNNING.md) · [Design](design.md) · [Plan](plan.md)
+[Runbook](RUNNING.md) · [Demo](DEMO.md) · [Design](design.md) · [Plan](plan.md)
 
 ## Implemented MVP
 
@@ -29,7 +29,7 @@ Acceptance requires:
 
 Planned, in priority order. Existing hooks and tests are not complete demos.
 
-1. **Competitor bot and baseline comparison.** Add a standard `exact` option to the provider and compare the public-chain observations with the `cashu` flow. Neither the baseline nor bot is implemented.
+1. **Competitor bot and baseline comparison.** Implemented: the mock API accepts standard x402 `exact` alongside `cashu` when configured, `scripts/bot.ts` reports what a chain observer sees, and `pnpm demo` compares both ([demo](DEMO.md)). The bot reads token account history; it does not use a Stream yet.
 2. **Prompt-injection demo.** Use the hostile-response hook to show an attempted payment outside the token signer set being refused. Also show that an allowed provider can still consume the budget.
 3. **QuickNode Stream.** Trigger the deposit poller from a webhook and feed the bot. No Stream or webhook configuration exists yet.
 4. **Owner approval.** Add a co-signed reserve pocket. Current 1-of-N locks and redemption validation do not support this.

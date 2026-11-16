@@ -158,7 +158,7 @@ Two deposits built against the same `deposit_count` collide on the `DepositRecor
 
 ### 4.4 Events
 
-Emitted with `emit!`. The MVP mint does **not** rely on events; they exist for the QuickNode Stream and the competitor bot add-ons.
+Emitted with `emit!`. The MVP mint does **not** rely on events; they exist for the QuickNode Stream add-on. The competitor bot reads token account history instead.
 
 | Event | Fields |
 |---|---|
@@ -369,7 +369,7 @@ An unpaid request gets `402` with `PAYMENT-REQUIRED` decoding to an x402 `Paymen
 | `payTo` | The provider's Cashu pubkey. Must equal `extra.nut10.d` |
 | `extra.mints`, `extra.unit`, `extra.nut10` | Same meaning as NUT-18 `m`, `u`, `nut10`. Added by the server scheme's `enhancePaymentRequirements` |
 | `extra.paymentFlow` | Added by the SDK. Always `upfront`: settle (redeem) runs **before** the route handler |
-| Other `accepts` entries | Allowed. Add-on 1 adds a standard `exact` entry on the same route; clients pick the scheme they have registered |
+| Other `accepts` entries | Allowed. The add-on 1 baseline appends a standard `exact` entry on the same route (03); clients pick the scheme they have registered |
 
 ### 7.2 Client: paid retry
 

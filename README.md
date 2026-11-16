@@ -8,7 +8,7 @@ The agent holds tokens, not a Solana signing key. It cannot redeem them to an ar
 
 ## Run and test
 
-See **[Run it locally](docs/RUNNING.md)** for prerequisites and commands. The default development path uses Node 22+, pnpm 10.33.0 and PostgreSQL. Fake-chain mode exercises the mint, provider and wallet without Solana tools or funded keys.
+See **[Run it locally](docs/RUNNING.md)** for prerequisites and commands, and **[Run the demo](docs/DEMO.md)** for the narrated devnet walkthrough (`pnpm demo`). The default development path uses Node 22+, pnpm 10.33.0 and PostgreSQL. Fake-chain mode exercises the mint, provider and wallet without Solana tools or funded keys.
 
 ```sh
 pnpm install --frozen-lockfile
@@ -29,11 +29,12 @@ The real-vault path additionally needs Rust 1.89.0, Anchor 1.2.2 and Solana tool
 |---|---|
 | Vault | Accepts whole-cent deposits in a configured classic SPL mint; admin registers and deactivates providers; mint authority settles batches of up to eight providers |
 | Mint | Confirms vault deposit records, issues tokens with DLEQ proofs, checks provider signatures, rejects spent proofs, tracks balances and recovers settlement attempts |
-| Mock API | Offers `cashu` payments over x402; redeems before serving deterministic market data; supports per-route pricing |
+| Mock API | Offers `cashu` payments over x402; redeems before serving deterministic market data; supports per-route pricing; optionally also accepts standard x402 `exact` as a baseline |
 | Wallet and owner CLI | Funds provider-locked tokens, selects exact payment amounts, applies per-call caps and reconciles pending payments |
 | Scripted agent | Chooses a provider by topic, checks reserves before paying and periodically thereafter, reports results and refusals |
+| Demo and competitor bot | `pnpm demo` runs the full flow on devnet and compares it with `exact`; the bot shows what a public-chain observer learns from each |
 
-Competitor-bot and `exact` baseline demos, a complete prompt-injection demo, QuickNode Streams, owner co-signing, Temporal, onchain issuance logging and hidden provider revenue are planned work. Test hooks for hostile responses exist, but they are not a finished demo. See [MVP and add-ons](docs/mvp.md).
+A complete prompt-injection demo, QuickNode Streams, owner co-signing, Temporal, onchain issuance logging and hidden provider revenue are planned work. Test hooks for hostile responses exist, but they are not a finished demo. See [MVP and add-ons](docs/mvp.md).
 
 ## Payment flow
 
@@ -58,6 +59,7 @@ Competitor-bot and `exact` baseline demos, a complete prompt-injection demo, Qui
 | Document | Contents |
 |---|---|
 | [Run it locally](docs/RUNNING.md) | Installation, PostgreSQL, services, CLI and tests |
+| [Run the demo](docs/DEMO.md) | One-command devnet demo, `exact` comparison, competitor bot |
 | [MVP and add-ons](docs/mvp.md) | Implemented scope and planned work |
 | [Design](docs/design.md) | Flow, trust, privacy and future options |
 | [Interfaces](docs/design/00-interfaces.md) | Wire formats, accounts, HTTP APIs and configuration |

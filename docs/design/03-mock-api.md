@@ -12,9 +12,15 @@ One Node 22+ process represents one provider. Required: `PROVIDER_SECRET_KEY` (3
 | `GET /v1/data/:topic` | Paid market data at `PRICE_CENTS` |
 | `GET /v1/data/:topic/depth` | Paid depth data, default 10 cents |
 
-`createApp` accepts `priceCents`, `depthPriceCents`, `dataHandler`, injectable redeem/keyset clients and logging. The depth price has no CLI environment override. The replacement `dataHandler` runs only after redemption and provides a hostile-response demo/test hook. No `exact` baseline, complete prompt-injection demo, rate limiting or refund path is implemented.
+`createApp` accepts `priceCents`, `depthPriceCents`, `dataHandler`, injectable redeem/keyset clients, logging and `exact`. The depth price has no CLI environment override. The replacement `dataHandler` runs only after redemption and provides a hostile-response demo/test hook. No complete prompt-injection demo, rate limiting or refund path is implemented.
 
 `PUBLIC_URL` rewrites the request origin through `withPublicUrl` in `index.ts`. It does not add a path prefix or provide a network relay.
+
+## `exact` baseline
+
+For comparison only, the paid routes can also accept the standard x402 `exact` scheme (00 §7.1, add-on 1). With `exact` set, each challenge lists `cashu` first and an `exact` entry second, at the same price and asset; clients pay the scheme they registered. `exact` pays `EXACT_PAY_TO`, the provider's Solana wallet, through an in-process `@x402/svm` facilitator whose key (`EXACT_FACILITATOR_KEYPAIR`) pays fees and co-signs. The payer's transfer is public and names its wallet. The facilitator uses `SOLANA_RPC_URL` and retries RPC calls refused with HTTP 429. The CLI enables it only when both variables are set.
+
+`exact` verifies, serves the route, then settles onchain, so a settlement that fails after the transfer lands can charge the payer without returning data. The Blindfold mint is not involved in `exact` payments.
 
 ## Request flow
 
@@ -57,8 +63,8 @@ Request middleware logs unpaid challenges and served responses. The facilitator 
 
 ## Source and tests
 
-`src/app.ts` wires Hono routes and the SDK; `src/x402/` contains the server scheme, facilitator, token validation, HTTP redeem client and keyset cache. `src/data/marketData.ts` supplies deterministic fixtures. `test/helpers/world.ts` uses shared testkit crypto and an in-process fake mint/redeem world.
+`src/app.ts` wires Hono routes and the SDK; `src/x402/` contains the server scheme, facilitator, token validation, HTTP redeem client, keyset cache and the `exact` baseline facilitator (`exactBaseline.ts`). `src/data/marketData.ts` supplies deterministic fixtures. `test/helpers/world.ts` uses shared testkit crypto and an in-process fake mint/redeem world.
 
-`test/x402.test.ts` covers challenges, paid calls, exact amounts, 1-of-N locks, malformed tokens, replay, mint outages, no early serving, per-route pricing and replacement data. Node's HTTP header limit can be lower than the 64 KiB token cap, so oversize tokens are tested directly on the facilitator. The application integration suite exercises these components against the real mint with PostgreSQL and a fake chain.
+`test/x402.test.ts` covers challenges, paid calls, exact amounts, 1-of-N locks, malformed tokens, replay, mint outages, no early serving, per-route pricing and replacement data. `test/exact.test.ts` covers the `exact` challenge entry, routing to its facilitator, failed settlement and rate-limit retries. Node's HTTP header limit can be lower than the 64 KiB token cap, so oversize tokens are tested directly on the facilitator. The application integration suite exercises these components against the real mint with PostgreSQL and a fake chain.
 
 There is no `pnpm --filter mock-api fake-mint` command. For manual local testing, run the real mint with `MINT_DEV_FAKE_CHAIN=1` as described in the runbook.
