@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Copycat vs. Your Agent</title>
+<style>
+  :root {
+    --bg: #0d1014;
+    --panel: #151a20;
+    --panel-2: #1b2129;
+    --line: #262e38;
+    --text: #e8edf2;
+    --muted: #8a96a3;
+    --faint: #5c6773;
+    --red: #ff5d52;
+    --red-bg: rgba(255, 93, 82, 0.1);
+    --red-line: rgba(255, 93, 82, 0.35);
+    --green: #3ecf74;
+    --green-bg: rgba(62, 207, 116, 0.09);
+    --green-line: rgba(62, 207, 116, 0.32);
+    --amber: #f0b44c;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 15px; line-height: 1.4;
+    font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased;
+  }
+  .app { display: grid; grid-template-rows: auto 1fr auto; gap: 16px; height: 100vh; padding: 20px 24px; max-width: 1760px; margin: 0 auto; }
+
+  header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
+  h1 { margin: 0; font-size: 26px; font-weight: 650; letter-spacing: -0.01em; }
+  h1 .vs { color: var(--faint); font-weight: 500; padding: 0 2px; }
+  .sub { color: var(--muted); margin-top: 4px; font-size: 15px; }
+  .status { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+  .pill { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 6px 12px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+  .pill strong { color: var(--text); font-weight: 600; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); margin-right: 7px; vertical-align: 1px; }
+  .live .dot { background: var(--green); }
+
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; min-height: 0; }
+  .side { display: grid; grid-template-rows: auto auto 1fr auto; gap: 12px; min-height: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .side-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .side-title { font-size: 19px; font-weight: 650; }
+  .side-title .scheme { font-family: var(--mono); font-size: 14px; font-weight: 500; color: var(--muted); margin-left: 8px; }
+  .exact .side-title { color: var(--red); }
+  .blind .side-title { color: var(--green); }
+  .side-desc { color: var(--muted); font-size: 14px; margin-top: 2px; }
+  .count { text-align: right; flex-shrink: 0; }
+  .count b { display: block; font-size: 30px; font-weight: 650; line-height: 1; }
+  .count span { font-size: 12px; color: var(--muted); }
+  .exact .count b { color: var(--red); }
+  .blind .count b { color: var(--green); }
+
+  .label { font-size: 12px; color: var(--muted); font-weight: 600; margin: 0 0 6px; letter-spacing: 0.02em; }
+  .calls { display: flex; flex-wrap: wrap; gap: 6px; min-height: 34px; }
+  .chip { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--panel-2); border-radius: 8px; padding: 6px 10px; font-size: 13px; animation: in 0.35s ease-out; }
+  .chip .where { font-family: var(--mono); font-size: 12px; text-decoration: none; }
+  .exact .chip .where { color: var(--red); }
+  .blind .chip .where { color: var(--green); }
+  .chip.bad { border-color: var(--red-line); }
+  .empty { color: var(--faint); font-size: 13px; padding: 7px 0; }
+
+  .feed-wrap { display: flex; flex-direction: column; min-height: 0; }
+  .feed { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 6px; border-radius: 8px; }
+  .tx { display: grid; grid-template-columns: 64px 1fr auto; gap: 12px; align-items: center; border: 1px solid var(--line); background: var(--panel-2); border-radius: 8px; padding: 9px 12px; animation: flash 1.6s ease-out; }
+  .tx time { font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  .tx .what { font-size: 14px; }
+  .tx .what .addr { font-family: var(--mono); font-size: 13px; }
+  .tx .memo { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .tx .amt { font-family: var(--mono); font-size: 14px; }
+  a.tx { color: var(--text); text-decoration: none; --flash: var(--muted); }
+  a.tx:hover { border-color: var(--muted); }
+  .exact .tx { border-color: var(--red-line); background: var(--red-bg); --flash: var(--red); }
+  .exact .tx .addr, .exact .tx .memo b { color: var(--red); font-weight: 600; }
+  .blind .tx .addr { color: var(--text); }
+  .tx.payout .what::before, .tx.deposit .what::before { font-family: var(--mono); font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; margin-right: 8px; }
+  .tx.deposit .what::before { content: "DEPOSIT"; }
+  .tx.payout .what::before { content: "BATCH PAYOUT"; }
+  .note { flex-basis: 100%; font-size: 13px; color: var(--muted); border-left: 2px solid var(--green); padding: 4px 10px; animation: in 0.35s ease-out; }
+  .note.warn { border-color: var(--amber); }
+
+  .verdict { border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); padding: 14px 16px; min-height: 104px; display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; align-items: center; }
+  .verdict .who { grid-column: 1 / -1; font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0.02em; }
+  .verdict .action { font-size: 30px; font-weight: 700; line-height: 1.05; white-space: nowrap; color: var(--faint); }
+  .verdict .reason { font-size: 14px; color: var(--muted); }
+  .verdict.alarm { border-color: var(--red-line); background: var(--red-bg); animation: in 0.4s ease-out; }
+  .verdict.alarm .action { color: var(--red); }
+  .verdict.calm { border-color: var(--green-line); background: var(--green-bg); animation: in 0.4s ease-out; }
+  .verdict.calm .action { color: var(--green); }
+  .verdict.alarm .reason, .verdict.calm .reason { color: var(--text); }
+
+  footer { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+  .tile .k { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .tile .v { font-size: 24px; font-weight: 650; margin-top: 2px; font-family: var(--mono); letter-spacing: -0.02em; }
+  .tile .d { font-size: 12px; color: var(--faint); margin-top: 1px; }
+  .tile .v.bump { animation: bump 0.6s ease-out; }
+
+  @keyframes in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  @keyframes flash { 0% { box-shadow: 0 0 0 2px var(--flash); opacity: 0; } 15% { opacity: 1; } 100% { box-shadow: 0 0 0 0 transparent; } }
+  @keyframes bump { 0% { color: var(--amber); } 100% { color: var(--text); } }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+
+  @media (max-width: 900px) {
+    .app { height: auto; padding: 16px; }
+    header { flex-direction: column; align-items: flex-start; }
+    main { grid-template-columns: 1fr; }
+    footer { grid-template-columns: 1fr 1fr; }
+    .feed { max-height: 320px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div>
+      <h1>Copycat <span class="vs">vs.</span> your trading agent</h1>
+      <div class="sub" id="sub">Your agent researches <b id="topic">SOL</b> before it trades. Copycat reads only public Solana data, looking for someone to front-run.</div>
+    </div>
+    <div class="status">
+      <span class="pill" id="act"><strong>Waiting for the demo</strong></span>
+      <span class="pill" id="conn"><span class="dot"></span><span id="mode">connecting</span></span>
+    </div>
+  </header>
+
+  <main>
+    <section class="side exact">
+      <div class="side-head">
+        <div>
+          <div class="side-title">Standard x402<span class="scheme">exact</span></div>
+          <div class="side-desc">Every call is a USDC transfer from the agent's own wallet.</div>
+        </div>
+        <div class="count"><b id="exact-count">0</b><span>transactions naming your agent</span></div>
+      </div>
+      <div>
+        <div class="label">YOUR AGENT'S PURCHASES</div>
+        <div class="calls" id="exact-calls"><span class="empty">No purchases yet</span></div>
+      </div>
+      <div class="feed-wrap">
+        <div class="label">WHAT COPYCAT SEES ONCHAIN</div>
+        <div class="feed" id="exact-feed"><span class="empty">Nothing yet</span></div>
+      </div>
+      <div class="verdict" id="exact-verdict"><div class="who">COPYCAT'S SIGNAL</div><div class="action">...</div><div class="reason">Watching the data feed's account.</div></div>
+    </section>
+
+    <section class="side blind">
+      <div class="side-head">
+        <div>
+          <div class="side-title">Blindfold<span class="scheme">cashu</span></div>
+          <div class="side-desc">Every call is an ecash token in an HTTP header. No wallet, no transfer.</div>
+        </div>
+        <div class="count"><b id="blind-count">0</b><span>transactions naming your agent</span></div>
+      </div>
+      <div>
+        <div class="label">YOUR AGENT'S PURCHASES</div>
+        <div class="calls" id="blind-calls"><span class="empty">No purchases yet</span></div>
+      </div>
+      <div class="feed-wrap">
+        <div class="label">WHAT COPYCAT SEES ONCHAIN</div>
+        <div class="feed" id="blind-feed"><span class="empty">Nothing yet</span></div>
+      </div>
+      <div class="verdict" id="blind-verdict"><div class="who">COPYCAT'S SIGNAL</div><div class="action">...</div><div class="reason">Watching the data feed's account and the Blindfold vault.</div></div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="tile"><div class="k">Agent wallet, standard x402</div><div class="v" id="b-exact">-</div><div class="d">USDC the agent must hold a key for</div></div>
+    <div class="tile"><div class="k">Agent tokens, Blindfold</div><div class="v" id="b-tokens">-</div><div class="d">ecash locked to registered providers</div></div>
+    <div class="tile"><div class="k">Data feed earnings</div><div class="v" id="b-provider">-</div><div class="d" id="b-provider-d">this run</div></div>
+    <div class="tile"><div class="k">Blindfold vault</div><div class="v" id="b-vault">-</div><div class="d">USDC on Solana backing all tokens</div></div>
+  </footer>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const usd = (base) => "$" + (Number(base) / 1e6).toFixed(2);
+const cents = (c) => "$" + (c / 100).toFixed(2);
+const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+const shortAddr = (a) => a.slice(0, 4) + "..." + a.slice(-4);
+const hhmmss = (iso) => (iso ? new Date(iso).toISOString().slice(11, 19) : "--:--:--");
+const DEFAULTS = {};
+for (const id of ["exact-calls", "blind-calls", "exact-feed", "blind-feed", "exact-verdict", "blind-verdict"]) DEFAULTS[id] = $(id).innerHTML;
+let counts, setupInfo;
+
+function reset() {
+  for (const [id, html] of Object.entries(DEFAULTS)) { $(id).innerHTML = html; $(id).className = $(id).className.replace(/ ?(alarm|calm)/g, ""); }
+  counts = { exact: 0, blind: 0 };
+  $("exact-count").textContent = "0"; $("blind-count").textContent = "0";
+}
+
+function prepend(el, html) {
+  const empty = el.querySelector(".empty");
+  if (empty) empty.remove();
+  el.insertAdjacentHTML("afterbegin", html);
+}
+function append(el, html) {
+  const empty = el.querySelector(".empty");
+  if (empty) empty.remove();
+  el.insertAdjacentHTML("beforeend", html);
+}
+function setValue(id, text) {
+  const el = $(id);
+  if (el.textContent === text) return;
+  el.textContent = text;
+  el.classList.remove("bump"); void el.offsetWidth; el.classList.add("bump");
+}
+
+const handlers = {
+  setup(e) {
+    setupInfo = e;
+    $("topic").textContent = e.topic.toUpperCase();
+    $("mode").textContent = e.mode === "devnet" ? "Solana devnet" : "Local validator";
+  },
+  act(e) { $("act").innerHTML = "<strong>Act " + e.n + "</strong>&nbsp; " + esc(e.title); },
+  call(e) {
+    const side = e.side === "exact" ? "exact" : "blind";
+    const where = e.side === "exact"
+      ? (e.url ? '<a class="where" href="' + esc(e.url) + '" target="_blank" rel="noopener">onchain tx</a>' : '<span class="where">onchain</span>')
+      : '<span class="where">no transaction</span>';
+    append($(side + "-calls"), '<span class="chip' + (e.ok ? "" : " bad") + '">#' + e.n + " " + esc(e.label) + " &middot; " + e.cents + "&cent; " + where + "</span>");
+  },
+  chain(e) {
+    const side = e.side === "exact" ? "exact" : "blind";
+    if (e.kind === "direct_payment") { counts[side]++; $(side + "-count").textContent = counts[side]; }
+    const cls = e.kind === "vault_payout" ? "payout" : e.kind === "vault_deposit" ? "deposit" : "";
+    let what;
+    if (e.kind === "direct_payment") what = 'Wallet <span class="addr">' + shortAddr(e.from) + "</span> paid the data feed";
+    else if (e.kind === "vault_payout") what = "Vault paid the data feed. Payer: <b>unknown</b>";
+    else what = '<span class="addr">' + shortAddr(e.from) + "</span> funded the vault. Purchases: <b>unknown</b>";
+    const memo = e.memo && e.kind === "direct_payment" ? '<div class="memo">memo <b>' + esc(e.memo) + "</b></div>" : "";
+    prepend($(side + "-feed"),
+      '<a class="tx ' + cls + '" href="' + esc(e.url) + '" target="_blank" rel="noopener"><time>' + hhmmss(e.time) + '</time><div><div class="what">' + what + "</div>" + memo + '</div><div class="amt">' + usd(e.amountBase) + "</div></a>");
+  },
+  copycat(e) {
+    const el = $(e.side === "exact" ? "exact-verdict" : "blind-verdict");
+    el.className = "verdict " + e.tone;
+    el.innerHTML = '<div class="who">COPYCAT\'S SIGNAL</div><div class="action">' + esc(e.action) + '</div><div class="reason">' + esc(e.reason) + "</div>";
+  },
+  balances(e) {
+    setValue("b-exact", usd(e.exactWalletBase));
+    setValue("b-tokens", cents(e.agentTokensCents));
+    const total = BigInt(e.providerDirectBase) + BigInt(e.providerSettledBase) + BigInt(e.providerOwedCents) * 10000n;
+    setValue("b-provider", usd(total));
+    $("b-provider-d").textContent = usd(e.providerDirectBase) + " direct · " + usd(e.providerSettledBase) + " from vault · " + cents(e.providerOwedCents) + " owed";
+    setValue("b-vault", usd(e.vaultBase));
+  },
+  note(e) {
+    append($(e.side === "exact" ? "exact-calls" : "blind-calls"), '<div class="note' + (e.tone === "warn" ? " warn" : "") + '">' + esc(e.text) + "</div>");
+  },
+  done(e) { $("act").innerHTML = "<strong>" + (e.ok ? "Demo complete" : "Demo stopped") + "</strong>"; },
+};
+
+reset();
+const es = new EventSource("/events");
+es.onopen = () => { reset(); $("conn").classList.add("live"); };
+es.onerror = () => { $("conn").classList.remove("live"); };
+es.onmessage = (m) => {
+  const e = JSON.parse(m.data);
+  (handlers[e.type] || (() => {}))(e);
+};
+</script>
+</body>
+</html>

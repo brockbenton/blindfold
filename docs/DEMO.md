@@ -1,6 +1,6 @@
 # Run the demo
 
-One command runs the whole story on Solana devnet with real transactions: an owner funds an agent, the agent buys data with Blindfold tokens, a replay is refused, the provider is paid in USDC, the agent refuses a dishonest mint, the same purchases run over standard x402 `exact`, and a competitor bot shows what each method leaks onchain.
+One command runs **Copycat vs. your trading agent** on Solana devnet with real transactions. Your agent researches SOL by buying whale-flow data from TokenFeed, a mock token data feed. First it pays with standard x402 `exact`, and Copycat, a front-running bot that reads only public Solana data, turns those payments into "BUY SOL". Then the owner funds Blindfold tokens and the agent does the same research: Copycat sees a deposit and a batch payout, and reports no signal. Two safety acts follow: a replayed payment is refused and the agent refuses a mint that lies about its reserves. A local dashboard shows both sides live.
 
 Commands work in fish, bash and zsh. Run them from the repository root.
 
@@ -45,40 +45,51 @@ The demo pauses before each act; press Enter to continue. It ends with Solana Ex
 
 | Option | Effect |
 |---|---|
-| `--no-pause` | Run straight through |
+| `--no-pause` | Run straight through (also skips the final hold that keeps the dashboard up) |
+| `--no-dashboard` | Don't start the dashboard |
 | `--calls N` | Paid calls per payment method (default 3) |
 | `--localnet` | Rehearsal on a throwaway local validator with fresh keys; needs `anchor build` and the Solana tools, spends no devnet funds |
 
 A run takes a few minutes, longer on the public RPC. Each run deposits $1.00 of devnet USDC (most of it stays in the vault backing the agent's unspent tokens), pays $0.15 through `exact` and spends about 0.01 SOL in fees. Before the run it tops up the facilitator's SOL from the deployer and the `exact` agent's USDC from the owner when they run low.
 
-### Second terminal: the live competitor bot
+### The dashboard
 
-For a split-screen recording, run the bot next to the demo. It watches the provider's payout account and the vault using only public RPC data, and prints each transaction as it appears:
+The demo serves a live dashboard at **http://localhost:5173** (the next free port if that one is taken; the demo prints the URL). Open it next to the terminal before Act 1. The left half is standard x402: each purchase, each transaction Copycat finds onchain, and Copycat's signal. The right half is Blindfold: the same purchases, marked "no transaction", and the only two transactions Copycat finds, a deposit and a batch payout. The bottom row shows the `exact` agent's USDC wallet, the Blindfold agent's tokens, TokenFeed's earnings this run (direct, from the vault, and owed by the mint) and the vault's USDC balance.
+
+Transactions appear as Copycat finds them by polling the chain, a few seconds after they confirm. Reloading the page replays the run so far. After the summary the demo keeps the dashboard up until you press Enter. For recording, use a 1600x900 or larger browser window; the page needs no network access, so it also works in `--localnet`.
+
+### Second terminal: Copycat on its own
+
+Copycat also runs standalone. It watches TokenFeed's USDC account and the vault using only public RPC data and prints each transaction with its signal:
 
 ```sh
 npx -y pnpm@10.33.0 bot
 ```
 
-`--once` prints what is already visible and exits.
+`--once` prints what is visible in the last 20 transactions per account and exits.
+
+### How Copycat knows the token
+
+An `exact` payment is a USDC transfer plus a memo. TokenFeed sets x402's `extra.memo` on its SOL, BTC and ETH routes, as sellers do to reconcile payments, so each transfer carries `whale-flow/SOL` onchain. Without a seller memo, x402 adds a random nonce instead, and Copycat still sees the wallet, the feed, the amounts and the burst: it reports `WATCH WALLET` and follows the wallet's next trade. Copycat cannot see the data the agent bought, so `BUY` is its bet on direction, not knowledge.
 
 ## What each act shows
 
 | Act | On screen | What to say |
 |---|---|---|
-| Setup | Who is involved; vault Explorer link | "The agent has no Solana key, only a file of tokens." |
-| 1. Fund | $1.00 deposit, 40 tokens, Explorer link | "USDC goes into a vault; the mint signs tokens blind, so it can't link them to later purchases." |
-| 2. Buy | Reserve check, 3 paid calls with data | "Before paying, the agent checks the vault on Solana. Each payment is a token in an HTTP header: no transaction." |
-| 3. Replay | Replayed call refused with 402 | "A copied payment buys nothing; tokens are spent on first use." |
-| 4. Settle | One batch payout, Explorer link, balanced books | "The provider gets paid in USDC in one batch that covers many calls." |
-| 5. Reserve gate | Agent stops with exit code 7 | "If the mint claims more liabilities than the vault holds, the agent pays nothing." |
-| 6. `exact` | Same endpoint, 3 standard x402 payments, 3 Explorer links | "Standard x402: the agent needs a funded wallet and every call is a public transfer." |
-| 7. Competitor | Payer wallet, call count and timing for `exact`; only a deposit and one payout for Blindfold | "Same purchases. One leaks who, what and when. The other shows money in and money out." |
+| Setup | Cast, dashboard URL, vault Explorer link | "Your agent buys token data before it trades. Copycat reads public Solana data, looking for someone to front-run." |
+| 1. Standard x402 | 3 whale-flow purchases, 3 Explorer links; Copycat: **BUY SOL** | "Every call is a public transfer from the agent's wallet, tagged with what it bought. Copycat knows what your agent is about to trade." |
+| 2. Fund | $1.00 deposit, 40 tokens; Copycat sees a deposit | "The owner deposits USDC into a vault. The mint signs tokens blind, so it can't link them to later purchases. The agent holds tokens, not a key." |
+| 3. Blindfold | Reserve check, the same 3 purchases; Copycat: **NO SIGNAL** | "Same research. Each payment is a token in an HTTP header: no transaction, nothing for Copycat to read." |
+| 4. Settle | One batch payout, balanced books; Copycat sees a payout, payer unknown | "TokenFeed is paid in USDC in one batch that covers many calls and names no agent." |
+| 5. Copycat's report | Everything Copycat learned, side by side | "Same purchases. One told Copycat who, what and when. The other showed money in and money out." |
+| 6. Replay | Replayed call refused with 402 | "Privacy without giving up safety: a copied payment buys nothing." |
+| 7. Reserve gate | Agent stops with exit code 7 | "If the mint claims more than the vault holds, the agent pays nothing. And its tokens only pay registered providers, so a hijacked agent can't pay an attacker." |
 
 State the limit honestly: with few users, or distinctive amounts and timing, deposits and payouts can still be correlated.
 
 ## Recording tips
 
-- Use a terminal at least 100 columns wide with a large font.
+- Use a terminal at least 100 columns wide with a large font, and the dashboard in a browser window beside it.
 - Do one run before recording, so dependencies are warm and balances are topped up.
 - Keep the Explorer tabs from the final summary open for the walkthrough.
 - Record a backup run as soon as one passes.
@@ -92,7 +103,7 @@ State the limit honestly: with few users, or distinctive amounts and timing, dep
 | `needs devnet SOL and the deployer cannot cover it` | faucet.solana.com to the deployer address in `docs/design/01-vault.md` |
 | `RPC busy (rate limited); retrying` | Expected on the public RPC; set `SOLANA_RPC_URL` to a private endpoint |
 | `no active vault provider uses .keys/provider-secret.hex` | Wrong key folder, or provider 0 was deactivated; see `docs/design/01-vault.md` |
-| Port 3338 or 4000 busy | The demo picks free ports automatically and prints them |
+| Port 3338, 4000 or 5173 busy | The demo picks free ports automatically and prints them |
 | `a validator is already running` (`--localnet`) | Stop the other `solana-test-validator` |
 
 For the step-by-step services and the acceptance test, see [Run it locally](RUNNING.md).
