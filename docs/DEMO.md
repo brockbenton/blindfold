@@ -19,6 +19,22 @@ Commands work in fish, bash and zsh. Run them from the repository root.
    ```
 4. **PostgreSQL** starts automatically through `services/mint/scripts/dev-pg.sh` unless `DATABASE_URL` is set. Each run uses a throwaway schema.
 
+## Running it on a teammate's machine
+
+Devnet mode does not need Rust, Anchor or the Solana tools; it uses the deployed vault. A teammate needs:
+
+1. **Node 22+**, then clone the repository and run the two build commands above.
+2. **The keys.** Send the `.keys/` folder (or the backup file) privately: a password manager share, an encrypted message or in person. Never through Git, a public channel or email. Put it at `.keys/` in their clone and run `chmod 600 .keys/*`.
+3. **PostgreSQL**, one of:
+   - Linux: install the server package. If its binaries are not in `/usr/bin`, point `PG_BIN` at them, e.g. `set -x PG_BIN /usr/lib/postgresql/17/bin` (fish).
+   - macOS: `brew install postgresql@17`, then `set -x PG_BIN (brew --prefix postgresql@17)/bin` (fish) or `export PG_BIN="$(brew --prefix postgresql@17)/bin"` (bash/zsh).
+   - Docker: `docker compose up -d postgres`, then set `DATABASE_URL` to `postgres://blindfold:blindfold@127.0.0.1:5432/blindfold`.
+
+   Windows users should run everything inside WSL.
+4. `npx -y pnpm@10.33.0 demo`
+
+**One demo at a time across the whole team.** Every run starts its own mint against the same vault, and settlement assumes a single settlement writer: two overlapping runs can misrecord a payout. All runs also share the owner's devnet USDC (about $1.15 per run).
+
 ## Run it
 
 ```sh
