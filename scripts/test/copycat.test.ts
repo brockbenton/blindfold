@@ -79,7 +79,7 @@ describe("dashboard", () => {
 
   it("serves the page and replays every event to a late subscriber, then streams new ones", async () => {
     d = await startDashboard({ port: 0 });
-    expect(await (await fetch(d.url)).text()).toContain("Copycat");
+    expect(await (await fetch(d.url)).text()).toContain("<title>Blindfold</title>");
     d.emit({ type: "act", n: 1, title: "first" });
     d.emit({ type: "copycat", side: "exact", action: "BUY SOL", reason: "r", tone: "alarm" });
     const pending = read(d.url, 3);

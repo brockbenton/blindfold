@@ -54,9 +54,9 @@ A run takes a few minutes, longer on the public RPC. Each run deposits $1.00 of 
 
 ### The dashboard
 
-The demo serves a live dashboard at **http://localhost:5173** (the next free port if that one is taken; the demo prints the URL). Open it next to the terminal before Act 1. The left half is standard x402: each purchase, each transaction Copycat finds onchain, and Copycat's signal. The right half is Blindfold: the same purchases, marked "no transaction", and the only two transactions Copycat finds, a deposit and a batch payout. The bottom row shows the `exact` agent's USDC wallet, the Blindfold agent's tokens, TokenFeed's earnings this run (direct, from the vault, and owed by the mint) and the vault's USDC balance.
+The demo serves a live dashboard at **http://localhost:5173** (the next free port if that one is taken; the demo prints the URL). Open it next to the terminal before Act 1. Each half shows the watcher's signal (Copycat's verdict), the transactions it found onchain, and the agent's purchases as ticks: filled red for standard x402, where each purchase is a public transfer, and hollow for Blindfold. A status line at the bottom shows the `exact` agent's wallet, the Blindfold agent's tokens, what the feed earned this run and the vault's USDC.
 
-Transactions appear as Copycat finds them by polling the chain, a few seconds after they confirm. Reloading the page replays the run so far. After the summary the demo keeps the dashboard up until you press Enter. For recording, use a 1600x900 or larger browser window; the page needs no network access, so it also works in `--localnet`.
+Transactions appear as Copycat finds them by polling the chain, a few seconds after they confirm. Reloading the page replays the run so far. After the summary the demo keeps the dashboard up until you press Enter. For recording, use a 1600x900 or larger browser window; it loads the Geist fonts from Google Fonts and falls back to system fonts offline.
 
 ### Second terminal: Copycat on its own
 
