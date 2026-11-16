@@ -10,6 +10,8 @@
 //   SOLANA_RPC_URL          default https://api.devnet.solana.com
 //   VAULT_PROGRAM_ID, USDC_MINT   default: the protocol constants
 //   DATABASE_URL            Postgres; a throwaway schema is created and dropped
+//   EXACT_AGENT_KEYPAIR, EXACT_FACILITATOR_KEYPAIR  optional; enable step 7 (x402 `exact` baseline) on devnet.
+//                           The agent needs USDC, the facilitator SOL. Localnet always runs step 7 with fresh keys.
 // Run with --keep-validator to leave the localnet validator running.
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -38,6 +40,11 @@ import type { AppConfig } from "../services/mint/src/config.js";
 import { createPool } from "../services/mint/src/db.js";
 import { createMint as createMintServer } from "../services/mint/src/mint.js";
 import { runMain } from "../agents/simple/src/main.js";
+import { exactFacilitator } from "../apps/mock-api/src/x402/exactBaseline.js";
+import { observeUntil, profiles } from "./lib/bot.js";
+import { exactPayFetch, paymentResponse } from "./lib/exactClient.js";
+import { explorerTx } from "./lib/explorer.js";
+import { link, say, section } from "./lib/narrate.js";
 import { getPubKeyFromPrivKey, createRandomSecretKey } from "@cashu/cashu-ts";
 
 const localnet = process.argv.includes("--localnet");
@@ -146,6 +153,16 @@ async function main() {
   const config = decodeConfig((await connection.getAccountInfo(configPda(programId)))!.data);
   check("Config.mint_authority matches MINT_AUTHORITY_KEYPAIR", config.mintAuthority.equals(authority.publicKey));
   check("Config.usdc_mint matches", config.usdcMint.equals(usdcMint));
+  // Step 7 keys (x402 `exact` baseline): a payer wallet holding USDC and a facilitator paying fees.
+  let exactKeys: { agent: Keypair; facilitator: Keypair } | undefined;
+  if (localnet) {
+    exactKeys = { agent: Keypair.generate(), facilitator: Keypair.generate() };
+    await airdrop(connection, exactKeys.facilitator.publicKey, 2);
+    const ata = await getOrCreateAssociatedTokenAccount(connection, admin, usdcMint, exactKeys.agent.publicKey);
+    await mintTo(connection, admin, usdcMint, ata.address, admin, 1_000_000n);
+  } else if (process.env.EXACT_AGENT_KEYPAIR && process.env.EXACT_FACILITATOR_KEYPAIR) {
+    exactKeys = { agent: loadKeypair(process.env.EXACT_AGENT_KEYPAIR), facilitator: loadKeypair(process.env.EXACT_FACILITATOR_KEYPAIR) };
+  }
   const providerSk = createRandomSecretKey();
   const providerPubkey = hex(getPubKeyFromPrivKey(providerSk));
   const payoutOwner = Keypair.generate();
@@ -195,7 +212,10 @@ async function main() {
 
   // Mock API (in process) with the real redeem client.
   const apiLogs: Record<string, unknown>[] = [];
-  const api = createApp({ mintUrl, providerSecretKey: hex(providerSk), priceCents: PRICE, usdcMint: usdcMint.toBase58(), providerId, redeem: new HttpRedeemClient(mintUrl), log: (e) => apiLogs.push(e) });
+  const exact = exactKeys
+    ? { payTo: payoutOwner.publicKey.toBase58(), facilitator: await exactFacilitator({ keypair: exactKeys.facilitator.secretKey, rpcUrl: rpc }) }
+    : undefined;
+  const api = createApp({ mintUrl, providerSecretKey: hex(providerSk), priceCents: PRICE, usdcMint: usdcMint.toBase58(), providerId, redeem: new HttpRedeemClient(mintUrl), log: (e) => apiLogs.push(e), exact });
   const apiServer = serve({ fetch: api.fetch, port: apiPort, hostname: "127.0.0.1" });
   cleanups.push(() => stop(apiServer));
 
@@ -214,18 +234,22 @@ async function main() {
   };
 
   // 1. Owner: quote, deposit, wait paid, mint locked tokens, write the token file.
-  log("1. owner funds the token file");
+  const startSlot = await connection.getSlot(SOLANA_COMMITMENT);
+  section("1. owner funds the token file");
+  say("The owner deposits $1 of USDC into the vault and receives blind-signed tokens that only registered providers can redeem.");
   const depositor = new SolanaDepositor({ rpcUrl: rpc, owner, programId, usdcMint });
   const funded = await ownerFund({
     mintUrl, cents: DEPOSIT_CENTS, tokenFile, depositor, stateDir: join(dir, "owner"), pollMs: 1000, timeoutMs: 120_000,
     onProgress: (s) => log(`     step: ${s}`),
   });
   check("deposit tx recorded", funded.depositTx.length > 20, funded);
+  link("deposit", explorerTx(funded.depositTx, rpc));
   check("token file holds the deposit", walletCents() === DEPOSIT_CENTS, walletCents());
   check("vault balance rose by the deposit", (await tokenBalance(connection, vaultToken)) - vaultBefore === centsToBaseUnits(DEPOSIT_CENTS));
 
   // 2. Agent: reserve check passes, paid call succeeds.
-  log("2. agent paid call");
+  section("2. agent paid call");
+  say("The agent checks the vault's onchain balance, then pays for market data with a token. It holds no Solana key and sends no transaction.");
   const r1 = await agent(["--topic", "sol"]);
   check("agent exit 0", r1.code === 0, r1.out);
   check("reserve check ok", r1.out.reserves?.ok === true, r1.out.reserves);
@@ -234,7 +258,8 @@ async function main() {
   check("provider credited at the mint", (await providerBalance()) === PRICE);
 
   // 3. Replay of a captured PAYMENT-SIGNATURE.
-  log("3. replay");
+  section("3. replay");
+  say("Someone resends a payment that was already used. The mint sees the token is spent, so the provider refuses it and is not paid twice.");
   let header = "";
   const spy: typeof fetch = async (i, init) => {
     const h = new Request(i as Request, init).headers.get("payment-signature");
@@ -254,23 +279,27 @@ async function main() {
   check("mint balance unchanged by replay", (await providerBalance()) === 2 * PRICE);
 
   // 4. Settle for real.
-  log("4. admin settle");
+  section("4. admin settle");
+  say("The mint pays the provider everything it is owed in one batched USDC transfer from the vault.");
   const payoutBefore = await tokenBalance(connection, payoutAta);
   const s = await mintReq("/v1/blindfold/admin/settle", { body: {}, auth: true });
   check("settle 200 with a tx", s.status === 200 && typeof s.json.tx === "string", s);
   check("payout is the owed amount", s.json.payouts.length === 1 && s.json.payouts[0].provider_id === providerId && s.json.payouts[0].amount === 2 * PRICE, s.json.payouts);
   const paid = (await tokenBalance(connection, payoutAta)) - payoutBefore;
   check("provider payout account received base units", paid === centsToBaseUnits(2 * PRICE), paid.toString());
+  link("settle", explorerTx(s.json.tx, rpc));
 
   // 5. Reconcile.
-  log("5. reconcile");
+  section("5. reconcile");
+  say("The vault's USDC balance equals deposits minus payouts, so the books balance onchain.");
   const rec = (await mintReq("/v1/blindfold/admin/reconcile", { auth: true })).json;
   const vaultNow = await tokenBalance(connection, vaultToken);
   check("mint view: vault_balance == deposited - settled (this run's schema)", vaultBefore !== 0n || rec.vault_balance === rec.deposited - rec.settled, rec);
   check("vault delta == deposited_this_run - settled", Number((vaultNow - vaultBefore) / 10_000n) === DEPOSIT_CENTS - rec.settled, { rec, vaultBefore, vaultNow });
 
   // 6. Reserve check fails closed against a mint that reports outstanding above the vault.
-  log("6. reserve check fails closed");
+  section("6. reserve check fails closed");
+  say("A mint claims more outstanding tokens than the vault holds. The agent refuses to pay rather than trust it.");
   const proxy = new Hono();
   proxy.get("/v1/blindfold/reserves", (c) => c.json({ issued: 10_000_000, settled: 0, outstanding: 10_000_000, keyset_id: "stub", updated_at: 0 }));
   proxy.all("*", (c) => fetch(mintUrl + new URL(c.req.url).pathname, { method: c.req.method, headers: c.req.raw.headers, body: c.req.method === "GET" ? undefined : c.req.raw.body, duplex: "half" } as RequestInit));
@@ -281,6 +310,36 @@ async function main() {
   const r2 = await agent(["--topic", "sol"], `http://127.0.0.1:${proxyPort}`);
   check("agent exits 7 (reserves_failed)", r2.code === 7 && r2.out.error?.kind === "reserves_failed", r2);
   check("no proof left the wallet", walletCents() === before);
+
+  // 7. Baseline: the same purchase with the standard x402 `exact` scheme, then what a chain observer sees.
+  section("7. x402 exact baseline and the competitor bot");
+  if (!exactKeys) {
+    log("  skip  set EXACT_AGENT_KEYPAIR and EXACT_FACILITATOR_KEYPAIR to run the baseline on devnet");
+  } else {
+    say("For comparison, a standard x402 agent pays the same provider from its own wallet. Each call is a public USDC transfer.");
+    const payer = await exactPayFetch({ keypair: exactKeys.agent.secretKey, rpcUrl: rpc, usdcMint: usdcMint.toBase58() });
+    const exactBefore = await tokenBalance(connection, payoutAta);
+    const sigs: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const res = await payer.fetch(`${apiUrl}/v1/data/sol`);
+      check(`exact call ${i + 1} is 200`, res.status === 200, { status: res.status, body: await res.clone().text() });
+      const pr = paymentResponse(res);
+      check(`exact call ${i + 1} settled onchain`, !!pr?.success && !!pr.transaction, pr);
+      sigs.push(pr!.transaction!);
+      link(`exact #${i + 1}`, explorerTx(pr!.transaction!, rpc));
+    }
+    check("provider received 2 exact payments onchain", (await tokenBalance(connection, payoutAta)) - exactBefore === centsToBaseUnits(2 * PRICE));
+
+    say("The competitor bot reads only public chain data for the provider's payout account.");
+    const obs = await observeUntil(
+      { connection, account: payoutAta, usdcMint, vaultToken, sinceSlot: startSlot },
+      (o) => sigs.every((x) => o.some((y) => y.signature === x)),
+    );
+    const direct = profiles(obs);
+    check("bot sees the exact payer's wallet and both calls", direct.length === 1 && direct[0].payer === payer.address && direct[0].calls === 2, direct);
+    const payouts = obs.filter((o) => o.kind === "vault_payout");
+    check("bot sees the cashu flow only as one vault payout, no payer", payouts.length === 1 && payouts[0].signature === s.json.tx, payouts);
+  }
 
   log("\nE2E PASSED");
 }

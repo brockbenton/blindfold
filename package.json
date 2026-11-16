@@ -7,7 +7,9 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "demo": "pnpm --filter @blindfold/scripts demo",
+    "bot": "pnpm --filter @blindfold/scripts bot"
   },
   "devDependencies": {
     "@types/node": "26.6.6",
