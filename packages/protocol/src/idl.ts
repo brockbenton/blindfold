@@ -3,12 +3,12 @@
 import type { Idl } from "@anchor-lang/core";
 
 /** Default vault program id (devnet deployment). Overridable via VAULT_PROGRAM_ID. */
-export const VAULT_PROGRAM_ID = "3nVcHrZ9PC2kEPGYxvqedudeCfHXtZj1BRzwfxWqAanT";
+export const VAULT_PROGRAM_ID = "EsB6NfKVPipU5kEVm2jq14cjopbE7w9hPEFZWVu8jtMo";
 /** Kept for compatibility with earlier imports; now the real program id. */
 export const PLACEHOLDER_VAULT_PROGRAM_ID = VAULT_PROGRAM_ID;
 
 export const VAULT_IDL: Idl = {
-  "address": "3nVcHrZ9PC2kEPGYxvqedudeCfHXtZj1BRzwfxWqAanT",
+  "address": "EsB6NfKVPipU5kEVm2jq14cjopbE7w9hPEFZWVu8jtMo",
   "metadata": {
     "name": "vault",
     "version": "0.1.0",

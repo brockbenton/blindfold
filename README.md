@@ -21,7 +21,7 @@ node agents/simple/dist/main.js --fake --json
 
 Build before testing: workspace packages import each other's `dist/` outputs. Mint tests require PostgreSQL; integration tests skip when `DATABASE_URL` is unset. The `--fake` agent uses stubs and does not validate the mint or chain.
 
-The real-vault path additionally needs Rust 1.89.0, Anchor 1.2.2 and Solana tools. [Vault deployment notes](docs/design/01-vault.md#10-implementation-notes-and-decisions) record a devnet deployment and acceptance run on November 14, 2026. Those records do not guarantee the deployment's current availability. The configured program ID is `3nVcHrZ9PC2kEPGYxvqedudeCfHXtZj1BRzwfxWqAanT`.
+The real-vault path additionally needs Rust 1.89.0, Anchor 1.2.2 and Solana tools. [Vault deployment notes](docs/design/01-vault.md#10-implementation-notes-and-decisions) record a devnet deployment and acceptance run on November 16, 2026. Those records do not guarantee the deployment's current availability. The configured program ID is `EsB6NfKVPipU5kEVm2jq14cjopbE7w9hPEFZWVu8jtMo`.
 
 ## What works
 

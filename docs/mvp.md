@@ -14,7 +14,7 @@ The target is a paid API call backed by a real Solana vault: owner deposit, toke
 | Wallet and owner CLI | Provider-locked funding, exact-sum payments, per-call cap and pending-payment recovery |
 | Scripted agent | Provider discovery, topic selection, reserve gate and result reporting |
 
-The [vault notes](design/01-vault.md#10-implementation-notes-and-decisions) record localnet and devnet acceptance on November 14, 2026. The reproducible acceptance command is `pnpm --filter @blindfold/scripts e2e` with a deployed vault, funded devnet keys and PostgreSQL. Local tests exercise the same application components with a fake chain; they do not prove current devnet availability.
+The [vault notes](design/01-vault.md#10-implementation-notes-and-decisions) record localnet and devnet acceptance on November 16, 2026. The reproducible acceptance command is `pnpm --filter @blindfold/scripts e2e` with a deployed vault, funded devnet keys and PostgreSQL. Local tests exercise the same application components with a fake chain; they do not prove current devnet availability.
 
 Acceptance requires:
 

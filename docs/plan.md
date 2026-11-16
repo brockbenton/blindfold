@@ -11,7 +11,7 @@
 | November 20, noon CST (18:00 UTC) | Submission |
 | November 21 | Closing ceremony |
 
-The original component build is present. The [vault notes](design/01-vault.md#10-implementation-notes-and-decisions) record a November 14 devnet acceptance run. Re-run acceptance before recording; a historical pass does not establish current RPC, key or deployment availability.
+The original component build is present. The [vault notes](design/01-vault.md#10-implementation-notes-and-decisions) record a November 16 devnet acceptance run. Re-run acceptance before recording; a historical pass does not establish current RPC, key or deployment availability.
 
 ## Remaining work
 
