@@ -352,9 +352,12 @@ async function main() {
   if (dash) watcher.start();
   cleanups.push(() => watcher.stop());
   const copycat = (text: string) => console.log(`  ${bold(magenta("Copycat"))}  ${text}`);
+  // The dashboard gets a short caption per act; the terminal keeps the full title.
+  const captions = ["Ready", "Paying with standard x402", "Funding Blindfold tokens", "Paying with Blindfold", "Provider paid in one batch",
+    "What the watcher learned", "Replayed payment refused", "Dishonest mint refused", "Summary"];
   const scene = (n: number, title: string, subtitle: string) => {
     act(`${n}. ${title}`, subtitle);
-    emit({ type: "act", n, title });
+    emit({ type: "act", n, title: captions[n] });
   };
   const flow = (d: any) => d ? `whale netflow ${d.whale_netflow >= 0 ? "+" : "-"}$${Math.abs(d.whale_netflow).toLocaleString("en-US")} in 1h (${d.whale_buys} buys, ${d.whale_sells} sells)` : "";
 
@@ -375,7 +378,7 @@ async function main() {
     type: "setup", mode: localnet ? "localnet" : "devnet", topic: TOPIC, prices: { whaleFlow: PRICE, depth: DEPTH_PRICE }, exactWallet: exactAddress,
     vault: vaultToken.toBase58(), provider: cast.payoutAta.toBase58(), links: { vault: explorerAddress(programId.toBase58(), rpc) },
   });
-  emit({ type: "act", n: 0, title: "Meet the cast" });
+  emit({ type: "act", n: 0, title: captions[0] });
   void refreshBalances();
   await pause(pausing);
 
@@ -544,7 +547,7 @@ async function main() {
   const reason = apiLogs.map((l) => String(l.outcome ?? "")).reverse().find((o) => o.startsWith("rejected:")) ?? "";
   if (replay.status !== 402) fail(`replay was not refused (HTTP ${replay.status})`);
   ok(`replayed call: HTTP ${replay.status}, refused (${reason.replace("rejected:", "")}: token already spent)`);
-  emit({ type: "note", side: "blindfold", tone: "ok", text: "Replayed payment refused: the token was already spent." });
+  emit({ type: "note", side: "blindfold", tone: "ok", text: "Replayed payment refused" });
   void refreshBalances();
   say("The mint marks every token spent the moment a provider redeems it, so a copied payment buys nothing.");
   await pause(pausing);
@@ -562,13 +565,13 @@ async function main() {
   if (r2.code !== 7) fail(`agent did not refuse: ${JSON.stringify(r2.out)}`);
   ok(`agent stopped before paying: ${r2.out.error.reason} (exit code 7)`);
   ok(`tokens untouched: still ${kept} cents`);
-  emit({ type: "note", side: "blindfold", tone: "warn", text: "Mint claimed more than the vault holds: the agent paid nothing." });
+  emit({ type: "note", side: "blindfold", tone: "warn", text: "Overstated reserves refused, nothing paid" });
   say("The agent verifies the vault itself instead of trusting the mint's word. If the numbers don't add up, it pays nothing. And its tokens only pay registered providers, so a hijacked agent cannot pay an attacker.");
   await pause(pausing, "Press Enter for the summary");
 
   // Summary.
   act("Summary");
-  emit({ type: "act", n: 8, title: "Summary" });
+  emit({ type: "act", n: 8, title: captions[8] });
   say(`${red("Standard x402")}: the agent needed a funded wallet, every call became a public transfer, and Copycat turned them into "${signal.action}".`);
   say(`${green("Blindfold")}: the same research with no key and no transaction per call. Copycat saw a deposit and a batch payout: no signal. Replays were refused and the agent refused a mint that lied about reserves.`);
   blank();
