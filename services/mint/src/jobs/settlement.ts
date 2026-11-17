@@ -12,6 +12,10 @@ export interface SettlementDeps {
   syncProviders?: () => Promise<void>;
   /** How long one run waits for confirmation before leaving the batch `submitted`. */
   confirmTimeoutMs?: number;
+  /** Cents redeemed less than this many seconds ago are not paid in this run. Default 0. */
+  holdS?: number;
+  /** Each payout is rounded down to a multiple of this; the remainder stays in the balance. Default 1. */
+  unitCents?: number;
 }
 
 interface StoredPayout {
@@ -56,20 +60,30 @@ async function run(d: SettlementDeps): Promise<AdminSettleResponse> {
   const chain = (await d.vault.getConfig()).lastBatchId;
   const batchId = Number(chain) + 1;
   const row = await dbTx(d.db, async (c) => {
-    const r = await c.query<{ provider_id: number; balance: number; payout_token: string }>(
-      `select b.provider_id, b.balance, p.payout_token from provider_balances b
-         join providers p using (provider_id)
-        where b.balance > 0 and p.active
-        order by b.balance desc, b.provider_id limit ${MAX_PAYOUTS_PER_BATCH} for update of b`,
+    // Ready = balance minus cents redeemed inside the hold window, rounded down to the payout unit.
+    const unit = Math.max(1, Math.floor(d.unitCents ?? 1));
+    const r = await c.query<{ provider_id: number; amount: string; payout_token: string }>(
+      `select provider_id, amount, payout_token from (
+         select b.provider_id, p.payout_token,
+                (greatest(b.balance - coalesce((select sum(r.amount) from redemptions r
+                   where r.provider_id = b.provider_id and r.created_at > now() - make_interval(secs => $1::int)), 0)::bigint, 0) / $2::bigint) * $2::bigint as amount
+           from provider_balances b join providers p using (provider_id)
+          where b.balance > 0 and p.active
+          for update of b
+       ) x where amount > 0
+       order by amount desc, provider_id limit ${MAX_PAYOUTS_PER_BATCH}`,
+      [Math.max(0, d.holdS ?? 0), unit],
     );
     if (!r.rows.length) return null;
     const payouts: StoredPayout[] = r.rows.map((x) => ({
       provider_id: x.provider_id,
       payout_token: x.payout_token,
-      amount_cents: x.balance,
-      amount_base: (BigInt(x.balance) * BASE_UNITS_PER_CENT).toString(),
+      amount_cents: Number(x.amount),
+      amount_base: (BigInt(x.amount) * BASE_UNITS_PER_CENT).toString(),
     }));
-    await c.query("update provider_balances set balance = 0 where provider_id = any($1)", [payouts.map((p) => p.provider_id)]);
+    for (const p of payouts) {
+      await c.query("update provider_balances set balance = balance - $2 where provider_id = $1", [p.provider_id, p.amount_cents]);
+    }
     const ins = await c.query<{ id: number }>(
       "insert into settlements (batch_id, status, payouts) values ($1, 'pending', $2) returning id",
       [batchId, JSON.stringify(payouts)],

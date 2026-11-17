@@ -17,7 +17,7 @@ const DATABASE_URL = process.env.DATABASE_URL ?? `postgres://${process.env.USER 
 export type Harness = Awaited<ReturnType<typeof setupMint>>;
 
 /** A mint on a fresh Postgres schema with an in-memory vault and fake sender. */
-export async function setupMint(o: { seedByte?: number; providersFile?: AppConfig["providers"] } = {}) {
+export async function setupMint(o: { seedByte?: number; providersFile?: AppConfig["providers"]; cfg?: Partial<AppConfig> } = {}) {
   const schema = `t_${randomBytes(6).toString("hex")}`;
   const admin = new pg.Pool({ connectionString: DATABASE_URL, max: 1 });
   await admin.query(`create schema ${schema}`);
@@ -30,6 +30,7 @@ export async function setupMint(o: { seedByte?: number; providersFile?: AppConfi
     MINT_AUTHORITY_KEYPAIR: "", MINT_ADMIN_TOKEN: ADMIN, PORT: 0,
     providers: o.providersFile ?? [{ provider_id: 0, name: "mock-api", url: "http://localhost:4000", price_cents: 5, topics: ["sol", "btc"] }],
     depositPollMs: 1e9, settleIntervalS: 1e9, devFakeChain: false,
+    ...o.cfg,
   };
   const mint = await createMint({ db, cfg, vault, sender, confirmTimeoutMs: 50 });
   const { app, ctx } = mint;

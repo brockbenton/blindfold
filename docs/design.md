@@ -19,7 +19,7 @@ flowchart LR
 2. **Issue.** The owner builds secrets locked 1-of-N to all active provider keys, blinds them and obtains mint signatures. NUT-20 binds mint requests to the owner's quote key. The owner unblinds, checks DLEQ proofs and writes the tokens to the agent's file.
 3. **Pay.** The provider offers x402 v2 scheme `cashu`. The wallet checks mint, unit, asset, provider and price, selects an exact amount and persists it as pending before sending it.
 4. **Redeem.** The provider signs the proofs. The mint verifies signatures and locks, atomically marks proofs spent and credits that provider. The provider serves data only after successful redemption. This includes cryptographic verification and a database transaction; no latency bound is guaranteed.
-5. **Settle.** A timer (default 60 seconds) or admin request pays up to eight active providers per batch. Timers are relative to process startup, not globally synchronized settlement windows.
+5. **Settle.** At fixed UTC windows (default every 10 minutes), or on admin request, the mint pays up to eight active providers per batch. It pays only cents redeemed before the hold (default one window), rounded down to 10 cents, so payout time and amount do not track individual calls ([settlement privacy](design/02-mint.md#46-settlement-privacy)).
 
 ## Blind signatures and compatibility
 
@@ -56,10 +56,12 @@ The admin reconciliation endpoint reports `vault_balance`, `deposited`, `issued`
 
 | Observation or failure | Current behavior |
 |---|---|
-| Public chain | Shows depositor, amount, deposit reference and registered provider payouts; no per-call onchain payment |
+| Public chain | Shows depositor, amount, deposit reference and registered provider payouts; no per-call onchain payment. Payouts land at fixed windows after a hold, in rounded amounts |
 | Provider | Sees query and token proofs; can also observe client network metadata |
 | Mint | Sees deposits, issuance amounts, provider redemptions and timing; blinding hides the direct issuance-to-proof link |
-| Small population or distinctive amounts | Can make correlation easy; privacy is not guaranteed |
+| One depositor in a window | Its deposit and the next payout are linked: the owner paid that provider, though not for which token or calls |
+| Several equal depositors, one payout | No single depositor can be attributed from amounts; Copycat's `attributeVault` reports `CANNOT ATTRIBUTE` |
+| Distinctive amounts, shared funding, repeated timing | Can attribute or link depositors: odd amounts fingerprint, a deposit too small for a payout is ruled out, a common funding wallet links owners; privacy is not guaranteed |
 | Leaked tokens | Anyone holding them can submit payments to allowed providers; locks prevent arbitrary-recipient redemption, not budget theft through allowed services |
 | Double spend | Online redemption and a unique spent-proof key prevent double credit |
 | Lost redemption response | Provider may be paid without serving data; wallet uses checkstate to drop spent proofs or recover unspent ones |
@@ -69,14 +71,14 @@ The current provider does not log client IPs, token headers or secrets. Omitting
 
 ## Baseline comparison
 
-The mock API can also accept the standard x402 `exact` scheme on the same routes, and Copycat (`scripts/bot.ts`, `scripts/lib/copycat.ts`) observes the chain like a front-running competitor would. With `exact`, every call is a USDC transfer from the agent's wallet to the provider, so the observer learns the payer, the provider, each amount and each time, plus the token when the seller tags payments with a memo. Copycat turns repeated research on one token into a signal such as `BUY SOL`. With `cashu`, it sees owner deposits into the vault and batched vault payouts, with no agent wallet and no per-call transaction. `pnpm demo` runs both flows side by side ([demo](DEMO.md)).
+The mock API can also accept the standard x402 `exact` scheme on the same routes, and Copycat (`scripts/bot.ts`, `scripts/lib/copycat.ts`) observes the chain like a front-running competitor would. With `exact`, every call is a USDC transfer from the agent's wallet to the provider, so the observer learns the payer, the provider, each amount and each time, plus the token when the seller tags payments with a memo. Copycat turns repeated research on one token into a signal such as `BUY SOL`. With `cashu`, it sees owner deposits into the vault and batched vault payouts, at fixed windows in rounded amounts, with no agent wallet and no per-call transaction; the demo registers a second feed so one batch pays more than one provider. `attributeVault` then asks whether a payout can be pinned on a depositor (`LINKED` with one, `PARTIAL` when amounts force one in, `CANNOT ATTRIBUTE` otherwise). `pnpm demo` runs both flows side by side with one agent, and `pnpm crowd` with several ([demo](DEMO.md)).
 
 ## Planned work
 
 See [MVP and add-ons](mvp.md#add-ons) for priority. These are design options, not current features:
 
-- QuickNode Streams to trigger deposit polling; the mint currently polls without a webhook.
-- Owner approval through a second, co-signed reserve pocket. Current locks accept only 1-of-N and reject refund/time-lock tags; this requires protocol changes.
+- QuickNode Stream events as a trigger for deposit polling. The Stream feeds Copycat today; the mint polls without a webhook.
+- Protocol-level owner approval through a second, co-signed reserve pocket. The wallet already asks the owner above a threshold ([agent](design/05-agent.md#owner-approval)), but that runs in agent code. Current locks accept only 1-of-N and reject refund/time-lock tags; this requires protocol changes.
 - Temporal for durable top-ups. Workflow randomness and signing would run in activities; existing persisted funding checkpoints still have recovery limits.
 - Onchain issuance logging and an external reconciliation view.
-- Hidden provider revenue through fresh payout accounts or chunked withdrawals. This would require changing the current fixed payout registry and reassessing the trust model; current provider revenue remains public.
+- Hiding which provider was paid, through fresh payout accounts. An onchain check of the provider's approval reveals the provider; no check lets the mint pay anyone. Settlement already decouples payout timing and amounts from calls; which providers earned remains public.
