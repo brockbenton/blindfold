@@ -1,8 +1,8 @@
-# 05: Scripted agent
+# 05: Agent
 
-`agents/simple/` discovers a provider, checks reserves, pays through the wallet and reports the result. It is a deterministic script, not an LLM loop. [Interfaces](00-interfaces.md) · [Runbook](../RUNNING.md#5-agent).
+`agents/simple/` has two decision loops over the same tools and wallet. The scripted loop discovers a provider, checks reserves, pays and reports. The LLM loop (`--llm`) lets a model choose which data to buy and decide BUY, SELL or HOLD, while code enforces the limits. [Interfaces](00-interfaces.md) · [Runbook](../RUNNING.md#5-agent).
 
-## Decision loop
+## Scripted decision loop
 
 `runScripted`:
 
@@ -13,6 +13,40 @@
 5. Pay sequentially for `--calls` requests through `wallet.payFetch`, collect results and report balance changes.
 
 The reserve check validates the vault-owned `Config`, configured mint and expected vault account, reads the token balance over Solana RPC, rounds it down to whole cents, then compares it with the mint's reported outstanding liabilities. Missing accounts, mismatches, underfunding, invalid responses and RPC/mint errors return a failed check. Mint-reported issuance is still trusted; a dishonest mint can understate liabilities. The RPC and mint reads are not an atomic snapshot.
+
+## LLM decision loop
+
+`runLlm` (`src/llm.ts`) talks to any OpenAI-compatible chat completions endpoint with plain `fetch`. The default is Gemini's (`gemini-3.5-flash-lite`, falling back to `gemini-flash-latest` when a model is overloaded). The model sees four tools:
+
+| Tool | What the model gets |
+|---|---|
+| `list_providers` | Name, base URL, price and topics of active providers (no keys) |
+| `get_balance` | Remaining tokens in cents |
+| `buy_data(url)` | The paid response, or `{refused: reason}` when a limit or the wallet says no |
+| `final_answer(decision, rationale)` | Ends the run |
+
+Each turn:
+
+1. Send the conversation and tools to the model. A reply without tool calls ends the run; BUY, SELL or HOLD is read from the text, defaulting to HOLD.
+2. For `buy_data`, code runs these checks in order before any payment:
+   - **Budget:** refuse with `budget_exhausted` once the session has spent `--budget` cents (default 30). One purchase can cross the line by at most the per-call cap.
+   - **Reserve gate:** before the first paid call and every `RESERVE_CHECK_EVERY` paid calls, check reserves. A failure ends the run with exit 7 before paying. The model cannot skip this; it is not a tool.
+   - **Wallet policy:** the wallet pays only providers in the token lock's signer set (or `WALLET_ALLOWLIST`), only the configured asset and mint, only exact amounts up to `--max-per-call`.
+3. Return the result to the model as a tool message. Refusals and HTTP errors are results, not crashes, so a refused hijack attempt costs nothing and the run continues.
+4. Stop after `final_answer`, or with HOLD after 10 model turns.
+
+Provider responses are untrusted input and go to the model unchanged; this is where a prompt injection arrives. The limits above do not depend on the model following instructions. `pnpm demo` Act 6 poisons a feed response with an injection that points the agent at an attacker's server ([demo](../DEMO.md)).
+
+| Flag | Environment | Default |
+|---|---|---|
+| `--llm` | — | Off (scripted loop) |
+| `--goal` | — | `Decide whether to buy <TOPIC> in the next hour.` |
+| `--budget` | — | 30 cents |
+| — | `LLM_API_KEY` | Required with `--llm` |
+| — | `LLM_BASE_URL` | Gemini's OpenAI-compatible endpoint |
+| — | `LLM_MODEL` | `gemini-3.5-flash-lite,gemini-flash-latest` (comma-separated fallbacks) |
+
+Rate limits (429) and server errors are retried up to three times. With `--json`, the result has `mode: "llm"`, `decision`, `rationale`, `steps` (tool, arguments, outcome, paid cents, refusal reason) and the balance fields.
 
 ## CLI
 
@@ -38,7 +72,7 @@ node agents/simple/dist/main.js --topic sol --calls 3 --json
 | — | `SOLANA_RPC_URL`, `VAULT_PROGRAM_ID`, `USDC_MINT` | Explicitly required outside fake mode |
 | — | `WALLET_ALLOWLIST` | Passed to wallet; otherwise union of token signer sets |
 
-Flags override their corresponding environment values. The agent requires explicit chain settings even though the shared loader has defaults. It does not accept `--mode llm` or a flag that bypasses reserves for a fake-chain mint.
+Flags override their corresponding environment values. The agent requires explicit chain settings even though the shared loader has defaults. There is no flag that bypasses reserves for a fake-chain mint. LLM-mode flags are listed above.
 
 ## Tools and output
 
@@ -65,7 +99,7 @@ Human output reports provider, topic, calls, balance and reserves. `--json` emit
 
 The agent holds tokens, not Solana keys or provider signing keys. It never needs `MINT_ADMIN_TOKEN`. The token lock restricts redemption to registered keys in its signer set; the wallet additionally enforces provider policy, asset/mint checks, exact amount and a per-call cap. These controls do not stop an agent wasting its entire budget at allowed providers, and leaked tokens can still buy services there.
 
-The reserve gate is enforced by `runScripted`, not by each individual tool. A future LLM loop must enforce it around paid-tool dispatch in code. Exposing `check_reserves` to a model alone would not enforce the gate.
+The reserve gate is enforced by `runScripted` and `runLlm` around paid calls, not by each individual tool, and the LLM loop does not expose `check_reserves` to the model. The LLM loop adds a session budget and a step limit in code. A model fooled by a prompt injection can waste its budget at registered providers, but cannot pay anyone else and holds no key to leak.
 
 ## Fake mode and tests
 
@@ -80,4 +114,4 @@ The reserve gate is enforced by `runScripted`, not by each individual tool. A fu
 
 `scripted.test.ts` covers decisions, gate cadence, refusals and exit reporting. `e2e-local.test.ts` uses wallet/provider/mint fakes. `tests/integration/test/real-mint.test.ts` uses the actual mint and mock API with PostgreSQL and an injected fake chain. The separate real-vault acceptance script validates onchain reserve and settlement behavior; [historical deployment notes](01-vault.md#10-implementation-notes-and-decisions) record a November 16, 2026 pass.
 
-LLM tool use, a complete injection demo and owner approval remain planned work. The `exact` baseline client and Copycat, the competitor bot, live in `scripts/` ([demo](../DEMO.md)). No model vendor, model version or LLM SDK is selected by the current implementation.
+`llm.test.ts` covers the gate before the first purchase, budget refusal, a refused hijack, the step limit and the chat client. Owner approval remains planned work. The `exact` baseline client and Copycat, the competitor bot, live in `scripts/` ([demo](../DEMO.md)). The LLM loop uses no SDK; any OpenAI-compatible endpoint works.

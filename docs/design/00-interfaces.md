@@ -508,6 +508,7 @@ docker-compose.yml     Postgres
 | `PROVIDER_SECRET_KEY` (secp256k1 hex), `PROVIDER_ID`, `PRICE_CENTS` (5), `PORT` (4000), `PUBLIC_URL` (for x402 `resource.url`) | mock API |
 | `OWNER_KEYPAIR` (path) | owner CLI |
 | `RESERVE_CHECK_EVERY` (10) | agent; checks before calls 1, 11, 21, … by default |
+| `LLM_API_KEY`, `LLM_BASE_URL` (Gemini's OpenAI-compatible endpoint), `LLM_MODEL` (`gemini-3.5-flash-lite,gemini-flash-latest`) | agent `--llm` mode ([05](05-agent.md#llm-decision-loop)); `pnpm demo` also reads `.keys/llm.key` |
 | `MINT_DEV_FAKE_CHAIN` (`1` to enable), `PROVIDERS_FILE`, `DEPOSIT_POLL_MS`, `SETTLE_INTERVAL_S` | mint; fake-chain mode is local development only |
 | `TOKEN_FILE`, `MAX_PER_CALL_CENTS` (10), `WALLET_ALLOWLIST` (comma list of provider pubkeys; default: union of the proofs' signer sets) | wallet SDK, agent |
 
