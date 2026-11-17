@@ -291,3 +291,5 @@ solana program deploy target/deploy/vault.so --program-id EsB6NfKVPipU5kEVm2jq14
 ```
 
 The CLI extends the program data account automatically (26,320 bytes more, roughly 0.19 SOL of rent) and needs about 1.7 SOL more while the buffer exists, refunded afterwards. The next mint run creates the log, paid by the mint authority. Any mint still on older code settles without the log, which overstates liabilities and makes agents refuse, so update all checkouts first.
+
+**Upgrade done, November 17, 2026.** The issuance-log build (`vault.so`, 244,976 bytes, sha256 `9b76eae6…7c0b`) was deployed in place in slot 523439535 ([tx](https://explorer.solana.com/tx/5b1Bk2sc6wFQHL5Et9jFyhC9Ti5AXggYxGDUi6vMd3PpBRVTtKiSzCPwR4WR6kBwQjt2SfkDe34sNtPrF14JyBDq?cluster=devnet)). The dumped program matches the build byte for byte, and the deployer spent 0.135 SOL. The first `pnpm serve` mint created the log at `AFxpScKmUwEnS58SSVnZ6KFwq6A7LPgbX3eRwy4HhwfZ`. A 10-cent funding then logged `issued = 100000` base units, and the agent's paid call reported `verified: true` (onchain and mint outstanding both 10 cents, vault $14.30).
