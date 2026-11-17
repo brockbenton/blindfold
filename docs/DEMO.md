@@ -23,7 +23,7 @@ Commands work in fish, bash and zsh. Run them from the repository root.
 
 ## QuickNode Streams (optional)
 
-With a QuickNode API key, Copycat gets transactions pushed by a Stream instead of polling RPC. The [README](../README.md#quicknode-streams) explains the configuration. The free trial plan is enough.
+With a QuickNode API key, Copycat gets transactions pushed by a Stream instead of polling RPC. The [README](../README.md#quicknode-streams-configuration) explains the configuration. The free trial plan is enough.
 
 1. **API key.** In the QuickNode dashboard, open the avatar menu, then **API Keys**, and create a key with Streams access. Save it (gitignored, never commit it), then back up the file like the other keys:
    ```sh
