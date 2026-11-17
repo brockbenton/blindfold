@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
 import { USDC_DEVNET_MINT, SOLANA_DEVNET_CAIP2, centsToBaseUnits } from "@blindfold/protocol";
-import { depthData, marketData, signalsData } from "./data/marketData.js";
+import { mockMarketSource, type MarketSource } from "./data/liveMarket.js";
 import { BlindfoldFacilitator, type Logger } from "./x402/blindfoldFacilitator.js";
 import { CashuServerScheme } from "./x402/cashuServerScheme.js";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
@@ -24,6 +24,9 @@ export interface AppOptions {
   log?: Logger;
   /** Replaces the paid data handler (runs only after settle). For demos such as a poisoned response. */
   dataHandler?: (c: Context, topic: string) => Response | Promise<Response>;
+  /** Where the feed's numbers come from. Default: the deterministic mock, so tests stay offline. `index.ts` and the
+   * demo pass `marketSourceFromEnv()`: live Coinbase data unless `MARKET_DATA=mock`. */
+  market?: MarketSource;
   /** Baseline (00 section 7.1): also accept the standard x402 `exact` scheme on the paid routes (public onchain transfer). */
   exact?: ExactOptions;
 }
@@ -38,6 +41,7 @@ export function createApp(o: AppOptions) {
   const depthPrice = o.depthPriceCents ?? 10;
   const signalsPrice = o.signalsPriceCents ?? 25;
   const asset = o.usdcMint ?? USDC_DEVNET_MINT;
+  const market = o.market ?? mockMarketSource();
   const log = o.log ?? ((e: Record<string, unknown>) => console.log(JSON.stringify(e)));
   const facilitator = new BlindfoldFacilitator({
     mintUrl: o.mintUrl, providerSecretKey: o.providerSecretKey, redeem: o.redeem, keysets: o.keysets,
@@ -86,13 +90,13 @@ export function createApp(o: AppOptions) {
     "GET /v1/data/:topic/depth": route(depthPrice, DEPTH),
     "GET /v1/data/:topic/signals": route(signalsPrice, SIGNALS),
   } as never, resourceServer));
-  app.get("/v1/data/:topic/depth", (c) => c.json(depthData(c.req.param("topic"))));
-  app.get("/v1/data/:topic/signals", (c) => c.json(signalsData(c.req.param("topic"))));
-  app.get("/v1/data/:topic", (c) => {
+  app.get("/v1/data/:topic/depth", async (c) => c.json(await market.depth(c.req.param("topic"))));
+  app.get("/v1/data/:topic/signals", async (c) => c.json(await market.signals(c.req.param("topic"))));
+  app.get("/v1/data/:topic", async (c) => {
     const topic = c.req.param("topic");
-    return o.dataHandler ? o.dataHandler(c, topic) : c.json(marketData(topic));
+    return o.dataHandler ? o.dataHandler(c, topic) : c.json(await market.whaleFlow(topic));
   });
-  return Object.assign(app, { providerPubkey: pubkey, facilitator });
+  return Object.assign(app, { providerPubkey: pubkey, facilitator, market });
 }
 
 /** A fetch handler that presents requests under PUBLIC_URL, so x402 `resource.url` is the public one. */

@@ -102,7 +102,7 @@ flowchart LR
 | **Mint** | [`services/mint`](services/mint) | Cashu-style mint (HTTP + PostgreSQL). Confirms deposits, issues blind signatures, verifies provider signatures, rejects double spends, tracks balances and settles batches. |
 | **Wallet SDK + owner CLI** | [`packages/wallet`](packages/wallet) | x402 `blindfold` client scheme. Funds provider-locked tokens, pays exact amounts, enforces caps and allowlists, runs the owner-approval hook and reconciles pending payments. |
 | **Protocol** | [`packages/protocol`](packages/protocol) | Shared constants, environment loading, vault IDL and wire types. |
-| **Provider** | [`apps/mock-api`](apps/mock-api) | Example data feed (whale flow, order-book depth, premium signals). Serves x402 `blindfold`, and optionally standard `exact` as a baseline. |
+| **Provider** | [`apps/mock-api`](apps/mock-api) | Example data feed (whale flow, order-book depth, premium signals) built from live Coinbase market data, with a deterministic fallback. Serves x402 `blindfold`, and optionally standard `exact` as a baseline. |
 | **Agent** | [`agents/simple`](agents/simple) | Scripted or LLM-driven trading-research agent. See [Agent decision loop](#agent-decision-loop-and-safety-limits). |
 | **Copycat, demo and dashboard** | [`scripts`](scripts) | Adversary bot that reads only public Solana data, plus the narrated devnet demo, a live dashboard and the multi-owner crowd simulation. |
 | **Tests** | [`tests/integration`](tests/integration), `*/test` | Unit tests, a PostgreSQL integration suite and the LiteSVM program tests. |

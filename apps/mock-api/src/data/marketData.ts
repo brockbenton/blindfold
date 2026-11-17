@@ -9,7 +9,8 @@ export interface MarketData {
   volume_24h: number;
   /** Net USD bought by whale wallets over `window` (negative: net selling). */
   whale_netflow: number;
-  window: "1h";
+  /** `1h` for the mock; the live feed says `recent` and gives the span in `trades_window_s`. */
+  window: "1h" | "recent";
   whale_buys: number;
   whale_sells: number;
   largest_trade_usd: number;
