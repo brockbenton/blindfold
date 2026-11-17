@@ -135,6 +135,7 @@
     <span>agent tokens<b id="b-tokens">-</b></span>
     <span>feed earned<b id="b-provider">-</b></span>
     <span>vault<b id="b-vault">-</b></span>
+    <span>watcher reads<b id="b-source">RPC polling</b></span>
   </footer>
 </div>
 
@@ -219,6 +220,7 @@ const handlers = {
     $("b-provider").textContent = usd(BigInt(e.providerDirectBase) + BigInt(e.providerSettledBase) + BigInt(e.providerOwedCents) * 10000n);
     $("b-vault").textContent = usd(e.vaultBase);
   },
+  source(e) { $("b-source").textContent = e.text; },
   note(e) { sideEl(e.side).querySelector(".notes").insertAdjacentHTML("beforeend", '<div class="note">' + esc(e.text) + "</div>"); },
   done(e) { $("act").textContent = e.ok ? "Done" : "Stopped"; },
 };

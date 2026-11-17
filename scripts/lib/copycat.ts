@@ -85,7 +85,9 @@ export function describe(o: Observation): string {
  */
 export class ChainWatcher {
   readonly observations: Observation[] = [];
+  /** `account:signature` pairs already fetched (or skipped), and those reported as observations. */
   private readonly seen = new Set<string>();
+  private readonly reported = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
   private scanning: Promise<void> | null = null;
 
@@ -95,6 +97,7 @@ export class ChainWatcher {
   }) {}
 
   start(): this {
+    if (this.timer) return this;
     const tick = () => {
       this.scan().catch((e) => this.o.onError?.(e)).finally(() => {
         if (this.timer) this.timer = setTimeout(tick, this.o.intervalMs ?? 4000);
@@ -125,14 +128,27 @@ export class ChainWatcher {
         if (s.err || (this.o.sinceSlot !== undefined && s.slot < this.o.sinceSlot)) { this.seen.add(key); continue; }
         const tx = await getParsed(this.o.connection, s.signature);
         if (!tx) continue; // not visible yet at this commitment; retried next pass
+        if (this.seen.has(key)) continue; // delivered by a Stream while this fetch was in flight
         this.seen.add(key);
         const ob = toObservation(tx, s, account, this.o.usdcMint, this.o.vaultToken);
-        if (!ob) continue;
-        this.observations.push(ob);
-        this.observations.sort((a, b) => a.slot - b.slot);
-        this.o.onObservation?.(ob);
+        if (ob) this.ingest(account.toBase58(), { ...ob, via: "rpc" });
       }
     }
+  }
+
+  /**
+   * Adds an observation of USDC arriving at `account` unless that transaction was already reported for it. RPC
+   * polls and Stream deliveries share this, so each transaction is reported once whichever source sees it first.
+   */
+  ingest(account: string, ob: Observation): boolean {
+    const key = `${account}:${ob.signature}`;
+    if (this.reported.has(key)) return false;
+    this.reported.add(key);
+    this.seen.add(key);
+    this.observations.push(ob);
+    this.observations.sort((a, b) => a.slot - b.slot);
+    this.o.onObservation?.(ob);
+    return true;
   }
 
   /** Scans until `want` holds or the timeout passes (RPC history lags confirmation by a few seconds). */
