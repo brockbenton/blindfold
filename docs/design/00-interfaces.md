@@ -133,6 +133,7 @@ Anchor 1.x. **Configured classic SPL mint; the intended deployment uses six-deci
 | Vault token account | ATA of (`Config` PDA, `usdc_mint`) | Holds all deposited USDC. Authority is the `Config` PDA |
 | `DepositRecord` | `["deposit", index.to_le_bytes()]` (u64) | `index: u64`, `depositor: Pubkey`, `amount: u64` (base units), `deposit_ref: [u8; 32]`, `slot: u64`, `timestamp: i64`, `bump: u8` |
 | `ProviderRecord` | `["provider", provider_id.to_le_bytes()]` (u32) | `provider_id: u32`, `cashu_pubkey: [u8; 33]`, `payout_token: Pubkey`, `active: bool`, `bump: u8` |
+| `IssuanceLog` | `["issuance"]` | `issued: u64`, `settled: u64` (cumulative base units), `seq: u64`, `updated_slot: u64`, `updated_at: i64`, `bump: u8`. Added after the first devnet deployment as a separate account, so `Config` and existing accounts keep their layout |
 
 No reserved padding: on devnet we redeploy instead of migrating. `deposit_count`, `provider_count` and `last_batch_id` start at 0. The first deposit has index 0, the first provider id 0, the first batch id 1.
 
@@ -150,7 +151,9 @@ pub struct Payout { pub provider_id: u32, pub amount: u64 } // amount in base un
 | `deposit` | `amount: u64, deposit_ref: [u8; 32]` | depositor | `depositor` (signer, mut), `config` (mut), `deposit_record` (init, seed = current `deposit_count`), `depositor_token` (mut), `vault_token` (mut), `usdc_mint`, `token_program`, `system_program` | `amount > 0`, `amount % 10_000 == 0`, `amount <= max_deposit`. Transfers USDC to the vault, writes `DepositRecord`, increments `deposit_count`, emits `DepositMade` |
 | `register_provider` | `cashu_pubkey: [u8; 33], payout_token: Pubkey` | admin | `admin` (signer, mut), `config` (mut), `provider_record` (init, seed = current `provider_count`), `payout_token_account` (must equal `payout_token`, mint = `config.usdc_mint`), `system_program` | `cashu_pubkey[0]` is `0x02` or `0x03`. Writes `ProviderRecord` with `active = true`, increments `provider_count`, emits `ProviderRegistered` |
 | `deactivate_provider` | `provider_id: u32` | admin | `admin` (signer), `config`, `provider_record` (mut, PDA for `provider_id`) | Sets `active = false`, emits `ProviderDeactivated`. One way: no reactivation in the MVP (register a new record instead, after deactivation; the old balance is not migrated) |
-| `settle_batch` | `batch_id: u64, payouts: Vec<Payout>` | mint authority | `mint_authority` (signer), `config` (mut), `vault_token` (mut), `usdc_mint`, `token_program`; then `remaining_accounts` as pairs `[provider_record, payout_token (mut)]`, one pair per payout, same order | `vault_token == config.vault_token`; `batch_id == last_batch_id + 1`; `1 <= payouts.len() <= 8`; no `provider_id` twice; each `amount > 0` and `amount % 10_000 == 0`; each `provider_record` is the PDA for `provider_id`, is active, and its `payout_token` equals the passed account. Transfers each amount, sets `last_batch_id = batch_id`, emits `BatchSettled` |
+| `settle_batch` | `batch_id: u64, payouts: Vec<Payout>` | mint authority | `mint_authority` (signer), `config` (mut), `vault_token` (mut), `usdc_mint`, `token_program`; then `remaining_accounts` as pairs `[provider_record, payout_token (mut)]`, one pair per payout, same order, optionally followed by `issuance_log` (mut) | `vault_token == config.vault_token`; `batch_id == last_batch_id + 1`; `1 <= payouts.len() <= 8`; no `provider_id` twice; each `amount > 0` and `amount % 10_000 == 0`; each `provider_record` is the PDA for `provider_id`, is active, and its `payout_token` equals the passed account. Transfers each amount, sets `last_batch_id = batch_id`, emits `BatchSettled`. With the trailing `issuance_log` (must be the `["issuance"]` PDA, program-owned, writable, else `IssuanceLogMismatch`), adds the batch total to its `settled` |
+| `init_issuance_log` | `issued: u64, settled: u64` | mint authority | `mint_authority` (signer, mut, pays rent), `config` (`has_one = mint_authority`), `issuance_log` (init, `["issuance"]`), `system_program` | Both whole cents, `issued >= settled` (`IssuanceBelowSettled`). Creates the log with `seq = 0`, emits `IssuanceLogged`. One time only. `settled` is a baseline for batches paid before the log existed, checkable against past `BatchSettled` events |
+| `log_issuance` | `add: u64` | mint authority | `mint_authority` (signer), `config` (`has_one = mint_authority`), `issuance_log` (mut) | Whole cents. `issued += add` (an atomic add: mints sharing the vault cannot overwrite each other; `MathOverflow` on overflow); the result must be `>= settled` (`IssuanceBelowSettled`). Increments `seq`, records slot and time, emits `IssuanceLogged` |
 
 The `batch_id` check prevents duplicate payouts: a retried batch fails with `BadBatchId` instead of paying twice.
 
@@ -168,10 +171,11 @@ Emitted with `emit!`. The mint does **not** rely on events (section 6). Copycat'
 | `ProviderRegistered` | `provider_id: u32, cashu_pubkey: [u8; 33], payout_token: Pubkey` |
 | `ProviderDeactivated` | `provider_id: u32` |
 | `BatchSettled` | `batch_id: u64, total: u64, count: u8` |
+| `IssuanceLogged` | `issued: u64, settled: u64, seq: u64` |
 
 ### 4.5 Errors
 
-`InvalidAmount`, `AmountNotWholeCents`, `DepositTooLarge`, `InvalidPubkey`, `WrongMint`, `WrongVaultAccount`, `Unauthorized`, `BadBatchId`, `TooManyPayouts`, `EmptyBatch`, `DuplicateProvider`, `ProviderMismatch`, `ProviderInactive`, `PayoutAccountMismatch`, `MathOverflow`.
+`InvalidAmount`, `AmountNotWholeCents`, `DepositTooLarge`, `InvalidPubkey`, `WrongMint`, `WrongVaultAccount`, `Unauthorized`, `BadBatchId`, `TooManyPayouts`, `EmptyBatch`, `DuplicateProvider`, `ProviderMismatch`, `ProviderInactive`, `PayoutAccountMismatch`, `MathOverflow`, `IssuanceBelowSettled`, `IssuanceLogMismatch` (codes 6000 + index; new errors are only appended).
 
 The mint requires provider pubkeys to be unique among active records. A deactivated key may be re-registered under a new provider ID, but old balances remain attached to the old ID. `settle_batch` returns `ProviderInactive` for a deactivated provider. The mint stops crediting a deactivated provider (§5.6 check 6) and pays out its remaining balance before the admin deactivates it, or forfeits it (MVP: admin's call).
 
@@ -278,7 +282,7 @@ A registered provider missing from the file is listed with `name: null, url: nul
 
 All cents. `outstanding = issued - settled`: tokens not yet redeemed plus redeemed-but-unpaid provider balances, i.e. everything the vault still owes. The agent compares it with the vault balance it reads **itself** from the chain (§7.6).
 
-Trust limit: `issued` is mint-reported until the issuance-log add-on puts it onchain. The check catches a vault that was drained or underfunded; it does not catch a mint that under-reports issuance.
+Trust limit: these numbers are the mint's report. Once the vault has an `IssuanceLog` (§4.1), the agent also reads `issued - settled` from it and uses the larger of the two (§7.6). Without a log, the check catches a vault that was drained or underfunded; it does not catch a mint that under-reports issuance.
 
 ### 5.6 Redeem [BF]
 
@@ -315,6 +319,8 @@ Header `Authorization: Bearer <MINT_ADMIN_TOKEN>`. `401 {"detail":"unauthorized"
 |---|---|
 | `GET /v1/blindfold/admin/balances` | `[{ "provider_id": 0, "balance": 15 }]` (cents, unsettled; positive balances only) |
 | `POST /v1/blindfold/admin/settle` | Runs one settlement now under the same hold and unit policy as the timer (at most 8 providers, largest payable amounts first; the rest wait for the next run). `{ "batch_id": 1, "payouts": [{ "provider_id": 0, "amount": 15 }], "tx": "<signature>" }` or `{ "batch_id": null }` if nothing is payable yet |
+| `POST /v1/blindfold/admin/poll-deposits` | Polls deposits now (§6) and returns `{ "processed": n }`. A hint, e.g. from a QuickNode Stream `DepositMade`; joins a poll already in flight. Credits only from `DepositRecord` accounts |
+| `POST /v1/blindfold/admin/log-issuance` | Publishes cumulative issuance to the `IssuanceLog` now. `{ "result": "initialized" \| "logged" \| "unchanged" \| "deferred" \| "pending" \| "unsupported" }` (`deferred`: a batch is in flight, so the log is not created or joined yet; `pending`: a sent transaction is not confirmed yet; `unsupported`: the program predates the log) |
 | `GET /v1/blindfold/admin/reconcile` | `{ "vault_balance": c, "deposited": c, "issued": c, "redeemed": c, "settled": c }` (all cents). Lets tests check `vault_balance == deposited - settled` |
 
 Settlement can also return HTTP 409 (`70010`: another run holds the lock; `70011`: a batch is still in flight) or HTTP 502 (`70012`: a batch failed and balances were restored). Retry according to batch state, not as a new payment. Reconciliation is a diagnostic read, not an atomic snapshot across chain and database.
@@ -330,7 +336,7 @@ Every `DEPOSIT_POLL_MS`, at `confirmed` commitment:
 3. In one DB transaction per record: insert the deposit (unique on `index`), find the quote whose `request == deposit_ref`, add `amount / 10_000` to its `amount_paid`, bump `updated_at`, advance the cursor.
 4. A deposit with no matching quote is stored as unmatched. (Refunds are deferred.)
 
-The QuickNode Stream feeds Copycat only. A Stream event could later trigger this same poll immediately; it would never credit a deposit by itself, because the mint credits only from vault-owned account state.
+A QuickNode Stream `DepositMade` event triggers this same poll immediately through `POST /v1/blindfold/admin/poll-deposits` (§5.7). It never credits a deposit by itself, because the mint credits only from vault-owned account state; a forged event causes at most an extra poll.
 
 ## 7. Payment handshake: x402 v2, scheme `blindfold`
 
@@ -444,10 +450,13 @@ Fake, deterministic per topic. `GET /health` is free.
 Before its first paid call in a session, and again every `RESERVE_CHECK_EVERY` paid calls (default 10), the agent:
 
 1. Reads the vault token account (`vaultAta`, §4.1) balance from Solana RPC itself (`getTokenAccountBalance`, `confirmed`), and the `Config` account to confirm it is owned by the vault program and `usdc_mint` matches `USDC_MINT`.
-2. Fetches `GET /v1/blindfold/reserves` (§5.5a).
-3. Proceeds only if `floor(vault_balance / 10_000) >= outstanding` (count only whole cents; direct transfers may add sub-cent dust). Otherwise, or if RPC or the mint is unreachable, it refuses to pay (**fail closed**) and reports why.
+2. Reads the `IssuanceLog` PDA if it exists (owner must be the vault program; `settled > issued` fails). Onchain liabilities = `floor((issued - settled) / 10_000)` cents.
+3. Fetches `GET /v1/blindfold/reserves` (§5.5a).
+4. Uses `outstanding = max(onchain, reported)`: a mint may have issued tokens it has not logged yet. Proceeds only if `floor(vault_balance / 10_000) >= outstanding` (count only whole cents; direct transfers may add sub-cent dust).
 
-The agent reads the asset balance independently, but liabilities remain mint-reported. This check can detect underfunding relative to that report; it cannot prove the mint disclosed all issuance.
+The result carries `verified: true` when the log was read. Failure modes are **fail closed**: an RPC error, a bad or foreign log, or, when there is no log, a mint error. With a log, a mint error is reported in `note` and the check proceeds on the onchain number alone. Without a log, `note` says the liabilities are unverified.
+
+What the log proves: the mint's liability claim is public, timestamped and can only grow, so the mint cannot show the agent a smaller number than it published. What it doesn't prove: a mint can still issue tokens it never logs. That claim is now auditable, not impossible.
 
 ## 8. Shared TypeScript package: `packages/protocol`
 

@@ -29,7 +29,7 @@ import {
 import { createMint, getOrCreateAssociatedTokenAccount, mintTo, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import {
   DEFAULT_VAULT_PROGRAM_ID, MAX_DEPOSIT_CENTS, SOLANA_COMMITMENT, USDC_DEVNET_MINT, buildInitializeIx,
-  buildDeactivateProviderIx, buildRegisterProviderIx, centsToBaseUnits, configPda, decodeConfig, vaultAta,
+  buildDeactivateProviderIx, buildRegisterProviderIx, centsToBaseUnits, configPda, decodeConfig, decodeIssuanceLog, issuancePda, vaultAta,
 } from "@blindfold/protocol";
 import { AgentWallet, SolanaDepositor, ownerFund } from "@blindfold/wallet";
 import { createApp } from "../apps/mock-api/src/app.js";
@@ -247,12 +247,28 @@ async function main() {
   check("token file holds the deposit", walletCents() === DEPOSIT_CENTS, walletCents());
   check("vault balance rose by the deposit", (await tokenBalance(connection, vaultToken)) - vaultBefore === centsToBaseUnits(DEPOSIT_CENTS));
 
+  // 1b. The mint publishes its issuance to the vault's onchain log (a program without the instructions answers
+  // "unsupported": the deployed devnet program before its upgrade).
+  const readLog = async () => {
+    const info = await connection.getAccountInfo(issuancePda(programId), SOLANA_COMMITMENT);
+    return info ? decodeIssuanceLog(info.data) : null;
+  };
+  const logged = (await mintReq("/v1/blindfold/admin/log-issuance", { body: {}, auth: true })).json.result as string;
+  const withLog = logged !== "unsupported";
+  if (!withLog) log("  skip  the vault program has no issuance log instructions; agents use the mint's report");
+  else {
+    const l = await readLog();
+    check("issuance log covers this run's tokens", !!l && l.issued - l.settled >= centsToBaseUnits(DEPOSIT_CENTS), { logged, l });
+    if (l) link("issuance log", explorerTx((await connection.getSignaturesForAddress(issuancePda(programId), { limit: 1 }))[0]?.signature ?? "", rpc));
+  }
+
   // 2. Agent: reserve check passes, paid call succeeds.
   section("2. agent paid call");
   say("The agent checks the vault's onchain balance, then pays for market data with a token. It holds no Solana key and sends no transaction.");
   const r1 = await agent(["--topic", "sol"]);
   check("agent exit 0", r1.code === 0, r1.out);
   check("reserve check ok", r1.out.reserves?.ok === true, r1.out.reserves);
+  if (withLog) check("liabilities verified against the onchain issuance log", r1.out.reserves?.verified === true, r1.out.reserves);
   check("status 200 with a redemption id", r1.out.calls[0].status === 200 && !!r1.out.calls[0].redemptionId, r1.out.calls[0]);
   check("balance dropped by the price", walletCents() === DEPOSIT_CENTS - PRICE);
   check("provider credited at the mint", (await providerBalance()) === PRICE);
@@ -282,12 +298,17 @@ async function main() {
   section("4. admin settle");
   say("The mint pays the provider everything it is owed in one batched USDC transfer from the vault.");
   const payoutBefore = await tokenBalance(connection, payoutAta);
+  const logBefore = withLog ? await readLog() : null;
   const s = await mintReq("/v1/blindfold/admin/settle", { body: {}, auth: true });
   check("settle 200 with a tx", s.status === 200 && typeof s.json.tx === "string", s);
   check("payout is the owed amount", s.json.payouts.length === 1 && s.json.payouts[0].provider_id === providerId && s.json.payouts[0].amount === 2 * PRICE, s.json.payouts);
   const paid = (await tokenBalance(connection, payoutAta)) - payoutBefore;
   check("provider payout account received base units", paid === centsToBaseUnits(2 * PRICE), paid.toString());
   link("settle", explorerTx(s.json.tx, rpc));
+  if (logBefore) {
+    const logAfter = await readLog();
+    check("settle_batch advanced the log's settled total", !!logAfter && logAfter.settled - logBefore.settled === centsToBaseUnits(2 * PRICE), { logBefore, logAfter });
+  }
 
   // 5. Reconcile.
   section("5. reconcile");

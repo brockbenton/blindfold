@@ -2,7 +2,7 @@
 import type { PublicKey } from "@solana/web3.js";
 import { BASE_UNITS_PER_CENT, SOLANA_COMMITMENT } from "./constants.js";
 import { baseUnitsToCents } from "./units.js";
-import { configPda, decodeConfig, vaultAta } from "./vault.js";
+import { configPda, decodeConfig, decodeIssuanceLog, issuancePda, vaultAta } from "./vault.js";
 import type { ReservesResponse } from "./types.js";
 
 /** The two Connection methods this check uses. */
@@ -14,9 +14,23 @@ export interface ReserveConnection {
 export interface ReserveCheckResult {
   ok: boolean;
   vaultCents: number;
+  /** The liabilities compared with the vault: the larger of the onchain log and the mint's report. */
   outstandingCents: number;
+  /**
+   * True when liabilities come from the vault's onchain issuance log, so they are a public claim the mint cannot
+   * retract. False (or absent, in stubs) when only the mint's own report was available.
+   */
+  verified?: boolean;
+  /** `issued - settled` from the onchain issuance log, when it exists. */
+  onchainOutstandingCents?: number;
+  /** `outstanding` from the mint's reserves endpoint, when it answered. */
+  mintOutstandingCents?: number;
+  /** Why the result is unverified, or which source was missing. */
+  note?: string;
   reason?: string;
 }
+
+const cents = (base: bigint) => baseUnitsToCents(base - (base % BASE_UNITS_PER_CENT));
 
 export async function checkReserves(opts: {
   connection: ReserveConnection;
@@ -27,7 +41,9 @@ export async function checkReserves(opts: {
 }): Promise<ReserveCheckResult> {
   let vaultCents = 0;
   let outstandingCents = 0;
-  const fail = (reason: string): ReserveCheckResult => ({ ok: false, vaultCents, outstandingCents, reason });
+  let verified = false;
+  const extra: Pick<ReserveCheckResult, "onchainOutstandingCents" | "mintOutstandingCents" | "note"> = {};
+  const fail = (reason: string): ReserveCheckResult => ({ ok: false, vaultCents, outstandingCents, verified, ...extra, reason });
   try {
     const { connection, programId, usdcMint } = opts;
     const vault = vaultAta(usdcMint, programId);
@@ -43,20 +59,49 @@ export async function checkReserves(opts: {
     const balance = BigInt(bal.value.amount);
     if (balance < 0n) return fail("vault balance must not be negative");
     // Direct transfers can include dust; count only whole cents toward liabilities.
-    vaultCents = baseUnitsToCents(balance - balance % BASE_UNITS_PER_CENT);
+    vaultCents = cents(balance);
+
+    // The mint's public issuance claim, if this vault has one. A wrong owner or garbage data fails closed.
+    const logInfo = await connection.getAccountInfo(issuancePda(programId), SOLANA_COMMITMENT);
+    if (logInfo) {
+      if (!logInfo.owner.equals(programId)) return fail("issuance log is not owned by the vault program");
+      const log = decodeIssuanceLog(logInfo.data);
+      if (log.settled > log.issued) return fail("issuance log is inconsistent: settled exceeds issued");
+      extra.onchainOutstandingCents = cents(log.issued - log.settled);
+      verified = true;
+    }
 
     const f = opts.fetch ?? fetch;
-    const res = await f(`${opts.mintUrl.replace(/\/+$/, "")}/v1/blindfold/reserves`);
-    if (!res.ok) return fail(`reserves endpoint returned HTTP ${res.status}`);
-    const body = (await res.json()) as Partial<ReservesResponse>;
-    if (typeof body.outstanding !== "number" || !Number.isSafeInteger(body.outstanding) || body.outstanding < 0) {
-      return fail("reserves response has an invalid outstanding value");
+    let mintError: string | undefined;
+    try {
+      const res = await f(`${opts.mintUrl.replace(/\/+$/, "")}/v1/blindfold/reserves`);
+      if (!res.ok) mintError = `reserves endpoint returned HTTP ${res.status}`;
+      else {
+        const body = (await res.json()) as Partial<ReservesResponse>;
+        if (typeof body.outstanding !== "number" || !Number.isSafeInteger(body.outstanding) || body.outstanding < 0) {
+          mintError = "reserves response has an invalid outstanding value";
+        } else extra.mintOutstandingCents = body.outstanding;
+      }
+    } catch (e) {
+      mintError = `reserves endpoint failed: ${(e as Error).message}`;
     }
-    outstandingCents = body.outstanding;
+    // Without the onchain log the mint's report is the only source of liabilities, so it must answer.
+    if (!verified && mintError) return fail(mintError);
+
+    const onchain = extra.onchainOutstandingCents;
+    const reported = extra.mintOutstandingCents;
+    // Use the larger claim: the mint may have issued tokens it has not logged yet.
+    outstandingCents = Math.max(onchain ?? 0, reported ?? 0);
+    if (!verified) extra.note = "unverified: no onchain issuance log, liabilities are mint-reported";
+    else if (mintError) extra.note = `liabilities from the onchain issuance log only (${mintError})`;
+    else if (reported !== undefined && onchain !== undefined && reported > onchain) {
+      extra.note = `mint reports ${reported - onchain} cents not yet logged onchain`;
+    }
+
     if (vaultCents < outstandingCents) {
       return fail(`vault holds ${vaultCents} cents but ${outstandingCents} cents are outstanding`);
     }
-    return { ok: true, vaultCents, outstandingCents };
+    return { ok: true, vaultCents, outstandingCents, verified, ...extra };
   } catch (e) {
     return fail(`reserve check failed: ${(e as Error).message}`);
   }

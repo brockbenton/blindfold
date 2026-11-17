@@ -7,6 +7,7 @@ pub const MAX_PAYOUTS_PER_BATCH: usize = 8;
 pub const CONFIG_SEED: &[u8] = b"config";
 pub const DEPOSIT_SEED: &[u8] = b"deposit";
 pub const PROVIDER_SEED: &[u8] = b"provider";
+pub const ISSUANCE_SEED: &[u8] = b"issuance";
 
 #[account]
 #[derive(InitSpace)]
@@ -43,6 +44,21 @@ pub struct ProviderRecord {
     pub cashu_pubkey: [u8; 33],
     pub payout_token: Pubkey,
     pub active: bool,
+    pub bump: u8,
+}
+
+/// The mint's public, append-only issuance claim (PDA `["issuance"]`).
+/// `issued` only grows: the mint authority adds to it with `log_issuance`. `settled` is advanced by
+/// the program itself whenever `settle_batch` is given this account. Both are cumulative base units.
+#[account]
+#[derive(InitSpace)]
+pub struct IssuanceLog {
+    pub issued: u64,
+    pub settled: u64,
+    /// Number of `log_issuance` updates since creation.
+    pub seq: u64,
+    pub updated_slot: u64,
+    pub updated_at: i64,
     pub bump: u8,
 }
 

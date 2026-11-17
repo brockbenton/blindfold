@@ -1,7 +1,7 @@
 // The Solana-backed classes against a fake Connection (no validator).
 import { BN, BorshAccountsCoder } from "@anchor-lang/core";
 import { Keypair, PublicKey, Transaction } from "@solana/web3.js";
-import { PLACEHOLDER_VAULT_PROGRAM_ID, USDC_DEVNET_MINT, VAULT_IDL, configPda, decodeInstruction, depositPda, providerPda, vaultAta } from "@blindfold/protocol";
+import { PLACEHOLDER_VAULT_PROGRAM_ID, USDC_DEVNET_MINT, VAULT_IDL, configPda, decodeInstruction, depositPda, issuancePda, providerPda, vaultAta } from "@blindfold/protocol";
 import { describe, expect, it } from "vitest";
 import { ProgramError, SolanaSettleSender, programErrorFrom } from "../src/chain/settleSender.js";
 import { SolanaVaultReader } from "../src/chain/vaultReader.js";
@@ -47,6 +47,14 @@ describe("SolanaVaultReader", () => {
     expect((await r.getProvider(0))?.active).toBe(true);
     expect(await r.getProvider(4)).toBeNull();
     expect(await r.getVaultBalanceBase()).toBe(123456n);
+    expect(await r.getIssuanceLog()).toBeNull();
+    accounts.set(issuancePda(program).toBase58(), {
+      owner: program,
+      data: await coder.encode("IssuanceLog", { issued: bn(90_000), settled: bn(10_000), seq: bn(1), updated_slot: bn(5), updated_at: bn(6), bump: 1 }),
+    });
+    expect(await r.getIssuanceLog()).toMatchObject({ issued: 90_000n, settled: 10_000n, seq: 1n });
+    accounts.set(issuancePda(program).toBase58(), { ...accounts.get(issuancePda(program).toBase58())!, owner: k() });
+    await expect(r.getIssuanceLog()).rejects.toThrow(/not owned/);
   });
 
   it.each(["mint", "vault"])("rejects Config with a mismatched %s before using its deposits", async (wrong) => {
@@ -78,6 +86,7 @@ describe("SolanaSettleSender", () => {
     let sent: Buffer | undefined;
     const conn: any = {
       getLatestBlockhash: async () => ({ blockhash: "11111111111111111111111111111111", lastValidBlockHeight: 500 }),
+      getAccountInfo: async () => null, // no issuance log yet
       sendRawTransaction: async (raw: Buffer) => { sent = raw; return "sig1"; },
       getSignatureStatuses: async () => ({ value: [{ err: null, confirmationStatus: "confirmed" }] }),
       getBlockHeight: async () => 501,
@@ -91,6 +100,13 @@ describe("SolanaSettleSender", () => {
     const dec = decodeInstruction(ix.data)!;
     expect(dec.name).toBe("settle_batch");
     expect(ix.keys.slice(5).map((m) => m.pubkey.toBase58())).toEqual([providerPda(2, program).toBase58(), payout.toBase58()]);
+    // Once the issuance log exists, the batch passes it so the program advances its settled total.
+    conn.getAccountInfo = async (pk: PublicKey) => (pk.equals(issuancePda(program)) ? { owner: program, data: Buffer.alloc(0) } : null);
+    await s.submit(5n, [{ providerId: 2, payoutToken: payout.toBase58(), amountBase: 150_000n }]);
+    const withLog = Transaction.from(sent!).instructions[0];
+    expect(withLog.keys.slice(5).map((m) => m.pubkey.toBase58())).toEqual([providerPda(2, program).toBase58(), payout.toBase58(), issuancePda(program).toBase58()]);
+    expect(withLog.keys[7].isWritable).toBe(true);
+    conn.getAccountInfo = async () => null;
     expect(await s.confirm("sig1")).toBe("confirmed");
     expect(await s.isExpired(500)).toBe(true);
 

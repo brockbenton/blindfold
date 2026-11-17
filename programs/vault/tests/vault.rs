@@ -23,7 +23,7 @@ use {
     solana_signer::Signer,
     solana_transaction::versioned::VersionedTransaction,
     std::str::FromStr,
-    vault::{Config, DepositRecord, Payout, ProviderRecord, VaultError},
+    vault::{BatchSettled, Config, DepositRecord, IssuanceLog, IssuanceLogged, Payout, ProviderRecord, VaultError},
 };
 
 type Res = Result<TransactionMetadata, FailedTransactionMetadata>;
@@ -761,7 +761,13 @@ fn settle_odd_remaining_count() {
     let ix = env.settle_ix(&env.mint_auth.pubkey(), &env.vault_token, 1, payouts.clone(), rem);
     let ma = env.mint_auth.insecure_clone();
     assert_vault_err(&env.send_ix(ix, &ma), VaultError::ProviderMismatch);
+    // One extra account is read as the optional issuance log, so a wrong one is IssuanceLogMismatch.
     let mut rem = env.remaining(&payouts);
+    rem.push(AccountMeta::new(env.providers[0].token, false));
+    let ix = env.settle_ix(&env.mint_auth.pubkey(), &env.vault_token, 1, payouts.clone(), rem);
+    assert_vault_err(&env.send_ix(ix, &ma), VaultError::IssuanceLogMismatch);
+    let mut rem = env.remaining(&payouts);
+    rem.push(AccountMeta::new(issuance_pda(), false));
     rem.push(AccountMeta::new(env.providers[0].token, false));
     let ix = env.settle_ix(&env.mint_auth.pubkey(), &env.vault_token, 1, payouts, rem);
     assert_vault_err(&env.send_ix(ix, &ma), VaultError::ProviderMismatch);
@@ -827,8 +833,169 @@ fn error_codes_follow_contract_order() {
         VaultError::ProviderInactive,
         VaultError::PayoutAccountMismatch,
         VaultError::MathOverflow,
+        VaultError::IssuanceBelowSettled,
+        VaultError::IssuanceLogMismatch,
     ];
     for (i, e) in order.iter().enumerate() {
         assert_eq!(*e as u32, i as u32);
     }
+}
+
+// ---------------------------------------------------------------- issuance log
+
+const CENT: u64 = 10_000;
+
+fn issuance_pda() -> Pubkey {
+    Pubkey::find_program_address(&[b"issuance"], &pid()).0
+}
+
+fn init_log_ix(signer: &Pubkey, issued: u64, settled: u64) -> Instruction {
+    Instruction::new_with_bytes(
+        pid(),
+        &vault::instruction::InitIssuanceLog { issued, settled }.data(),
+        vault::accounts::InitIssuanceLog {
+            mint_authority: *signer,
+            config: config_pda(),
+            issuance_log: issuance_pda(),
+            system_program: system_program::ID,
+        }
+        .to_account_metas(None),
+    )
+}
+
+fn log_ix(signer: &Pubkey, add: u64) -> Instruction {
+    Instruction::new_with_bytes(
+        pid(),
+        &vault::instruction::LogIssuance { add }.data(),
+        vault::accounts::LogIssuance { mint_authority: *signer, config: config_pda(), issuance_log: issuance_pda() }
+            .to_account_metas(None),
+    )
+}
+
+impl Env {
+    fn init_log(&mut self, issued: u64, settled: u64) -> Res {
+        let ma = self.mint_auth.insecure_clone();
+        self.send_ix(init_log_ix(&ma.pubkey(), issued, settled), &ma)
+    }
+    fn log(&mut self, add: u64) -> Res {
+        let ma = self.mint_auth.insecure_clone();
+        self.send_ix(log_ix(&ma.pubkey(), add), &ma)
+    }
+    fn issuance(&self) -> IssuanceLog {
+        load(&self.svm, &issuance_pda())
+    }
+    fn settle_with_log(&mut self, batch_id: u64, payouts: Vec<Payout>, log: AccountMeta) -> Res {
+        let mut rem = self.remaining(&payouts);
+        rem.push(log);
+        let ix = self.settle_ix(&self.mint_auth.pubkey(), &self.vault_token, batch_id, payouts, rem);
+        let ma = self.mint_auth.insecure_clone();
+        send_with(&mut self.svm, &[ix], &ma, &[])
+    }
+}
+
+#[test]
+fn issuance_log_init_and_raise() {
+    let mut env = setup();
+    let meta = env.init_log(500 * CENT, 120 * CENT).unwrap();
+    let ev = events::<IssuanceLogged>(&meta);
+    assert_eq!(ev.len(), 1);
+    assert_eq!((ev[0].issued, ev[0].settled, ev[0].seq), (500 * CENT, 120 * CENT, 0));
+    let l = env.issuance();
+    assert_eq!((l.issued, l.settled, l.seq), (500 * CENT, 120 * CENT, 0));
+    assert!(l.updated_slot > 0);
+
+    let meta = env.log(200 * CENT).unwrap();
+    let ev = events::<IssuanceLogged>(&meta);
+    assert_eq!((ev[0].issued, ev[0].seq), (700 * CENT, 1));
+    // Adds accumulate: two mints logging their own issuance cannot overwrite each other. A zero add is a no-op bump.
+    env.log(50 * CENT).unwrap();
+    env.log(0).unwrap();
+    let l = env.issuance();
+    assert_eq!((l.issued, l.settled, l.seq), (750 * CENT, 120 * CENT, 3));
+    // Init is one-time: the account already exists.
+    assert!(env.init_log(0, 0).is_err());
+    assert_eq!(env.issuance().issued, 750 * CENT);
+}
+
+#[test]
+fn issuance_log_add_checks() {
+    let mut env = setup();
+    env.init_log(300 * CENT, 200 * CENT).unwrap();
+    assert_vault_err(&env.log(CENT + 1), VaultError::AmountNotWholeCents);
+    let big = (u64::MAX / CENT) * CENT;
+    assert_vault_err(&env.log(big), VaultError::MathOverflow);
+    assert_eq!(env.issuance().issued, 300 * CENT);
+}
+
+#[test]
+fn issuance_log_init_checks() {
+    let mut env = setup();
+    assert_vault_err(&env.init_log(100 * CENT, 101 * CENT), VaultError::IssuanceBelowSettled);
+    assert_vault_err(&env.init_log(100 * CENT + 5, 0), VaultError::AmountNotWholeCents);
+    assert_vault_err(&env.init_log(100 * CENT, 5), VaultError::AmountNotWholeCents);
+    // Only the mint authority can create or write the log.
+    let admin = env.admin.insecure_clone();
+    assert_vault_err(&env.send_ix(init_log_ix(&admin.pubkey(), 0, 0), &admin), VaultError::Unauthorized);
+    env.init_log(0, 0).unwrap();
+    assert_vault_err(&env.send_ix(log_ix(&admin.pubkey(), 10 * CENT), &admin), VaultError::Unauthorized);
+    // Writing before the log exists fails (no account).
+    let mut fresh = setup();
+    assert!(fresh.log(CENT).is_err());
+}
+
+#[test]
+fn settle_with_issuance_log_advances_settled() {
+    let mut env = setup();
+    env.register();
+    env.register();
+    env.fund_vault(10);
+    env.init_log(10 * USDC, 0).unwrap();
+    let meta = env.settle_with_log(1, vec![p(0, USDC), p(1, 2 * USDC)], AccountMeta::new(issuance_pda(), false)).unwrap();
+    assert_eq!(events::<BatchSettled>(&meta)[0].total, 3 * USDC);
+    assert_eq!(env.issuance().settled, 3 * USDC);
+    assert_eq!(env.bal(&env.providers[1].token), 2 * USDC);
+    // Without the log the batch still settles (old clients), and the log is left alone.
+    env.settle(2, vec![p(0, USDC)]).unwrap();
+    assert_eq!(env.issuance().settled, 3 * USDC);
+    assert_eq!(env.cfg().last_batch_id, 2);
+    env.settle_with_log(3, vec![p(0, 6 * USDC)], AccountMeta::new(issuance_pda(), false)).unwrap();
+    assert_eq!(env.issuance().settled, 9 * USDC);
+    // Settled may run ahead of a lagging issued claim; the next add must then cover it.
+    let mut env2 = setup();
+    env2.register();
+    env2.fund_vault(10);
+    env2.init_log(USDC, 0).unwrap();
+    env2.settle_with_log(1, vec![p(0, 2 * USDC)], AccountMeta::new(issuance_pda(), false)).unwrap();
+    assert_eq!(env2.issuance().settled, 2 * USDC);
+    assert_vault_err(&env2.log(0), VaultError::IssuanceBelowSettled);
+    env2.log(USDC).unwrap();
+    assert_eq!(env2.issuance().issued, 2 * USDC);
+}
+
+#[test]
+fn settle_rejects_a_bad_issuance_log() {
+    let mut env = setup();
+    env.register();
+    env.fund_vault(10);
+    let vault_bal = env.bal(&env.vault_token);
+    // The PDA before it exists, a read-only log, and some other account.
+    assert_vault_err(&env.settle_with_log(1, vec![p(0, USDC)], AccountMeta::new(issuance_pda(), false)), VaultError::IssuanceLogMismatch);
+    env.init_log(10 * USDC, 0).unwrap();
+    assert_vault_err(&env.settle_with_log(1, vec![p(0, USDC)], AccountMeta::new_readonly(issuance_pda(), false)), VaultError::IssuanceLogMismatch);
+    assert_vault_err(&env.settle_with_log(1, vec![p(0, USDC)], AccountMeta::new(env.config, false)), VaultError::IssuanceLogMismatch);
+    assert_eq!(env.bal(&env.vault_token), vault_bal);
+    assert_eq!(env.cfg().last_batch_id, 0);
+    assert_eq!(env.issuance().settled, 0);
+}
+
+#[test]
+fn issuance_log_space_matches_layout() {
+    assert_eq!(IssuanceLog::INIT_SPACE, 8 * 5 + 1);
+    let env = {
+        let mut e = setup();
+        e.init_log(0, 0).unwrap();
+        e
+    };
+    assert_eq!(env.svm.get_account(&issuance_pda()).unwrap().data.len(), 8 + IssuanceLog::INIT_SPACE);
+    assert_ne!(issuance_pda(), config_pda());
 }

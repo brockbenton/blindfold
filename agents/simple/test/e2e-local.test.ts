@@ -6,7 +6,7 @@ import { serve } from "@hono/node-server";
 import { BN, BorshAccountsCoder } from "@anchor-lang/core";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { VAULT_IDL, USDC_DEVNET_MINT, vaultAta, type ProviderInfo } from "@blindfold/protocol";
+import { VAULT_IDL, USDC_DEVNET_MINT, configPda, vaultAta, type ProviderInfo } from "@blindfold/protocol";
 import { makeProviderKey } from "@blindfold/testkit";
 import { AgentWallet, ownerFund } from "@blindfold/wallet";
 import { FakeDepositor } from "../../../packages/wallet/test/fakes/fake-depositor.js";
@@ -30,9 +30,9 @@ async function configData() {
   });
 }
 const connection = (vaultCents: number | "rpc_error") => ({
-  async getAccountInfo() {
+  async getAccountInfo(a: PublicKey) {
     if (vaultCents === "rpc_error") throw new Error("rpc down");
-    return { owner: programId, data: await configData() };
+    return a.equals(configPda(programId)) ? { owner: programId, data: await configData() } : null; // no issuance log
   },
   async getTokenAccountBalance() {
     return { value: { amount: String((vaultCents as number) * 10_000) } };

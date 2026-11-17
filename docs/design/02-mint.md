@@ -14,7 +14,7 @@ Optional settings: `PROVIDERS_FILE`, `DEPOSIT_POLL_MS` (2000), `SETTLE_INTERVAL_
 
 One seed-derived active `usd` keyset, denominations 1, 2, 4, …, 4096 cents, zero input fee. Boot rejects a seed inconsistent with the stored active keyset. Public key listings can contain inactive keysets, but only the active seed's private keys are loaded; key rotation and redemption of historical keys are not supported.
 
-Supported Cashu pieces: keys/keysets, signed quotes, minting with DLEQ, restricted P2PK redemption and checkstate. No swap, melt, refunds, Temporal, Stream webhook or onchain issuance log.
+Supported Cashu pieces: keys/keysets, signed quotes, minting with DLEQ, restricted P2PK redemption and checkstate. No swap, melt, refunds or Temporal. A QuickNode Stream can trigger a deposit poll (never a credit), and the mint publishes cumulative issuance to the vault's onchain issuance log.
 
 `createBlindSignature` and `createDLEQProof` are non-constant-time library helpers. Do not treat this implementation as a production signer.
 
@@ -116,3 +116,19 @@ The admin reconciliation endpoint additionally reads the vault, deposits and red
 `MINT_DEV_FAKE_CHAIN=1` mounts authenticated `/dev/deposit`, `/dev/provider` and `/dev/active` hooks and swaps in `MemoryVault`/`FakeSender`. Never enable it for real custody. Use a fresh disposable database after every fake-chain process restart: in-memory records reset while the database cursor, keysets and liabilities persist.
 
 The mint tests create isolated PostgreSQL schemas. They cover issuance replay, concurrency, DLEQ, deposit cursor recovery, proof replay, provider status, reserves and settlement failures. `tests/integration` adds the real mock API, owner and agent with a fake chain. The separate real-vault `e2e:localnet` and devnet `e2e` runs are recorded in [vault deployment notes](01-vault.md#10-implementation-notes-and-decisions); they are not part of every mint unit-test run.
+
+## Issuance log
+
+`jobs/issuanceLog.ts`, every `ISSUANCE_LOG_MS` (default 5000; 0 disables) and on `POST /v1/blindfold/admin/log-issuance`. State lives in `issuance_log_state`: `logged_cents` (how much of this mint's issuance is in the log) and at most one pending transaction.
+
+1. A pending transaction is resolved first from its signature status: confirmed moves its cents into `logged_cents`; failed or expired clears it; otherwise the run returns `pending` and sends nothing.
+2. No log onchain: if a settlement is `pending` or `submitted`, return `deferred` (a batch sent before the log exists cannot add itself to it). Otherwise send `init_issuance_log(issued, confirmed settled)`.
+3. A log this mint has no state for (another mint created it on the same vault): also deferred while a batch is in flight; otherwise set `logged_cents` to this mint's confirmed settled total, so it adds only its net issuance (its earlier batches are not in the log's settled total).
+4. Send `log_issuance(add = issued - logged_cents)` when positive; otherwise `unchanged`. The program adds, so two mints logging at once never overwrite each other.
+5. Every transaction is signed, recorded as pending with its signature and expiry, then sent. A preflight rejection clears it; a lost response is resolved from the chain. A program without the instructions returns `unsupported`, and the timer warns once.
+
+`SolanaSettleSender` adds the log as the trailing `settle_batch` account whenever it exists, so `settled` is advanced by the program, not reported by the mint. One sync runs at a time (the timer and the admin route share it).
+
+## Deposit poll hints
+
+`POST /v1/blindfold/admin/poll-deposits` runs the deposit poll now and returns `{ processed }`. The timer and hints share one in-flight poll. `pnpm demo` calls it when Copycat's QuickNode Stream delivers a `DepositMade`; `pnpm bot` does when `MINT_URL` and `MINT_ADMIN_TOKEN` are set. Crediting is unchanged: only `DepositRecord` accounts count.

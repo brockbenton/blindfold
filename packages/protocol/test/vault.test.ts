@@ -4,8 +4,9 @@ import { Keypair, PublicKey } from "@solana/web3.js";
 import { describe, expect, it } from "vitest";
 import {
   BASE_UNITS_PER_CENT, DEFAULT_VAULT_PROGRAM_ID, MAX_PAYOUTS_PER_BATCH, VAULT_IDL, buildDeactivateProviderIx,
-  buildDepositIx, buildInitializeIx, buildRegisterProviderIx, buildSettleBatchIx, configPda, decodeConfig,
-  decodeDepositRecord, decodeInstruction, decodeProviderRecord, depositPda, providerPda, vaultAta,
+  buildDepositIx, buildInitIssuanceLogIx, buildInitializeIx, buildLogIssuanceIx, buildRegisterProviderIx, buildSettleBatchIx,
+  configPda, decodeConfig, decodeDepositRecord, decodeInstruction, decodeIssuanceLog, decodeProviderRecord, depositPda,
+  issuancePda, providerPda, vaultAta,
 } from "../src/index.js";
 
 const disc = (s: string) => [...createHash("sha256").update(s).digest().subarray(0, 8)];
@@ -19,14 +20,16 @@ describe("IDL self-consistency", () => {
     for (const a of VAULT_IDL.accounts!) expect(a.discriminator).toEqual(disc(`account:${a.name}`));
     for (const e of VAULT_IDL.events!) expect(e.discriminator).toEqual(disc(`event:${e.name}`));
   });
-  it("has the five instructions and ordered errors", () => {
+  it("has the seven instructions and ordered errors", () => {
     // The generated IDL lists instructions alphabetically, so compare as a set.
     expect(VAULT_IDL.instructions.map((i) => i.name).sort()).toEqual(
-      ["initialize", "deposit", "register_provider", "deactivate_provider", "settle_batch"].sort(),
+      ["initialize", "deposit", "register_provider", "deactivate_provider", "settle_batch", "init_issuance_log", "log_issuance"].sort(),
     );
-    expect(VAULT_IDL.errors!.map((e) => e.code)).toEqual(Array.from({ length: 15 }, (_, i) => 6000 + i));
+    // Codes are 6000 + index and existing ones never move; new errors are appended.
+    expect(VAULT_IDL.errors!.map((e) => e.code)).toEqual(Array.from({ length: 17 }, (_, i) => 6000 + i));
     expect(VAULT_IDL.errors![0].name).toBe("InvalidAmount");
     expect(VAULT_IDL.errors![14].name).toBe("MathOverflow");
+    expect(VAULT_IDL.errors!.slice(15).map((e) => e.name)).toEqual(["IssuanceBelowSettled", "IssuanceLogMismatch"]);
     expect(snake("DepositRecord")).toBe("deposit_record");
   });
 });
@@ -149,5 +152,29 @@ describe("instruction builders", () => {
     expect(() => buildSettleBatchIx({ mintAuthority: ma, usdcMint: USDC, batchId: 1, payouts: [] })).toThrow();
     const many = Array.from({ length: MAX_PAYOUTS_PER_BATCH + 1 }, (_, n) => ({ providerId: n, amount: 10_000n, payoutToken: k() }));
     expect(() => buildSettleBatchIx({ mintAuthority: ma, usdcMint: USDC, batchId: 1, payouts: many })).toThrow();
+    const withLog = buildSettleBatchIx({ mintAuthority: ma, usdcMint: USDC, batchId: 1n, payouts, withIssuanceLog: true });
+    expect(withLog.keys).toHaveLength(5 + 4 + 1);
+    expect(withLog.keys[9]).toMatchObject({ isWritable: true, isSigner: false });
+    expect(withLog.keys[9].pubkey.equals(issuancePda(pid))).toBe(true);
+  });
+  it("issuance log instructions and account", async () => {
+    const ma = k();
+    const init = buildInitIssuanceLogIx({ mintAuthority: ma, issued: 400_000n, settled: 100_000n });
+    const d = decodeInstruction(init.data)!;
+    expect(d.name).toBe("init_issuance_log");
+    expect([(d.data as any).issued.toString(), (d.data as any).settled.toString()]).toEqual(["400000", "100000"]);
+    expect(init.keys.map((x) => [x.isSigner, x.isWritable])).toEqual([[true, true], [false, false], [false, true], [false, false]]);
+    expect(init.keys[2].pubkey.equals(issuancePda(pid))).toBe(true);
+    const log = buildLogIssuanceIx({ mintAuthority: ma, add: 500_000n });
+    expect((decodeInstruction(log.data)!.data as any).add.toString()).toBe("500000");
+    expect(decodeInstruction(log.data)!.name).toBe("log_issuance");
+    expect(log.keys.map((x) => [x.isSigner, x.isWritable])).toEqual([[true, false], [false, false], [false, true]]);
+    expect(issuancePda(pid).equals(configPda(pid))).toBe(false);
+
+    const b = await Promise.resolve(new BorshAccountsCoder(VAULT_IDL).encode("IssuanceLog", {
+      issued: new BN(7), settled: new BN(3), seq: new BN(2), updated_slot: new BN(11), updated_at: new BN(12), bump: 250,
+    }));
+    expect(decodeIssuanceLog(b)).toEqual({ issued: 7n, settled: 3n, seq: 2n, updatedSlot: 11n, updatedAt: 12n, bump: 250 });
+    expect([...b.subarray(0, 8)]).toEqual(disc("account:IssuanceLog"));
   });
 });

@@ -10,10 +10,12 @@
     "e2e:localnet": "tsx e2e.ts --localnet",
     "demo": "tsx demo.ts",
     "bot": "tsx bot.ts",
+    "serve": "tsx serve.ts",
     "crowd": "tsx crowd.ts",
     "streams:setup": "tsx streams-setup.ts",
     "replay": "tsx replay.ts",
-    "replay:publish": "tsx replay.ts publish"
+    "replay:publish": "tsx replay.ts publish",
+    "gateway:setup": "tsx gateway-setup.ts"
   },
   "dependencies": {
     "@blindfold/protocol": "workspace:*",

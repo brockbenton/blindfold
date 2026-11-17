@@ -1,6 +1,6 @@
 # 03: Mock paid API
 
-`apps/mock-api/` is a provider using the [x402 `blindfold` handshake](00-interfaces.md#7-payment-handshake-x402-v2-scheme-blindfold). It redeems payments online before serving deterministic token data: whale flow, order-book depth and premium trade signals, in the style of the Solana DeFi feeds that sell per call over x402. The demo calls it TokenFeed. [Runbook](../RUNNING.md#4-mock-api-and-owner-cli).
+`apps/mock-api/` is a provider using the [x402 `blindfold` handshake](00-interfaces.md#7-payment-handshake-x402-v2-scheme-blindfold). It redeems payments online before serving token data: whale flow, order-book depth and premium trade signals, in the style of the Solana DeFi feeds that sell per call over x402. The data is live market data by default ([below](#market-data)). The demo calls it TokenFeed. [Runbook](../RUNNING.md#4-mock-api-and-owner-cli).
 
 ## Configuration and routes
 
@@ -16,6 +16,20 @@ One Node 22+ process represents one provider. Required: `PROVIDER_SECRET_KEY` (3
 `createApp` accepts `priceCents`, `depthPriceCents`, `signalsPriceCents`, `dataHandler`, injectable redeem/keyset clients, logging and `exact`. The depth and signals prices have no CLI environment override. The replacement `dataHandler` runs only after redemption and provides a hostile-response demo/test hook. No complete prompt-injection demo, rate limiting or refund path is implemented.
 
 `PUBLIC_URL` rewrites the request origin through `withPublicUrl` in `index.ts`. It does not add a path prefix or provide a network relay.
+
+## Market data
+
+`createApp({ market })` takes a `MarketSource` (`src/data/liveMarket.ts`). With no source, `createApp` uses the deterministic mock (`src/data/marketData.ts`), so tests and `pnpm crowd` stay offline and reproducible. `index.ts` and `pnpm demo` pass `marketSourceFromEnv()`, which is **live unless `MARKET_DATA=mock`**.
+
+The live source reads Coinbase Exchange's public, keyless REST API for the `<TOKEN>-USD` product. Binance's public API refuses US IPs (HTTP 451), so it isn't used.
+
+| Route | Derived from |
+|---|---|
+| Whale flow | `/stats`: last price, 24h change against the open, and 24h volume in USD. `/trades?limit=1000`: the largest 10% of recent trades by notional count as whale trades, classified by taker side (Coinbase reports the maker's side). This gives `whale_netflow`, `whale_buys`, `whale_sells` and `largest_trade_usd`. `window` is `recent`, and `trades_window_s` gives the span those trades cover. |
+| Depth | `/book?level=2`: the top five levels a side and the spread in basis points |
+| Signals | Whale buy/sell imbalance plus the 24h trend, capped at ±0.3: `BUY` above 0.25, `SELL` below −0.25, otherwise `HOLD`. Confidence runs from 0.5 to 0.9, and `basis` explains the inputs. |
+
+Every response adds `source` (`live` or `mock`), plus `venue: "coinbase"` when live. `as_of` is the fetch time for live data. Requests time out after 3 s and results are cached for 20 s per token and route. A failure (network, timeout, HTTP error, unlisted token such as JUP, malformed symbol) serves that route's mock data with `source: "mock"` and a `fallback_reason`; failures are not cached. The demo's Act 6 poisoning spreads the same live whale-flow body and adds its injected `notice`.
 
 ## `exact` baseline
 
@@ -66,7 +80,7 @@ Request middleware logs unpaid challenges and served responses. The facilitator 
 
 ## Source and tests
 
-`src/app.ts` wires Hono routes and the SDK; `src/x402/` contains the server scheme, facilitator, token validation, HTTP redeem client, keyset cache and the `exact` baseline facilitator (`exactBaseline.ts`). `src/data/marketData.ts` supplies deterministic fixtures. `test/helpers/world.ts` uses shared testkit crypto and an in-process fake mint/redeem world.
+`src/app.ts` wires Hono routes and the SDK; `src/x402/` contains the server scheme, facilitator, token validation, HTTP redeem client, keyset cache and the `exact` baseline facilitator (`exactBaseline.ts`). `src/data/liveMarket.ts` supplies the live Coinbase source and its fallback; `src/data/marketData.ts` supplies the deterministic fixtures. `test/helpers/world.ts` uses shared testkit crypto and an in-process fake mint/redeem world.
 
 `test/x402.test.ts` covers challenges, paid calls, exact amounts, 1-of-N locks, malformed tokens, replay, mint outages, no early serving, per-route pricing and replacement data. `test/exact.test.ts` covers the `exact` challenge entry, routing to its facilitator, failed settlement and rate-limit retries. Node's HTTP header limit can be lower than the 64 KiB token cap, so oversize tokens are tested directly on the facilitator. The application integration suite exercises these components against the real mint with PostgreSQL and a fake chain.
 

@@ -12,6 +12,8 @@ export const KEYSET_INPUT_FEE_PPK = 0;
 export const MAX_DEPOSIT_CENTS = 5000;
 export const QUOTE_EXPIRY_S = 3600;
 export const DEPOSIT_POLL_MS = 2000;
+/** Mint: how often it publishes cumulative issuance to the vault's onchain issuance log. */
+export const ISSUANCE_LOG_MS = 5000;
 /** Settlement windows: runs fire at UTC multiples of this period, so payout times do not track activity. */
 export const SETTLE_INTERVAL_S = 600;
 /** Only cents redeemed at least this long before a run are paid in it. Defaults to one window. */
