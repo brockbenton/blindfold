@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./x402/*": { "types": "./dist/x402/*.d.ts", "default": "./dist/x402/*.js" }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",

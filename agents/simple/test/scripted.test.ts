@@ -30,7 +30,7 @@ describe("agent --fake --json", () => {
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("provider   mock-api (http://localhost:4000)");
     expect(r.stdout).toContain("balance    100c -> 95c");
-    expect(r.stdout).toContain("(ok)");
+    expect(r.stdout).toContain("(ok; mint-reported, unverified)");
   });
 });
 

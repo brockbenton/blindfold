@@ -33,4 +33,8 @@ pub enum VaultError {
     PayoutAccountMismatch,
     #[msg("Arithmetic overflow")]
     MathOverflow,
+    #[msg("Logged issuance cannot be below the settled total")]
+    IssuanceBelowSettled,
+    #[msg("Issuance log account is invalid")]
+    IssuanceLogMismatch,
 }

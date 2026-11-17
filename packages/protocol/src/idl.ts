@@ -186,6 +186,82 @@ export const VAULT_IDL: Idl = {
       ]
     },
     {
+      "name": "init_issuance_log",
+      "discriminator": [
+        51,
+        21,
+        225,
+        178,
+        186,
+        44,
+        41,
+        234
+      ],
+      "accounts": [
+        {
+          "name": "mint_authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "issuance_log",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  115,
+                  115,
+                  117,
+                  97,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "issued",
+          "type": "u64"
+        },
+        {
+          "name": "settled",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "initialize",
       "discriminator": [
         175,
@@ -256,6 +332,73 @@ export const VAULT_IDL: Idl = {
         },
         {
           "name": "max_deposit",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "log_issuance",
+      "discriminator": [
+        181,
+        66,
+        33,
+        6,
+        250,
+        221,
+        4,
+        100
+      ],
+      "accounts": [
+        {
+          "name": "mint_authority",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "issuance_log",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  115,
+                  115,
+                  117,
+                  97,
+                  110,
+                  99,
+                  101
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "add",
           "type": "u64"
         }
       ]
@@ -447,6 +590,19 @@ export const VAULT_IDL: Idl = {
       ]
     },
     {
+      "name": "IssuanceLog",
+      "discriminator": [
+        19,
+        96,
+        154,
+        32,
+        19,
+        34,
+        202,
+        241
+      ]
+    },
+    {
       "name": "ProviderRecord",
       "discriminator": [
         137,
@@ -485,6 +641,19 @@ export const VAULT_IDL: Idl = {
         203,
         155,
         199
+      ]
+    },
+    {
+      "name": "IssuanceLogged",
+      "discriminator": [
+        40,
+        10,
+        69,
+        200,
+        12,
+        209,
+        179,
+        253
       ]
     },
     {
@@ -589,6 +758,16 @@ export const VAULT_IDL: Idl = {
       "code": 6014,
       "name": "MathOverflow",
       "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6015,
+      "name": "IssuanceBelowSettled",
+      "msg": "Logged issuance cannot be below the settled total"
+    },
+    {
+      "code": 6016,
+      "name": "IssuanceLogMismatch",
+      "msg": "Issuance log account is invalid"
     }
   ],
   "types": [
@@ -728,6 +907,66 @@ export const VAULT_IDL: Idl = {
           {
             "name": "bump",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "IssuanceLog",
+      "docs": [
+        "The mint's public, append-only issuance claim (PDA `[\"issuance\"]`).",
+        "`issued` only grows: the mint authority adds to it with `log_issuance`. `settled` is advanced by",
+        "the program itself whenever `settle_batch` is given this account. Both are cumulative base units."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "issued",
+            "type": "u64"
+          },
+          {
+            "name": "settled",
+            "type": "u64"
+          },
+          {
+            "name": "seq",
+            "docs": [
+              "Number of `log_issuance` updates since creation."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "updated_slot",
+            "type": "u64"
+          },
+          {
+            "name": "updated_at",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "IssuanceLogged",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "issued",
+            "type": "u64"
+          },
+          {
+            "name": "settled",
+            "type": "u64"
+          },
+          {
+            "name": "seq",
+            "type": "u64"
           }
         ]
       }

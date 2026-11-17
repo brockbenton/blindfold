@@ -1,0 +1,92 @@
+/* Vault history: the same quiet terminal look as the demo dashboard (scripts/dashboard/dashboard.css). */
+:root {
+  --page: #111112;
+  --panel: #18181a;
+  --raised: #212123;
+  --line: rgba(237, 237, 237, 0.08);
+  --text: #ededed;
+  --text-2: #a1a1a6;
+  --muted: #85858b;
+  --red: #e5484d;
+  --green: #4cc38a;
+  --amber: #d9a23f;
+  --sans: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--page); color: var(--text); font: 400 14px/20px var(--mono);
+  font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; border-bottom: 1px solid var(--line); }
+a:hover { border-bottom-color: var(--text-2); }
+code { color: var(--text-2); }
+button { font: inherit; color: var(--text-2); background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer; }
+button:hover { color: var(--text); background: var(--raised); }
+button:disabled { opacity: 0.5; cursor: default; }
+
+.page { max-width: 1200px; margin: 0 auto; padding: 32px; display: grid; gap: 24px; }
+
+header { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+h1 { margin: 0; font: 500 24px/32px var(--sans); }
+.sub { margin: 4px 0 0; color: var(--text-2); max-width: 56ch; font-family: var(--sans); }
+.meta { color: var(--text-2); display: grid; gap: 4px; align-content: start; }
+.meta .k { color: var(--muted); display: inline-block; min-width: 88px; }
+.status { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+#status { color: var(--muted); }
+#status.err { color: var(--red); }
+
+.totals { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px 20px; }
+.stat .label { color: var(--muted); }
+.stat .value { font: 500 28px/36px var(--sans); letter-spacing: -0.01em; margin-top: 4px; }
+.stat .note { color: var(--text-2); min-height: 20px; }
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 20px 24px; min-width: 0; }
+.section { display: flex; justify-content: space-between; gap: 16px; color: var(--muted); padding-bottom: 12px; }
+
+.chart { height: 220px; position: relative; }
+.chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.chart .grid { stroke: var(--line); }
+.chart .axis { fill: var(--muted); font: 400 12px var(--mono); }
+.chart .line { fill: none; stroke: var(--green); stroke-width: 1.5; }
+.chart .area { fill: var(--green); opacity: 0.08; }
+.chart .dot-in { fill: var(--green); }
+.chart .dot-out { fill: var(--amber); }
+.chart .hover { stroke: var(--text-2); stroke-dasharray: 2 3; }
+.tip { position: absolute; pointer-events: none; background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; color: var(--text); white-space: nowrap; transform: translate(-50%, -110%); }
+.tip .d { color: var(--muted); }
+
+.issuance { margin: 0; color: var(--text-2); }
+
+.filters { display: flex; gap: 8px; flex-wrap: wrap; padding-bottom: 12px; }
+.filters button.on { color: var(--text); border-color: var(--text-2); }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; font-weight: 400; color: var(--muted); padding: 8px 12px 8px 0; }
+td { padding: 10px 12px 10px 0; border-top: 1px solid var(--line); vertical-align: top; }
+td.time { color: var(--muted); white-space: nowrap; }
+td.kind { white-space: nowrap; }
+td.detail { color: var(--text-2); }
+td.num, th.num { text-align: right; white-space: nowrap; }
+td.link { text-align: right; white-space: nowrap; }
+.in { color: var(--green); }
+.out { color: var(--amber); }
+.kind-deposit { color: var(--green); }
+.kind-settle { color: var(--amber); }
+.kind-provider { color: var(--text); }
+.kind-other { color: var(--muted); }
+.empty { color: var(--muted); margin: 12px 0 0; }
+
+footer { color: var(--muted); padding-bottom: 16px; font-family: var(--sans); }
+footer a { margin-left: 8px; }
+
+@media (max-width: 760px) {
+  .page { padding: 16px; gap: 16px; }
+  .totals { grid-template-columns: 1fr 1fr; }
+  .stat .value { font-size: 22px; line-height: 28px; }
+  .panel { padding: 16px; }
+  td.detail { min-width: 220px; }
+}

@@ -40,7 +40,7 @@ The provider acts as an in-process x402 facilitator. Its successful x402 `transa
 | Narrower allowlist | `WALLET_ALLOWLIST` is wallet policy, not an additional token restriction |
 | Per-call price cap | Wallet and x402 spend controls; not encoded in tokens |
 | Exact amount | No change or swap; wallet must find proofs summing to the price |
-| Reserve gate | Agent reads the vault and compares against mint-reported liabilities; errors stop payment |
+| Reserve gate | Agent reads the vault and compares it with the liabilities in the vault's onchain issuance log (or the mint's report, when larger or when no log exists); errors stop payment |
 
 The mint cannot inspect a blinded secret at issuance. It validates its lock at redemption. The owner must build and verify the lock correctly. New providers do not acquire access to old tokens, and deactivated providers cannot redeem after the mint syncs their status.
 
@@ -80,5 +80,5 @@ See [MVP and add-ons](mvp.md#add-ons) for priority. These are design options, no
 - QuickNode Stream events as a trigger for deposit polling. The Stream feeds Copycat today; the mint polls without a webhook.
 - Protocol-level owner approval through a second, co-signed reserve pocket. The wallet already asks the owner above a threshold ([agent](design/05-agent.md#owner-approval)), but that runs in agent code. Current locks accept only 1-of-N and reject refund/time-lock tags; this requires protocol changes.
 - Temporal for durable top-ups. Workflow randomness and signing would run in activities; existing persisted funding checkpoints still have recovery limits.
-- Onchain issuance logging and an external reconciliation view.
+- An external reconciliation view (the onchain issuance log is implemented).
 - Hiding which provider was paid, through fresh payout accounts. An onchain check of the provider's approval reveals the provider; no check lets the mint pay anyone. Settlement already decouples payout timing and amounts from calls; which providers earned remains public.

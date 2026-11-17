@@ -34,6 +34,10 @@ export function depositPda(index: bigint | number, programId: PublicKey = DEFAUL
 export function providerPda(id: number, programId: PublicKey = DEFAULT_VAULT_PROGRAM_ID): PublicKey {
   return PublicKey.findProgramAddressSync([Buffer.from("provider"), u32le(id)], programId)[0];
 }
+/** The mint's onchain issuance log. */
+export function issuancePda(programId: PublicKey = DEFAULT_VAULT_PROGRAM_ID): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from("issuance")], programId)[0];
+}
 /** Vault token account: ATA of the Config PDA (classic SPL Token program). */
 export function vaultAta(usdcMint: PublicKey, programId: PublicKey = DEFAULT_VAULT_PROGRAM_ID): PublicKey {
   return getAssociatedTokenAddressSync(usdcMint, configPda(programId), true);
@@ -68,7 +72,25 @@ export interface ProviderRecordAccount {
   bump: number;
 }
 
+/** Cumulative base units. `issued` is the mint's claim (only grows); `settled` is advanced by `settle_batch`. */
+export interface IssuanceLogAccount {
+  issued: bigint;
+  settled: bigint;
+  seq: bigint;
+  updatedSlot: bigint;
+  updatedAt: bigint;
+  bump: number;
+}
+
 const big = (x: { toString(): string }) => BigInt(x.toString());
+
+export function decodeIssuanceLog(data: Uint8Array): IssuanceLogAccount {
+  const a = accountsCoder.decode("IssuanceLog", Buffer.from(data));
+  return {
+    issued: big(a.issued), settled: big(a.settled), seq: big(a.seq), updatedSlot: big(a.updated_slot),
+    updatedAt: big(a.updated_at), bump: a.bump,
+  };
+}
 
 export function decodeConfig(data: Uint8Array): ConfigAccount {
   const a = accountsCoder.decode("Config", Buffer.from(data));
@@ -152,9 +174,28 @@ export function buildDeactivateProviderIx(o: Base & { admin: PublicKey; provider
 
 export interface SettlePayout { providerId: number; amount: bigint; payoutToken: PublicKey }
 
-/** Amounts are base units. remaining_accounts are [provider_record, payout_token (mut)] pairs in payout order. */
+/** Creates the issuance log. `settled` is the one-time baseline for batches paid before the log existed. Base units. */
+export function buildInitIssuanceLogIx(o: Base & { mintAuthority: PublicKey; issued: bigint; settled: bigint }) {
+  const pid = o.programId ?? DEFAULT_VAULT_PROGRAM_ID;
+  return ix(pid, "init_issuance_log", { issued: toBn(o.issued), settled: toBn(o.settled) }, [
+    m(o.mintAuthority, true, true), m(configPda(pid)), m(issuancePda(pid), true), m(SystemProgram.programId),
+  ]);
+}
+
+/** Adds newly issued base units to the logged cumulative total (an atomic add, so concurrent mints cannot overwrite). */
+export function buildLogIssuanceIx(o: Base & { mintAuthority: PublicKey; add: bigint }) {
+  const pid = o.programId ?? DEFAULT_VAULT_PROGRAM_ID;
+  return ix(pid, "log_issuance", { add: toBn(o.add) }, [
+    m(o.mintAuthority, false, true), m(configPda(pid)), m(issuancePda(pid), true),
+  ]);
+}
+
+/**
+ * Amounts are base units. remaining_accounts are [provider_record, payout_token (mut)] pairs in payout order, then the
+ * issuance log when `withIssuanceLog` is set, so the program adds the batch to its settled total.
+ */
 export function buildSettleBatchIx(o: Base & {
-  mintAuthority: PublicKey; usdcMint: PublicKey; batchId: bigint | number; payouts: SettlePayout[];
+  mintAuthority: PublicKey; usdcMint: PublicKey; batchId: bigint | number; payouts: SettlePayout[]; withIssuanceLog?: boolean;
 }) {
   const pid = o.programId ?? DEFAULT_VAULT_PROGRAM_ID;
   if (o.payouts.length < 1 || o.payouts.length > MAX_PAYOUTS_PER_BATCH) {
@@ -164,6 +205,7 @@ export function buildSettleBatchIx(o: Base & {
   return ix(pid, "settle_batch", args, [
     m(o.mintAuthority, false, true), m(configPda(pid), true), m(vaultAta(o.usdcMint, pid), true), m(o.usdcMint), m(TOKEN_PROGRAM_ID),
     ...o.payouts.flatMap((p) => [m(providerPda(p.providerId, pid)), m(p.payoutToken, true)]),
+    ...(o.withIssuanceLog ? [m(issuancePda(pid), true)] : []),
   ]);
 }
 
