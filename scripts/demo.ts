@@ -673,7 +673,7 @@ async function main() {
   kv("Times (UTC)", watcher.observations.filter((o) => o.kind === "direct_payment" && o.from === signal.payer).map((o) => fmt(o.time)).join(", "));
   kv("Signal", bold(red(signal.action)));
   blank();
-  say(bold(green("Blindfold (cashu)")));
+  say(bold(green("Blindfold x402 (blindfold)")));
   for (const d of watcher.observations.filter((x) => x.kind === "vault_deposit")) kv("Deposit", `${short(d.from)} put ${usd(d.amountBase)} into the vault at ${fmt(d.time)}`);
   for (const p of watcher.observations.filter((x) => x.kind === "vault_payout")) kv("Payout", `vault paid ${feedNames[p.to] ?? "a feed"} ${usd(p.amountBase)} in a batch at ${fmt(p.time)}`);
   kv("Agent wallet", "none: the agent has no onchain identity");
