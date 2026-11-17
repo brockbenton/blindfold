@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
 import { USDC_DEVNET_MINT, SOLANA_DEVNET_CAIP2, centsToBaseUnits } from "@blindfold/protocol";
-import { depthData, marketData } from "./data/marketData.js";
+import { depthData, marketData, signalsData } from "./data/marketData.js";
 import { BlindfoldFacilitator, type Logger } from "./x402/blindfoldFacilitator.js";
 import { CashuServerScheme } from "./x402/cashuServerScheme.js";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
@@ -14,6 +14,8 @@ export interface AppOptions {
   providerSecretKey: string;
   priceCents?: number;
   depthPriceCents?: number;
+  /** Premium trade signals, default 25 cents: above the default approval threshold (20), so the owner is asked. */
+  signalsPriceCents?: number;
   usdcMint?: string;
   providerId?: number;
   redeem?: RedeemClient;
@@ -28,11 +30,13 @@ export interface AppOptions {
 
 const WHALE_FLOW = "whale flow: net USD bought by whale wallets in the last hour";
 const DEPTH = "order-book depth: five levels a side";
+const SIGNALS = "trade signal: BUY, SELL or HOLD for the next hour, with confidence";
 
 /** No globals: each call builds an independent provider, so a demo can mount several. */
 export function createApp(o: AppOptions) {
   const price = o.priceCents ?? 5;
   const depthPrice = o.depthPriceCents ?? 10;
+  const signalsPrice = o.signalsPriceCents ?? 25;
   const asset = o.usdcMint ?? USDC_DEVNET_MINT;
   const log = o.log ?? ((e: Record<string, unknown>) => console.log(JSON.stringify(e)));
   const facilitator = new BlindfoldFacilitator({
@@ -61,6 +65,7 @@ export function createApp(o: AppOptions) {
   for (const t of o.exact?.memoTopics ?? []) {
     if (!/^[a-z0-9]{1,16}$/.test(t)) throw new Error(`memo topic must be 1-16 lowercase letters or digits: ${t}`);
     tagged[`GET /v1/data/${t}/depth`] = route(depthPrice, DEPTH, `depth/${t.toUpperCase()}`);
+    tagged[`GET /v1/data/${t}/signals`] = route(signalsPrice, SIGNALS, `signals/${t.toUpperCase()}`);
     tagged[`GET /v1/data/${t}`] = route(price, WHALE_FLOW, `whale-flow/${t.toUpperCase()}`);
   }
 
@@ -79,8 +84,10 @@ export function createApp(o: AppOptions) {
     ...tagged,
     "GET /v1/data/:topic": route(price, WHALE_FLOW),
     "GET /v1/data/:topic/depth": route(depthPrice, DEPTH),
+    "GET /v1/data/:topic/signals": route(signalsPrice, SIGNALS),
   } as never, resourceServer));
   app.get("/v1/data/:topic/depth", (c) => c.json(depthData(c.req.param("topic"))));
+  app.get("/v1/data/:topic/signals", (c) => c.json(signalsData(c.req.param("topic"))));
   app.get("/v1/data/:topic", (c) => {
     const topic = c.req.param("topic");
     return o.dataHandler ? o.dataHandler(c, topic) : c.json(marketData(topic));

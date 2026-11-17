@@ -7,7 +7,8 @@
 ```ts
 const wallet = await AgentWallet.open({
   tokenFile, maxPerCallCents: 10,
-  // Optional: allowlist, usdcMint, fetch, mint (checkstate client), now.
+  // Optional: allowlist, usdcMint, fetch, mint (checkstate client), now,
+  // approvalOverCents (20), approve (an Approver), approvalTimeoutMs (60 000).
 });
 try {
   wallet.balance();        // spendable cents
@@ -23,7 +24,25 @@ try {
 
 `payFetch` wraps `@x402/fetch`, registering only `cashu` on the devnet CAIP-2 identifier. It does not pay `exact` schemes. Mint URL matching normalizes scheme/host and trailing path slashes while preserving case-sensitive paths and query strings; different tenants on one host are not interchangeable. It returns unpaid non-402 responses unchanged. For a payment attempt, a non-2xx final response raises `PaymentFailed` after recovery; pre-payment refusals raise `PaymentRefused`. Network exceptions propagate after recovery. Stream request bodies are refused because they cannot be replayed.
 
-`PaymentRefused.reason` is one of `bad_request`, `unit`, `mint`, `over_cap`, `provider_not_allowed`, `provider_not_in_signer_set`, `insufficient_exact` or `insufficient_balance`. Spend controls may reject the asset or cap before the scheme runs; the wrapper maps those SDK errors to the wallet's reasons. `PaymentFailed` carries status, body, recovered **cent amounts** and an optional reason. In the current mock API, failed settlement returns `402 {}` and does not expose the underlying reason.
+`PaymentRefused.reason` is one of `bad_request`, `unit`, `mint`, `over_cap`, `provider_not_allowed`, `provider_not_in_signer_set`, `insufficient_exact`, `insufficient_balance`, `approval_denied` or `approval_timeout`. Spend controls may reject the asset or cap before the scheme runs; the wrapper maps those SDK errors to the wallet's reasons. `PaymentFailed` carries status, body, recovered **cent amounts** and an optional reason. In the current mock API, failed settlement returns `402 {}` and does not expose the underlying reason.
+
+## Owner approval
+
+A price above `approvalOverCents` (default 20, or `APPROVAL_OVER_CENTS` when `open()` reads the environment) needs the owner's approval. The check runs in `CashuClientScheme.createPaymentPayload`, after the unit, mint, cap, provider and exact-selection checks and before proofs move to `pending`, so a refusal leaves the token file unchanged. The price is the one in the provider's 402 challenge; the agent above the wallet never has to know it. [Why the wallet](05-agent.md#owner-approval).
+
+```ts
+type Approver = (req: ApprovalRequest, signal: AbortSignal) => Promise<boolean>;
+// req: { id, cents, url (origin + path), provider (hex33), thresholdCents, timeoutMs }
+```
+
+`askApproval` races the approver against `approvalTimeoutMs`, then aborts `signal`. `true` pays; `false`, a non-boolean, a thrown error or no approver refuses with `approval_denied`; no answer in time refuses with `approval_timeout`. The wallet's spend mutex is held while waiting, so payments stay sequential.
+
+| Helper | Behavior |
+|---|---|
+| `terminalApprover({ input, output, format })` | Prompts once; `y` or `yes` approves, anything else denies |
+| `approvalBroker({ onRequest, onDone })` | Keeps pending requests for a UI; `resolve(id, ok)` answers one and returns false if it is no longer pending. `onDone` reports `approved`, `denied` or `timeout` |
+| `anyApprover(...approvers)` | The first answer wins; the others are aborted with that outcome |
+| `fixedApprover(ok)` | Always the same answer, for tests and unattended runs |
 
 ## Token storage and payment state
 
@@ -89,6 +108,6 @@ For fake-chain resume, `MINT_URL` must still point to that session's mint so the
 
 ## Source and tests
 
-`agent-wallet.ts`, `cashu-scheme.ts`, `select.ts`, `store.ts`, `checkstate.ts` and `mutex.ts` implement spending. `owner.ts`, `denominations.ts`, `depositor.ts`, `dleq.ts` and `cli.ts` implement funding. `tool.ts` exposes a thin `payFetchTool` wrapper; no LLM loop or owner co-signing is implemented.
+`agent-wallet.ts`, `cashu-scheme.ts`, `approval.ts`, `select.ts`, `store.ts`, `checkstate.ts` and `mutex.ts` implement spending. `owner.ts`, `denominations.ts`, `depositor.ts`, `dleq.ts` and `cli.ts` implement funding. `tool.ts` exposes a thin `payFetchTool` wrapper; the LLM loop lives in the agent, and owner co-signing is not implemented.
 
-Tests in `test/` use HTTP fakes and real Cashu crypto for funding, DLEQ rejection, mint-response replay, checkpoint resume, selection, locks, concurrency and pending recovery. `runCli(argv, deps)` injects a depositor for tests; there is no test-only depositor environment flag or `SOLANA_TEST=1` suite. The application integration tests use the real mint with PostgreSQL and a fake chain. Real Solana deposit/settlement validation is the separate [real-vault acceptance workflow](../RUNNING.md#7-real-vault-checks).
+Tests in `test/` use HTTP fakes and real Cashu crypto for funding, DLEQ rejection, mint-response replay, checkpoint resume, selection, locks, concurrency, pending recovery and owner approval. `runCli(argv, deps)` injects a depositor for tests; there is no test-only depositor environment flag or `SOLANA_TEST=1` suite. The application integration tests use the real mint with PostgreSQL and a fake chain. Real Solana deposit/settlement validation is the separate [real-vault acceptance workflow](../RUNNING.md#7-real-vault-checks).

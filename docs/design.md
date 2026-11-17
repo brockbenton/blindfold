@@ -76,7 +76,7 @@ The mock API can also accept the standard x402 `exact` scheme on the same routes
 See [MVP and add-ons](mvp.md#add-ons) for priority. These are design options, not current features:
 
 - QuickNode Streams to trigger deposit polling; the mint currently polls without a webhook.
-- Owner approval through a second, co-signed reserve pocket. Current locks accept only 1-of-N and reject refund/time-lock tags; this requires protocol changes.
+- Protocol-level owner approval through a second, co-signed reserve pocket. The wallet already asks the owner above a threshold ([agent](design/05-agent.md#owner-approval)), but that runs in agent code. Current locks accept only 1-of-N and reject refund/time-lock tags; this requires protocol changes.
 - Temporal for durable top-ups. Workflow randomness and signing would run in activities; existing persisted funding checkpoints still have recovery limits.
 - Onchain issuance logging and an external reconciliation view.
 - Hiding which provider was paid, through fresh payout accounts. An onchain check of the provider's approval reveals the provider; no check lets the mint pay anyone. Settlement already decouples payout timing and amounts from calls; which providers earned remains public.
