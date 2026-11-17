@@ -7,7 +7,7 @@ import type { Ctx } from "./ctx.js";
 import { Keysets } from "./crypto/keyset.js";
 import { migrate, type Db } from "./db.js";
 import { pollDeposits } from "./jobs/depositPoller.js";
-import { every } from "./jobs/loop.js";
+import { every, everyAligned } from "./jobs/loop.js";
 import { syncProviders } from "./jobs/providerSync.js";
 import { runSettlement } from "./jobs/settlement.js";
 
@@ -26,7 +26,10 @@ export async function createMint(deps: MintDeps) {
   await migrate(db);
   const keysets = await Keysets.load(db, cfg.MINT_SEED);
   const sync = () => syncProviders(db, vault, cfg.providers);
-  const settleDeps = { db, vault, sender, syncProviders: sync, confirmTimeoutMs: deps.confirmTimeoutMs };
+  const settleDeps = {
+    db, vault, sender, syncProviders: sync, confirmTimeoutMs: deps.confirmTimeoutMs,
+    holdS: cfg.settleHoldS ?? 0, unitCents: cfg.settleUnitCents ?? 1,
+  };
   const ctx: Ctx = {
     db, cfg, keysets, vault, devVault: deps.devVault,
     settle: () => runSettlement(settleDeps, { sync: true }),
@@ -42,7 +45,7 @@ export async function createMint(deps: MintDeps) {
     const stops = [
       every(cfg.depositPollMs, "deposit-poller", () => pollDeposits(db, vault)),
       every(30_000, "provider-sync", sync),
-      every(cfg.settleIntervalS * 1000, "settlement", () =>
+      everyAligned(cfg.settleIntervalS * 1000, "settlement", () =>
         runSettlement({ ...settleDeps, syncProviders: undefined }).catch((e) => {
           if ((e as { status?: number }).status !== 409) throw e; // 409: already running or in flight
         })),

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { Keypair } from "@solana/web3.js";
-import { DEPOSIT_POLL_MS, SETTLE_INTERVAL_S, loadMintEnv, type Env } from "@blindfold/protocol";
+import { DEPOSIT_POLL_MS, SETTLE_HOLD_S, SETTLE_INTERVAL_S, SETTLE_UNIT_CENTS, loadMintEnv, type Env } from "@blindfold/protocol";
 import { z } from "zod";
 
 export type MintEnv = ReturnType<typeof loadMintEnv>;
@@ -31,6 +31,9 @@ export interface AppConfig extends MintEnv {
   providers: ProviderMeta[];
   depositPollMs: number;
   settleIntervalS: number;
+  /** Payout policy (02-mint.md, Settlement privacy). Omitted in-process: 0 and 1, i.e. pay every balance in full now. */
+  settleHoldS?: number;
+  settleUnitCents?: number;
   /** Dev only: in-memory vault and fake settlement sender, plus /dev/* hooks. */
   devFakeChain: boolean;
 }
@@ -43,6 +46,8 @@ export function loadConfig(env: Env = process.env): AppConfig {
     providers: loadProvidersFile(file),
     depositPollMs: Number(env.DEPOSIT_POLL_MS ?? DEPOSIT_POLL_MS),
     settleIntervalS: Number(env.SETTLE_INTERVAL_S ?? SETTLE_INTERVAL_S),
+    settleHoldS: Number(env.SETTLE_HOLD_S ?? env.SETTLE_INTERVAL_S ?? SETTLE_HOLD_S),
+    settleUnitCents: Number(env.SETTLE_UNIT_CENTS ?? SETTLE_UNIT_CENTS),
     devFakeChain: env.MINT_DEV_FAKE_CHAIN === "1",
   };
 }

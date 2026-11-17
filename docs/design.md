@@ -19,7 +19,7 @@ flowchart LR
 2. **Issue.** The owner builds secrets locked 1-of-N to all active provider keys, blinds them and obtains mint signatures. NUT-20 binds mint requests to the owner's quote key. The owner unblinds, checks DLEQ proofs and writes the tokens to the agent's file.
 3. **Pay.** The provider offers x402 v2 scheme `cashu`. The wallet checks mint, unit, asset, provider and price, selects an exact amount and persists it as pending before sending it.
 4. **Redeem.** The provider signs the proofs. The mint verifies signatures and locks, atomically marks proofs spent and credits that provider. The provider serves data only after successful redemption. This includes cryptographic verification and a database transaction; no latency bound is guaranteed.
-5. **Settle.** A timer (default 60 seconds) or admin request pays up to eight active providers per batch. Timers are relative to process startup, not globally synchronized settlement windows.
+5. **Settle.** At fixed UTC windows (default every 10 minutes), or on admin request, the mint pays up to eight active providers per batch. It pays only cents redeemed before the hold (default one window), rounded down to 10 cents, so payout time and amount do not track individual calls ([settlement privacy](design/02-mint.md#46-settlement-privacy)).
 
 ## Blind signatures and compatibility
 
@@ -56,7 +56,7 @@ The admin reconciliation endpoint reports `vault_balance`, `deposited`, `issued`
 
 | Observation or failure | Current behavior |
 |---|---|
-| Public chain | Shows depositor, amount, deposit reference and registered provider payouts; no per-call onchain payment |
+| Public chain | Shows depositor, amount, deposit reference and registered provider payouts; no per-call onchain payment. Payouts land at fixed windows after a hold, in rounded amounts |
 | Provider | Sees query and token proofs; can also observe client network metadata |
 | Mint | Sees deposits, issuance amounts, provider redemptions and timing; blinding hides the direct issuance-to-proof link |
 | Small population or distinctive amounts | Can make correlation easy; privacy is not guaranteed |
@@ -79,4 +79,4 @@ See [MVP and add-ons](mvp.md#add-ons) for priority. These are design options, no
 - Owner approval through a second, co-signed reserve pocket. Current locks accept only 1-of-N and reject refund/time-lock tags; this requires protocol changes.
 - Temporal for durable top-ups. Workflow randomness and signing would run in activities; existing persisted funding checkpoints still have recovery limits.
 - Onchain issuance logging and an external reconciliation view.
-- Hidden provider revenue through fresh payout accounts or chunked withdrawals. This would require changing the current fixed payout registry and reassessing the trust model; current provider revenue remains public.
+- Hiding which provider was paid, through fresh payout accounts. An onchain check of the provider's approval reveals the provider; no check lets the mint pay anyone. Settlement already decouples payout timing and amounts from calls; which providers earned remains public.

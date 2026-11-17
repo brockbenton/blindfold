@@ -40,7 +40,9 @@ Owner ───────────────▶ Agent ─ Wallet SDK ─x
 | `MAX_DEPOSIT_CENTS` | `5000` ($50) | Default per-deposit cap; vault uses configured `max_deposit`, quotes enforce 5000 cents |
 | `QUOTE_EXPIRY_S` | `3600` | Payment deadline only (NUT-04) |
 | `DEPOSIT_POLL_MS` | `2000` | |
-| `SETTLE_INTERVAL_S` | `60` | |
+| `SETTLE_INTERVAL_S` | `600` | Settlement window; runs fire at UTC multiples of it |
+| `SETTLE_HOLD_S` | `SETTLE_INTERVAL_S` | Cents redeemed more recently are not paid in a run |
+| `SETTLE_UNIT_CENTS` | `10` | Payouts round down to a multiple; the remainder carries over |
 | `MAX_PAYOUTS_PER_BATCH` | `8` | Keeps `settle_batch` under the tx size limit |
 | Solana commitment | `confirmed` | Demo only; real deployment would use `finalized` |
 | Devnet USDC mint | `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` | Circle devnet USDC, classic SPL Token program. Configurable via `USDC_MINT` |
@@ -312,7 +314,7 @@ Header `Authorization: Bearer <MINT_ADMIN_TOKEN>`. `401 {"detail":"unauthorized"
 | Endpoint | Response |
 |---|---|
 | `GET /v1/blindfold/admin/balances` | `[{ "provider_id": 0, "balance": 15 }]` (cents, unsettled; positive balances only) |
-| `POST /v1/blindfold/admin/settle` | Runs one settlement now (at most 8 providers, largest balances first; the rest wait for the next run). `{ "batch_id": 1, "payouts": [{ "provider_id": 0, "amount": 15 }], "tx": "<signature>" }` or `{ "batch_id": null }` if no balances |
+| `POST /v1/blindfold/admin/settle` | Runs one settlement now under the same hold and unit policy as the timer (at most 8 providers, largest payable amounts first; the rest wait for the next run). `{ "batch_id": 1, "payouts": [{ "provider_id": 0, "amount": 15 }], "tx": "<signature>" }` or `{ "batch_id": null }` if nothing is payable yet |
 | `GET /v1/blindfold/admin/reconcile` | `{ "vault_balance": c, "deposited": c, "issued": c, "redeemed": c, "settled": c }` (all cents). Lets tests check `vault_balance == deposited - settled` |
 
 Settlement can also return HTTP 409 (`70010`: another run holds the lock; `70011`: a batch is still in flight) or HTTP 502 (`70012`: a batch failed and balances were restored). Retry according to batch state, not as a new payment. Reconciliation is a diagnostic read, not an atomic snapshot across chain and database.
@@ -509,7 +511,7 @@ docker-compose.yml     Postgres
 | `OWNER_KEYPAIR` (path) | owner CLI |
 | `RESERVE_CHECK_EVERY` (10) | agent; checks before calls 1, 11, 21, … by default |
 | `LLM_API_KEY`, `LLM_BASE_URL` (Gemini's OpenAI-compatible endpoint), `LLM_MODEL` (`gemini-3.5-flash-lite,gemini-flash-latest`) | agent `--llm` mode ([05](05-agent.md#llm-decision-loop)); `pnpm demo` also reads `.keys/llm.key` |
-| `MINT_DEV_FAKE_CHAIN` (`1` to enable), `PROVIDERS_FILE`, `DEPOSIT_POLL_MS`, `SETTLE_INTERVAL_S` | mint; fake-chain mode is local development only |
+| `MINT_DEV_FAKE_CHAIN` (`1` to enable), `PROVIDERS_FILE`, `DEPOSIT_POLL_MS`, `SETTLE_INTERVAL_S`, `SETTLE_HOLD_S`, `SETTLE_UNIT_CENTS` | mint; fake-chain mode is local development only |
 | `TOKEN_FILE`, `MAX_PER_CALL_CENTS` (10), `WALLET_ALLOWLIST` (comma list of provider pubkeys; default: union of the proofs' signer sets) | wallet SDK, agent |
 
 **Test layers:** TypeScript tests use fakes; mint and application integration tests require PostgreSQL. Rust vault tests use LiteSVM and a built `target/deploy/vault.so`. The separate `e2e:localnet` script uses `solana-test-validator` and a six-decimal test mint; `e2e` uses a deployed devnet vault and funded keys. See [the runbook](../RUNNING.md).
