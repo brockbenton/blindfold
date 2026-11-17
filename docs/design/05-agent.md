@@ -12,7 +12,7 @@
 4. Before the first call, and again every `RESERVE_CHECK_EVERY` calls, check reserves. With the default 10, checks run before calls 1, 11, 21, … . A failure stops the run before payment.
 5. Pay sequentially for `--calls` requests through `wallet.payFetch`, collect results and report balance changes.
 
-The reserve check validates the vault-owned `Config`, configured mint and expected vault account, reads the token balance over Solana RPC, rounds it down to whole cents, then compares it with the mint's reported outstanding liabilities. Missing accounts, mismatches, underfunding, invalid responses and RPC/mint errors return a failed check. Mint-reported issuance is still trusted; a dishonest mint can understate liabilities. The RPC and mint reads are not an atomic snapshot.
+The reserve check validates the vault-owned `Config`, configured mint and expected vault account, reads the token balance over Solana RPC and rounds it down to whole cents. It reads liabilities from the vault's onchain `IssuanceLog` (`issued - settled`) when it exists, and from the mint's reserves endpoint; it uses the larger of the two. Missing accounts, mismatches, underfunding, a foreign or inconsistent log, RPC errors, and mint errors when there is no log return a failed check. The result's `verified` flag says whether the onchain log was used. A mint can still issue tokens it never logs; the log makes its claim public, not complete ([interfaces §7.6](00-interfaces.md#76-agent-reserve-check-bf)). The RPC and mint reads are not an atomic snapshot.
 
 ## LLM decision loop
 

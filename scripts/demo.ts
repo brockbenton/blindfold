@@ -360,7 +360,7 @@ async function main() {
     db, cfg, vault: new SolanaVaultReader(connection, programId, usdcMint),
     sender: new SolanaSettleSender(connection, programId, usdcMint, cast.authority), confirmTimeoutMs: 90_000,
   });
-  let stopJobs = start(["deposits", "providers"]);
+  let stopJobs = start(["deposits", "providers", "issuance"]);
   cleanups.push(() => stopJobs());
   const stop = (s: ReturnType<typeof serve>) => new Promise<void>((r) => { (s as any).closeAllConnections?.(); s.close(() => r()); });
   const mintServer = serve({ fetch: mintApp.fetch, port: mintPort, hostname: "127.0.0.1" });
@@ -457,6 +457,9 @@ async function main() {
       say(dim(`Copycat's source: ${detail}`));
       emit({ type: "source", text: state === "streams" ? "QuickNode Streams" : state === "starting" ? "RPC (Streams starting)" : "RPC polling" });
     },
+    // A DepositMade from the Stream makes the mint poll now instead of at its next tick. The mint still credits the
+    // deposit only from the vault's DepositRecord account.
+    onDeposit: () => { void mintReq("/v1/blindfold/admin/poll-deposits", { body: {}, auth: true }).catch(() => undefined); },
     onObservation: (o) => {
       emit({
         type: "chain", side: tagged(o), kind: o.kind, text: describeTx(o, feedNames), amountBase: String(o.amountBase), from: o.from, memo: o.memo,
@@ -562,7 +565,7 @@ async function main() {
   // Deposit polling and provider sync are no longer needed; stopping them spares a rate-limited public RPC. From
   // here the mint's settlement timer runs on its own fixed windows, like a real deployment.
   stopJobs();
-  stopJobs = start(["settlement"]);
+  stopJobs = start(["settlement", "issuance"]);
   ok(`agent holds ${walletCents()} cents in ${funded.proofs} tokens, and no Solana key`);
   link("deposit", explorerTx(funded.depositTx, rpc));
   explorerLinks.push(["Owner deposit into the vault", explorerTx(funded.depositTx, rpc)]);

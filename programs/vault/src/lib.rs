@@ -43,4 +43,12 @@ pub mod vault {
     ) -> Result<()> {
         instructions::settle_batch::handle_settle_batch(ctx, batch_id, payouts)
     }
+
+    pub fn init_issuance_log(ctx: Context<InitIssuanceLog>, issued: u64, settled: u64) -> Result<()> {
+        instructions::issuance::handle_init_issuance_log(ctx, issued, settled)
+    }
+
+    pub fn log_issuance(ctx: Context<LogIssuance>, add: u64) -> Result<()> {
+        instructions::issuance::handle_log_issuance(ctx, add)
+    }
 }

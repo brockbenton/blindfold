@@ -10,7 +10,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { VAULT_IDL, USDC_DEVNET_MINT, vaultAta } from "@blindfold/protocol";
+import { VAULT_IDL, USDC_DEVNET_MINT, configPda, vaultAta } from "@blindfold/protocol";
 import { makeProviderKey } from "@blindfold/testkit";
 import { ownerFund } from "@blindfold/wallet";
 import { FakeDepositor } from "../../../packages/wallet/test/fakes/fake-depositor.js";
@@ -34,7 +34,8 @@ const configData = () => {
   });
 };
 const connection = (vaultCents: number) => ({
-  async getAccountInfo() { return { owner: programId, data: await configData() }; },
+  // Only the Config PDA exists: no onchain issuance log, so liabilities come from the mint.
+  async getAccountInfo(a: PublicKey) { return a.equals(configPda(programId)) ? { owner: programId, data: await configData() } : null; },
   async getTokenAccountBalance() { return { value: { amount: String(vaultCents * 10_000) } }; },
 });
 

@@ -33,7 +33,9 @@ pub fn handle_settle_batch<'info>(
         VaultError::BadBatchId
     );
     let remaining = ctx.remaining_accounts;
-    require!(remaining.len() == 2 * payouts.len(), VaultError::ProviderMismatch);
+    // Pairs of [provider_record, payout_token], optionally followed by the issuance log.
+    let with_log = remaining.len() == 2 * payouts.len() + 1;
+    require!(with_log || remaining.len() == 2 * payouts.len(), VaultError::ProviderMismatch);
 
     let usdc_mint = ctx.accounts.usdc_mint.key();
 
@@ -88,6 +90,16 @@ pub fn handle_settle_batch<'info>(
             payout.amount,
             ctx.accounts.usdc_mint.decimals,
         )?;
+    }
+
+    if with_log {
+        let info = &remaining[2 * payouts.len()];
+        let (expected, _) = Pubkey::find_program_address(&[ISSUANCE_SEED], &crate::ID);
+        require_keys_eq!(info.key(), expected, VaultError::IssuanceLogMismatch);
+        require!(info.owner == &crate::ID && info.is_writable, VaultError::IssuanceLogMismatch);
+        let mut log = Account::<IssuanceLog>::try_from(info).map_err(|_| error!(VaultError::IssuanceLogMismatch))?;
+        log.settled = log.settled.checked_add(total).ok_or(VaultError::MathOverflow)?;
+        log.exit(&crate::ID)?;
     }
 
     emit!(BatchSettled { batch_id, total, count: payouts.len() as u8 });

@@ -79,12 +79,15 @@ export function registerTools(server: McpServer, session: Session): void {
     "check_reserves",
     {
       title: "Check vault reserves",
-      description: "Compare the Blindfold vault's USDC balance on Solana with the mint's outstanding liabilities. buy_data runs this check itself; this tool only reports it.",
+      description: "Compare the Blindfold vault's USDC balance on Solana with its outstanding liabilities, read from the vault's onchain issuance log when it exists (verified) or else from the mint's report. buy_data runs this check itself; this tool only reports it.",
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async () => {
       const r = await session.reserves();
-      return json({ ok: r.ok, vault_cents: r.vaultCents, outstanding_cents: r.outstandingCents, ...(r.reason ? { reason: r.reason } : {}) });
+      return json({
+        ok: r.ok, vault_cents: r.vaultCents, outstanding_cents: r.outstandingCents, verified: r.verified === true,
+        ...(r.note ? { note: r.note } : {}), ...(r.reason ? { reason: r.reason } : {}),
+      });
     },
   );
 

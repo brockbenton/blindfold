@@ -16,6 +16,6 @@ These references provide background on x402 and Cashu. They are not a security a
 - The mint confirms deposits from vault-owned account state rather than interpreting transfer-like instructions. This avoids relying on an instruction parser as evidence that funds arrived.
 - The mint inserts spent proofs and credits provider balances in one database transaction. Settlement batches use monotonically increasing IDs to reject replay.
 - The provider redeems before serving data. This prevents an unspent-looking token from buying data twice, but a lost response can leave a paid customer without data.
-- The agent's reserve check fails closed on errors. It relies on mint-reported issuance, so a dishonest mint can defeat it by understating liabilities.
+- The agent's reserve check fails closed on errors. With the onchain issuance log it uses the mint's public, non-decreasing claim, so the mint cannot report a smaller number than it logged; a dishonest mint can still issue tokens it never logs.
 
 These controls have tests; none justifies claims that funds cannot be drained, activity cannot be watched, or a leaked token is useless. The mint is custodial, signing helpers are non-constant-time, and deployment authorities remain trusted. See [security model and limitations](../README.md#security-model-and-limitations).

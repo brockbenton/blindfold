@@ -1,6 +1,6 @@
 import {
-  SOLANA_COMMITMENT, configPda, decodeConfig, decodeDepositRecord, decodeProviderRecord, depositPda, providerPda, vaultAta,
-  type DepositRecordAccount, type ProviderRecordAccount,
+  SOLANA_COMMITMENT, configPda, decodeConfig, decodeDepositRecord, decodeIssuanceLog, decodeProviderRecord, depositPda, issuancePda, providerPda,
+  vaultAta, type DepositRecordAccount, type IssuanceLogAccount, type ProviderRecordAccount,
 } from "@blindfold/protocol";
 import { Connection, PublicKey, type AccountInfo } from "@solana/web3.js";
 
@@ -17,6 +17,8 @@ export interface VaultReader {
   getDeposits(indices: bigint[]): Promise<(DepositRecordAccount | null)[]>;
   getProvider(id: number): Promise<ProviderRecordAccount | null>;
   getVaultBalanceBase(): Promise<bigint>;
+  /** The onchain issuance log, or `null` before it is created. */
+  getIssuanceLog(): Promise<IssuanceLogAccount | null>;
 }
 
 const CHUNK = 50;
@@ -53,6 +55,11 @@ export class SolanaVaultReader implements VaultReader {
   async getProvider(id: number): Promise<ProviderRecordAccount | null> {
     const info = await this.connection.getAccountInfo(providerPda(id, this.programId), SOLANA_COMMITMENT);
     return info ? decodeProviderRecord(this.owned(info, `ProviderRecord ${id}`)) : null;
+  }
+
+  async getIssuanceLog(): Promise<IssuanceLogAccount | null> {
+    const info = await this.connection.getAccountInfo(issuancePda(this.programId), SOLANA_COMMITMENT);
+    return info ? decodeIssuanceLog(this.owned(info, "IssuanceLog")) : null;
   }
 
   async getVaultBalanceBase(): Promise<bigint> {
