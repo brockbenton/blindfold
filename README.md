@@ -104,6 +104,7 @@ flowchart LR
 | **Protocol** | [`packages/protocol`](packages/protocol) | Shared constants, environment loading, vault IDL and wire types. |
 | **Provider** | [`apps/mock-api`](apps/mock-api) | Example data feed (whale flow, order-book depth, premium signals) built from live Coinbase market data, with a deterministic fallback. Serves x402 `blindfold`, and optionally standard `exact` as a baseline. |
 | **Agent** | [`agents/simple`](agents/simple) | Scripted or LLM-driven trading-research agent. See [Agent decision loop](#agent-decision-loop-and-safety-limits). |
+| **MCP server** | [`agents/mcp`](agents/mcp) | The same tools and limits for Claude Desktop and other MCP clients, with owner approval through elicitation. |
 | **Copycat, demo and dashboard** | [`scripts`](scripts) | Adversary bot that reads only public Solana data, plus the narrated devnet demo, a live dashboard and the multi-owner crowd simulation. |
 | **Tests** | [`tests/integration`](tests/integration), `*/test` | Unit tests, a PostgreSQL integration suite and the LiteSVM program tests. |
 
@@ -215,6 +216,10 @@ Provider responses are **untrusted input**. They go to the model unchanged, and 
 Approval runs inside the wallet's x402 payment hook. That hook is the first point where the exact price, provider key and asset are all known, and every payment passes through it. It asks only after all other checks pass, so the owner is never prompted for a payment the wallet would refuse.
 
 These controls stop a *manipulated model*, not a *compromised agent process*. A fooled model can still waste its budget at registered providers, in purchases at or below the approval threshold. It cannot pay anyone else. `pnpm demo` Act 6 demonstrates this with a poisoned feed. Full details: [Agent design](docs/design/05-agent.md).
+
+### Claude Desktop and other MCP clients
+
+[`agents/mcp`](agents/mcp) is an MCP server that gives Claude Desktop, or any MCP client, the same tools (`list_providers`, `get_balance`, `buy_data`, `check_reserves`) with the same limits enforced in code. Owner approval appears as an approve/deny prompt through MCP elicitation. Setup, a `claude_desktop_config.json` snippet and a demo script are in its [README](agents/mcp/README.md).
 
 ---
 
