@@ -87,7 +87,21 @@ An `exact` payment is a USDC transfer plus a memo. TokenFeed sets x402's `extra.
 | 7. Replay | Replayed call refused with 402 | "A copied payment buys nothing." |
 | 8. Reserve gate | Agent stops with exit code 7 | "If the mint claims more than the vault holds, the agent pays nothing." |
 
-State the limit honestly: with few users, or distinctive amounts and timing, deposits and payouts can still be correlated.
+State the limit honestly: in this run only one owner deposits, so Copycat can link the batch payout to that owner, though not to the token or the calls. The crowd demo below shows what changes with several owners.
+
+## Crowd demo: privacy needs other people
+
+```sh
+npx -y pnpm@10.33.0 crowd            # 3 agents; --agents 2..5, --no-pause
+```
+
+Three agents, each with its own owner wallet, research different tokens (SOL, BTC, ETH) at TokenFeed with interleaved calls. With `exact`, Copycat still sorts the payments by wallet and reports `BUY SOL`, `BUY BTC` and `BUY ETH`, one per wallet. With Blindfold, each owner deposits the same $1.00, the agents make the same purchases with tokens, and one settlement batch pays the feed for all of them. Copycat sees three deposits and one payout and reports **CANNOT ATTRIBUTE**: who bought what, and which token anyone researched, is unknown. For contrast it prints what the same payout would show with a single depositor (`LINKED`).
+
+It runs on a throwaway local validator only (needs `anchor build` and the Solana tools) and takes about a minute. Each owner and `exact` agent is funded straight from the test USDC mint before Copycat starts watching, the local stand-in for owners who bought USDC independently. A devnet crowd would need owners funded the same way, for example each from faucet.circle.com; funding them from the main owner would put a transfer onchain linking them all.
+
+What it does not hide, and says so at the end: transfers that fund the owners from a common wallet; the payout total, which bounds the crowd's spending; timing patterns across many deposits and payouts; and what the feed and the mint see off chain. Equal deposits matter because a distinctive amount is a fingerprint, and a deposit too small to cover a payout rules its owner out (Copycat reports `PARTIAL` when amounts force a depositor into the payout).
+
+**For the video:** keep `pnpm demo` as the main story and record `pnpm crowd` as a short separate clip after Act 5, answering "but there is only one user". A flag on the main demo would add four acts to an already long run.
 
 ## Recording tips
 

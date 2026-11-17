@@ -1,7 +1,7 @@
 // Copycat's inference and the dashboard's event stream. No chain access: observations are built by hand.
 import { afterEach, describe, expect, it } from "vitest";
 import type { Observation } from "../lib/bot.js";
-import { describe as describeTx, infer, parseMemo } from "../lib/copycat.js";
+import { attributeVault, describe as describeTx, infer, parseMemo } from "../lib/copycat.js";
 import { startDashboard, type Dashboard } from "../lib/dashboard.js";
 
 const AGENT = "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU";
@@ -51,6 +51,44 @@ describe("infer", () => {
   it("describes each transaction the way Copycat reads it", () => {
     expect(describeTx(pay(AGENT, "whale-flow/SOL", 0))).toBe("7xKX...gAsU paid the feed $0.05 for whale-flow on SOL");
     expect(describeTx({ kind: "vault_payout", signature: "p", slot: 2, time: null, from: "v", to: "f", amountBase: 150_000n })).toContain("Payer: unknown");
+  });
+});
+
+describe("attributeVault", () => {
+  const THIRD = "Hq1UVvYt4dBq3ZBfN7ZtFvr8a2YWzN7GbmJ1cCh5r6Rv";
+  const dep = (from: string, amountBase = 1_000_000n): Observation => ({ kind: "vault_deposit", signature: `d${slot}`, slot: slot++, time: null, from, to: "vault", amountBase });
+  const out = (amountBase: bigint): Observation => ({ kind: "vault_payout", signature: `p${slot}`, slot: slot++, time: null, from: "vault", to: "feed", amountBase });
+
+  it("links a lone depositor to the payout but never names a token", () => {
+    const r = attributeVault([dep(AGENT), out(150_000n)]);
+    expect(r).toMatchObject({ action: "LINKED", payouts: 1, payoutBase: 150_000n, forced: [] });
+    expect(r.reason).toContain("Only 7xKX...gAsU deposited");
+    expect(r.reason).toContain("Which token it researched: unknown");
+  });
+
+  it("cannot attribute one payout to any of several equal depositors", () => {
+    const r = attributeVault([dep(AGENT), dep(OTHER), dep(THIRD), out(600_000n)]);
+    expect(r).toMatchObject({ action: "CANNOT ATTRIBUTE", equalDeposits: true, forced: [] });
+    expect(r.depositors).toHaveLength(3);
+    expect(r.reason).toBe("3 wallets deposited the same $1.00 each, and 1 payout ($0.60) could be any mix of their purchases. Who bought what, and which token anyone researched: unknown.");
+  });
+
+  it("counts repeat deposits per wallet", () => {
+    const r = attributeVault([dep(AGENT, 500_000n), dep(AGENT, 500_000n), dep(OTHER), out(100_000n)]);
+    expect(r.depositors.find((d) => d.wallet === AGENT)).toMatchObject({ deposits: 2, totalBase: 1_000_000n });
+    expect(r).toMatchObject({ action: "CANNOT ATTRIBUTE", equalDeposits: true });
+  });
+
+  it("gives away a depositor when amounts leave no other explanation", () => {
+    // The two small deposits together hold $0.20, so a $0.50 payout must include the big depositor's money.
+    const r = attributeVault([dep(AGENT, 5_000_000n), dep(OTHER, 100_000n), dep(THIRD, 100_000n), out(500_000n)]);
+    expect(r).toMatchObject({ action: "PARTIAL", equalDeposits: false, forced: [AGENT] });
+    expect(r.reason).toContain("Amounts give it away");
+  });
+
+  it("reports nothing before a payout and ignores direct payments", () => {
+    expect(attributeVault([dep(AGENT), dep(OTHER)]).action).toBe("NO SIGNAL");
+    expect(attributeVault([pay(AGENT, "whale-flow/SOL", 0)])).toMatchObject({ action: "NO SIGNAL", depositors: [] });
   });
 });
 

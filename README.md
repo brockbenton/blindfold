@@ -8,7 +8,7 @@ Blindfold is a custom x402 v2 scheme, `cashu`. An owner deposits USDC into a Sol
 
 **Privacy without giving up safety.** The agent holds tokens, not a Solana key. Tokens are locked to registered providers, so a hijacked agent cannot pay an attacker. Before paying, the agent reads the vault's USDC balance on Solana itself and refuses to pay a mint that claims more liabilities than the vault holds.
 
-What it does not hide: deposits and payouts are public, providers see the queries and IP addresses, and with few users or distinctive amounts and timing, deposits and payouts can still be correlated. See [Limits and trust](#limits-and-trust).
+What it does not hide: deposits and payouts are public, and providers see the queries and IP addresses. With one user, the batch payout is linked to that user's deposit; it takes several owners depositing equal amounts before Copycat cannot attribute a payout (`pnpm crowd`). See [Limits and trust](#limits-and-trust).
 
 ## Run and test
 
@@ -38,7 +38,7 @@ The real-vault path additionally needs Rust 1.89.0, Anchor 1.2.2 and Solana tool
 | Provider (mock token data feed) | Sells whale flow and order-book depth per call over x402 `cashu`; redeems before serving; optionally also accepts standard `exact` as a baseline |
 | Wallet and owner CLI | Funds provider-locked tokens, pays exact amounts, applies per-call caps and reconciles pending payments |
 | Agent | Scripted or LLM-driven (`--llm`, Gemini by default, any OpenAI-compatible model): chooses data, decides BUY/SELL/HOLD; code enforces the reserve gate, a budget and a step limit, and refusals go back to the model ([decision loop and limits](docs/design/05-agent.md)) |
-| Copycat and dashboard | Copycat reads only public Solana data and infers trading signals from `exact` payments; the dashboard puts `exact` and Blindfold side by side with live balances |
+| Copycat and dashboard | Copycat reads only public Solana data, infers trading signals from `exact` payments and tests whether vault payouts can be attributed to depositors; the dashboard puts `exact` and Blindfold side by side with live balances; `pnpm crowd` runs several agents at once |
 
 QuickNode Streams, owner co-signing, Temporal, onchain issuance logging and hidden provider revenue are planned. See [MVP and add-ons](docs/mvp.md).
 
@@ -56,7 +56,7 @@ QuickNode Streams, owner co-signing, Temporal, onchain issuance logging and hidd
 - **Price and data:** an allowed provider can charge up to the wallet's per-call cap. An agent can waste its whole budget on allowed providers. Payment does not establish that returned data is accurate.
 - **Custody:** the mint can censor, under-report issuance or misuse its settlement authority. The vault restricts payout addresses, but it does not prove those payouts correspond to honest redemptions. Deployment and upgrade authorities remain trusted.
 - **Reserves:** the agent reads the vault balance itself and compares it with mint-reported outstanding liabilities. It fails closed on errors, but cannot detect a mint that lies about issuance. Fake-chain mode does not provide an onchain reserve check.
-- **Privacy:** deposits and provider payouts are public. Providers see queries, and the mint sees redemption amounts and times. No shared relay, Tor or Oblivious HTTP layer is implemented.
+- **Privacy:** deposits and provider payouts are public. Privacy needs a crowd: with one depositor a payout is linked to it, and distinctive amounts, a common funding wallet or repeated timing can link several. Providers see queries, and the mint sees redemption amounts and times. No shared relay, Tor or Oblivious HTTP layer is implemented.
 - **Recovery:** a lost paid response can consume tokens without delivering data. Funding state supports recovery at persisted checkpoints, not exactly-once deposits across every crash. See [wallet recovery limits](docs/design/04-wallet-sdk.md#recovery-limits).
 - **Prototype:** no mainnet support, refunds, swap/change, key rotation, sanctions screening or independent security audit. Mint signing helpers are non-constant-time; this is not a production custody service.
 
