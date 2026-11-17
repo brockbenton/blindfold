@@ -10,7 +10,8 @@ export interface Tools {
   /** Active providers only. */
   list_providers(): Promise<ProviderInfo[]>;
   call_paid_api(a: { url: string; method?: "GET" | "POST"; body?: unknown }): Promise<{ status: number; data: unknown; paidCents: number; redemptionId?: string }>;
-  check_reserves(): Promise<{ ok: boolean; vaultCents: number; outstandingCents: number; reason?: string }>;
+  /** `verified`: liabilities came from the vault's onchain issuance log, not only the mint's report. */
+  check_reserves(): Promise<{ ok: boolean; vaultCents: number; outstandingCents: number; verified?: boolean; note?: string; reason?: string }>;
   report(a: { summary: string; data?: unknown }): Promise<void>;
   // No approval tool: owner approval for large purchases is enforced inside the wallet (AgentWallet `approve`),
   // where the price is known and no caller can skip it.

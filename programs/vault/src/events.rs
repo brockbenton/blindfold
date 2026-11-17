@@ -26,3 +26,10 @@ pub struct BatchSettled {
     pub total: u64,
     pub count: u8,
 }
+
+#[event]
+pub struct IssuanceLogged {
+    pub issued: u64,
+    pub settled: u64,
+    pub seq: u64,
+}

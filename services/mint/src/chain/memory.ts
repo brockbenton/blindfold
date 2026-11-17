@@ -1,7 +1,7 @@
 // In-memory vault and settlement sender. Used by tests and by the dev-only fake-chain mode (MINT_DEV_FAKE_CHAIN=1).
-import type { DepositRecordAccount, ProviderRecordAccount } from "@blindfold/protocol";
+import type { DepositRecordAccount, IssuanceLogAccount, ProviderRecordAccount } from "@blindfold/protocol";
 import { Keypair, PublicKey } from "@solana/web3.js";
-import { ProgramError, type ConfirmStatus, type SettleSender, type SettlePayout } from "./settleSender.js";
+import { ProgramError, type ConfirmStatus, type IssuanceWriter, type PreparedTx, type SettleSender, type SettlePayout } from "./settleSender.js";
 import type { VaultConfigView, VaultReader } from "./vaultReader.js";
 
 const bytes = (v: string | Uint8Array) => (typeof v === "string" ? Uint8Array.from(Buffer.from(v, "hex")) : v);
@@ -15,6 +15,8 @@ export class MemoryVault implements VaultReader {
   paid = new Map<number, bigint>();
   /** Make getDeposits throw (simulates a wrong account owner). */
   failReads = false;
+  /** The onchain issuance log, `null` until created. */
+  issuanceLog: IssuanceLogAccount | null = null;
 
   addDeposit(o: { amountBase: bigint; depositRef: string | Uint8Array; depositor?: PublicKey }): DepositRecordAccount {
     const rec: DepositRecordAccount = {
@@ -60,13 +62,24 @@ export class MemoryVault implements VaultReader {
   async getVaultBalanceBase() {
     return this.balanceBase;
   }
+  async getIssuanceLog() {
+    return this.issuanceLog ? { ...this.issuanceLog } : null;
+  }
 }
 
 type Knob = { kind: "send" } | { kind: "afterLand" } | { kind: "program"; name: string } | { kind: "race" } | { kind: "neverLand" };
 
 /** Mimics the program's settle_batch checks. One-shot failure knobs. */
-export class FakeSender implements SettleSender {
+export class FakeSender implements SettleSender, IssuanceWriter {
   sends = 0;
+  /** Issuance-log transactions sent. */
+  logWrites = 0;
+  /** Simulates a program deployed before the issuance log existed. */
+  issuanceUnsupported = false;
+  /** One-shot: the next issuance-log send lands but its response is lost. */
+  loseNextLogResponse = false;
+  /** One-shot: the next issuance-log send is accepted but never lands. */
+  dropNextLog = false;
   landed = new Set<string>();
   height = 0;
   private knobs: Knob[] = [];
@@ -118,9 +131,51 @@ export class FakeSender implements SettleSender {
       this.vault.balanceBase -= p.amountBase;
       this.vault.paid.set(p.providerId, (this.vault.paid.get(p.providerId) ?? 0n) + p.amountBase);
     }
+    // Like SolanaSettleSender: the batch is added to the log when the log exists.
+    if (this.vault.issuanceLog) this.vault.issuanceLog.settled += payouts.reduce((t, p) => t + p.amountBase, 0n);
     this.landed.add(tx);
     if (knob?.kind === "afterLand") throw new Error("connection lost after send");
     return { tx, validUntil };
+  }
+
+  async prepareInitIssuanceLog(issuedBase: bigint, settledBase: bigint) {
+    return this.prepareLog(() => {
+      if (this.vault.issuanceLog) throw simulated("account already in use");
+      if (issuedBase < settledBase) throw simulated("Error Code: IssuanceBelowSettled");
+      this.vault.issuanceLog = { issued: issuedBase, settled: settledBase, seq: 0n, updatedSlot: 1n, updatedAt: BigInt(Math.floor(Date.now() / 1000)), bump: 255 };
+    });
+  }
+
+  async prepareLogIssuance(addBase: bigint) {
+    return this.prepareLog(() => {
+      const log = this.vault.issuanceLog;
+      if (!log) throw simulated("AccountNotInitialized");
+      if (log.issued + addBase < log.settled) throw simulated("Error Code: IssuanceBelowSettled");
+      log.issued += addBase;
+      log.seq += 1n;
+    });
+  }
+
+  private prepareLog(apply: () => void): PreparedTx {
+    const sig = `fake-log-${++this.n}`;
+    return {
+      sig,
+      validUntil: this.height + 100,
+      send: async () => {
+        if (this.issuanceUnsupported) throw simulated("Error Code: InstructionFallbackNotFound");
+        if (this.dropNextLog) {
+          this.dropNextLog = false;
+          return;
+        }
+        apply();
+        this.logWrites++;
+        this.landed.add(sig);
+        if (this.loseNextLogResponse) {
+          this.loseNextLogResponse = false;
+          throw new Error("connection lost after send");
+        }
+      },
+    };
   }
 
   async confirm(tx: string): Promise<ConfirmStatus> {
@@ -129,4 +184,9 @@ export class FakeSender implements SettleSender {
   async isExpired(validUntil: number) {
     return this.height > validUntil;
   }
+}
+
+/** A preflight rejection, shaped like web3.js's SendTransactionError (it carries simulation logs). */
+function simulated(msg: string) {
+  return Object.assign(new Error(`Simulation failed: ${msg}`), { logs: [`Program log: ${msg}`] });
 }

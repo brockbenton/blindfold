@@ -27,6 +27,14 @@ export function adminRoutes(ctx: Ctx) {
 
   app.post("/v1/blindfold/admin/settle", async (c) => c.json(await ctx.settle()));
 
+  // A hint that a deposit just landed (QuickNode Stream). The poll still reads DepositRecord accounts onchain.
+  app.post("/v1/blindfold/admin/poll-deposits", async (c) => c.json({ processed: await ctx.pollDeposits() }));
+
+  app.post("/v1/blindfold/admin/log-issuance", async (c) => {
+    if (!ctx.syncIssuance) return c.json({ detail: "this mint cannot write the issuance log", code: 0 }, 400);
+    return c.json({ result: await ctx.syncIssuance() });
+  });
+
   app.get("/v1/blindfold/admin/reconcile", async (c) => {
     const one = async (sql: string) => (await ctx.db.query(sql)).rows[0].n as number;
     const out: AdminReconcileResponse = {

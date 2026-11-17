@@ -140,17 +140,21 @@ Solana is the settlement and custody layer. USDC enters the system through one v
 | `deposit` | Owner | Transfers whole-cent USDC into the vault and writes a `DepositRecord` (index, depositor, amount, deposit reference). Emits `DepositMade`. |
 | `register_provider` | Admin | Records a provider's ecash public key and its USDC payout account. |
 | `deactivate_provider` | Admin | Permanently disables a provider record. |
-| `settle_batch` | Mint authority | Pays 1–8 active providers from the vault, to their registered payout accounts only. A strictly increasing `batch_id` makes a retried batch fail instead of paying twice. |
+| `settle_batch` | Mint authority | Pays 1–8 active providers from the vault, to their registered payout accounts only. A strictly increasing `batch_id` makes a retried batch fail instead of paying twice. When given the issuance log, the program adds the batch to its settled total. |
+| `init_issuance_log` | Mint authority | Creates the `IssuanceLog` PDA with the mint's cumulative issued total and a one-time settled baseline (auditable against past `BatchSettled` events). |
+| `log_issuance` | Mint authority | Adds newly issued cents to the logged cumulative total. It's an add, not a set, so mints sharing the vault can't overwrite each other, and a published claim can't be retracted. Emits `IssuanceLogged`. |
 
-PDAs: `Config` (`["config"]`), `DepositRecord` (`["deposit", u64]`), `ProviderRecord` (`["provider", u32]`). Errors, events and security checks are documented in [Vault design](docs/design/01-vault.md).
+PDAs: `Config` (`["config"]`), `DepositRecord` (`["deposit", u64]`), `ProviderRecord` (`["provider", u32]`), `IssuanceLog` (`["issuance"]`). Errors, events and security checks are documented in [Vault design](docs/design/01-vault.md).
+
+**Onchain issuance log.** The agent's reserve check compares the vault's USDC balance with `issued - settled` read from the `IssuanceLog` account, not just with the mint's HTTP report. It uses whichever claim is larger, so issuance the mint has not logged yet still counts. `settled` is advanced by the program itself during `settle_batch`, and `issued` can only go up. What it proves: the mint's liability claim is public, timestamped and permanent, and a mint can no longer show one number to the agent and another to everyone else. What it doesn't prove: a mint can still issue tokens it never logs. The log makes that lie public and auditable, it doesn't make it impossible. Until the devnet program is upgraded, agents fall back to the mint's report and say the result is unverified.
 
 ### Who touches the chain
 
 | Actor | Reads | Writes |
 |---|---|---|
 | Owner | — | One `deposit` per funding |
-| Mint | `DepositRecord` accounts, polled every 2 s. Deposits are credited from program state, never from third-party feeds. | `settle_batch` on a fixed schedule |
-| Agent | `Config` and the vault's USDC balance, for the reserve check | **Nothing.** The agent holds no Solana key. |
+| Mint | `DepositRecord` accounts, polled every 2 s and immediately when the Stream sees a `DepositMade`. Deposits are credited from program state, never from third-party feeds. | `settle_batch` on a fixed schedule; `log_issuance` within 5 s of new issuance |
+| Agent | `Config`, the vault's USDC balance and the `IssuanceLog`, for the reserve check | **Nothing.** The agent holds no Solana key. |
 | Provider | — | Nothing. It receives USDC in its registered account. |
 | Copycat | Every transaction touching provider payout accounts or the vault, through QuickNode Streams with RPC fallback | — |
 
@@ -173,7 +177,7 @@ The agent ([`agents/simple`](agents/simple)) has two decision loops over the sam
 
 1. Read the wallet balance. Refuse to run with an empty budget.
 2. Discover active providers from the mint. Select one by `--provider`, by `--topic`, or take the first active provider.
-3. **Reserve gate:** check vault reserves before call 1 and every `RESERVE_CHECK_EVERY` calls (default 10). A failure stops the run before any payment, with exit code 7.
+3. **Reserve gate:** check vault reserves before call 1 and every `RESERVE_CHECK_EVERY` calls (default 10): the vault's USDC balance must cover the liabilities in the onchain issuance log (or the mint's report, when larger or when no log exists). A failure stops the run before any payment, with exit code 7.
 4. Pay for `--calls` requests sequentially through the wallet, then report the results and balance changes.
 
 ### LLM loop (`--llm`)
@@ -193,7 +197,7 @@ Each turn:
 ┌─▶ 1. Send the conversation and tools to the model
 │   2. Model calls buy_data(url)
 │      ├─ Budget        session spend < --budget?            no → refused: budget_exhausted
-│      ├─ Reserve gate  vault USDC ≥ mint liabilities?       no → stop run (exit 7)
+│      ├─ Reserve gate  vault USDC ≥ logged liabilities?     no → stop run (exit 7)
 │      ├─ Wallet policy allowed provider, asset, mint,
 │      │                exact amount ≤ --max-per-call?       no → refused
 │      ├─ Owner approval price > --approve-over?             ask owner; deny or timeout → refused
@@ -215,7 +219,7 @@ Provider responses are **untrusted input**. They go to the model unchanged, and 
 | **Owner approval** | Above 20¢ | Wallet payment hook (`--approve-over`) | Large purchases. Approve or deny in the terminal or dashboard. No answer within `APPROVAL_TIMEOUT_S` (60 s) counts as a denial. |
 | **Session budget** | 30¢ | LLM loop (`--budget`) | Runaway spending in one session |
 | **Step limit** | 10 model turns | LLM loop | Infinite tool loops. Ends with `HOLD`. |
-| **Reserve gate** | Every 10 paid calls | Agent loop (`RESERVE_CHECK_EVERY`) | Paying a mint that claims more liabilities than the vault holds. Fails closed on any RPC or mint error. |
+| **Reserve gate** | Every 10 paid calls | Agent loop (`RESERVE_CHECK_EVERY`) | Paying from a vault that doesn't cover the liabilities in the onchain issuance log, or a mint that reports more than the vault holds. Fails closed on RPC errors, and on mint errors when there is no onchain log. |
 | **Total budget** | Value of the token file | Ecash | Spending beyond what the owner funded |
 
 Approval runs inside the wallet's x402 payment hook. That hook is the first point where the exact price, provider key and asset are all known, and every payment passes through it. It asks only after all other checks pass, so the owner is never prompted for a payment the wallet would refuse.
@@ -265,7 +269,7 @@ Each batch returns `{ tip, records, deposits }`, even when nothing matched:
 - **Graceful fallback.** The demo never depends on QuickNode. With no API key, no tunnel, a refused request or 20 s without a delivery, Copycat polls RPC and switches back when deliveries resume. Both sources feed one deduplicated list.
 - **Free tier.** The trial plan allows one active Solana Stream at the tip, with no backfill, so `pnpm bot` reads its starting history over RPC.
 
-The mint deliberately does **not** credit deposits from the Stream. Crediting money from a third-party feed would weaken its trust model, so it keeps reading `DepositRecord` accounts directly. Setup steps: [Run the demo › QuickNode Streams](docs/DEMO.md#quicknode-streams-optional).
+**Deposits: the Stream is a trigger, never a source of credit.** When a batch carries a `DepositMade` event, the receiver calls the mint's authenticated `POST /v1/blindfold/admin/poll-deposits` (in `pnpm demo`; in `pnpm bot` when `MINT_URL` and `MINT_ADMIN_TOKEN` are set). The mint then polls right away instead of at its next 2-second tick, joining a poll already in flight. It still credits only what the vault's own `DepositRecord` accounts say: crediting money from a third-party feed would weaken its trust model, and a forged webhook can at most cause an extra poll. Setup steps: [Run the demo › QuickNode Streams](docs/DEMO.md#quicknode-streams-optional).
 
 ---
 
@@ -341,14 +345,14 @@ Blindfold is a **prototype on Solana devnet**. It has not been independently aud
 
 | Area | Guarantee | Limitation |
 |---|---|---|
-| **Custody** | The vault pays only registered provider accounts, in sequential batches. | The mint can censor, under-report issuance or misuse its settlement authority. The vault does not prove payouts match honest redemptions. Deployment and upgrade authorities remain trusted. |
-| **Reserves** | The agent checks the vault balance against reported liabilities and fails closed. | It cannot detect a mint that lies about issuance. The RPC and mint reads are not an atomic snapshot. |
+| **Custody** | The vault pays only registered provider accounts, in sequential batches. | The mint can censor, issue tokens it never logs, or misuse its settlement authority. The vault does not prove payouts match honest redemptions. Deployment and upgrade authorities remain trusted. |
+| **Reserves** | The agent checks the vault balance against the liabilities in the onchain issuance log and fails closed. The mint can't retract a logged claim or report a smaller one. | A mint can still issue tokens it never logs; the log makes that claim public and auditable, not impossible. The RPC and mint reads are not an atomic snapshot. |
 | **Privacy** | No per-call transactions. Payouts are batched, rounded and carry no payer. | Deposits and payouts are public. With one depositor, a payout is linked to that deposit; privacy needs several owners with similar amounts and timing (`pnpm crowd`). Providers see queries and IP addresses, and the mint sees redemption amounts and times. No relay, Tor or Oblivious HTTP layer is implemented. |
 | **Spending** | See [Safety limits](#safety-limits). | An agent can waste its budget at allowed providers. Payment doesn't establish that returned data is accurate. Leaked tokens can still buy from registered providers. |
 | **Recovery** | Funding resumes from persisted checkpoints. | A lost paid response can consume tokens without delivering data. Deposits are not exactly-once across every crash. See [wallet recovery limits](docs/design/04-wallet-sdk.md#recovery-limits). |
 | **Scope** | — | No mainnet, refunds, swap/change, key rotation or sanctions screening. Mint signing helpers are not constant-time. |
 
-The vault deployment and a full devnet acceptance run on November 16, 2026 are recorded in the [vault implementation notes](docs/design/01-vault.md#10-implementation-notes-and-decisions). Those records don't guarantee the deployment is still available. Planned work (protocol-level owner co-signing, onchain issuance logging, hidden provider revenue) is tracked in [MVP and add-ons](docs/mvp.md).
+The vault deployment and a full devnet acceptance run on November 16, 2026 are recorded in the [vault implementation notes](docs/design/01-vault.md#10-implementation-notes-and-decisions). Those records don't guarantee the deployment is still available. Planned work (protocol-level owner co-signing, hidden provider revenue) is tracked in [MVP and add-ons](docs/mvp.md).
 
 ---
 

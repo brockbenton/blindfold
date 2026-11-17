@@ -5,6 +5,9 @@ export interface ReserveSummary {
   ok: boolean;
   vaultCents: number;
   outstandingCents: number;
+  /** True when liabilities came from the vault's onchain issuance log. */
+  verified?: boolean;
+  note?: string;
   reason?: string;
 }
 
@@ -60,7 +63,9 @@ export function humanReporter(io: { stdout: (s: string) => void; stderr: (s: str
       io.stdout(`balance    ${r.balanceBefore}c -> ${r.balanceAfter}c\n`);
       if (r.reserves) {
         const x = r.reserves;
-        io.stdout(`reserves   vault ${x.vaultCents}c >= outstanding ${x.outstandingCents}c (${x.ok ? "ok" : "FAILED"})\n`);
+        const source = x.verified ? "onchain issuance log" : "mint-reported, unverified";
+        io.stdout(`reserves   vault ${x.vaultCents}c >= outstanding ${x.outstandingCents}c (${x.ok ? "ok" : "FAILED"}; ${source})\n`);
+        if (x.note) io.stdout(`           ${x.note}\n`);
       }
     },
     error: (e) => io.stderr(`error: ${e.kind}: ${e.message}\n`),

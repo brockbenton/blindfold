@@ -70,7 +70,16 @@ const watcher = new StreamWatcher({
   },
   onObservation: (o) => report(o, watcher.observations),
   onStatus: (_, detail) => console.log(dim(`[source] ${detail}`)),
-  onDeposit: (d) => say(dim(`vault DepositMade #${d.index}: $${(Number(d.amount) / 1e6).toFixed(2)} (from the Stream's decoded event)`)),
+  onDeposit: (d) => {
+    say(dim(`vault DepositMade #${d.index}: $${(Number(d.amount) / 1e6).toFixed(2)} (from the Stream's decoded event)`));
+    // With MINT_URL and MINT_ADMIN_TOKEN set, nudge that mint to poll deposits now. It still credits only from onchain
+    // DepositRecord accounts, so a forged webhook can make it poll, never credit.
+    if (process.env.MINT_URL && process.env.MINT_ADMIN_TOKEN) {
+      void fetch(`${process.env.MINT_URL.replace(/\/+$/, "")}/v1/blindfold/admin/poll-deposits`, {
+        method: "POST", headers: { authorization: `Bearer ${process.env.MINT_ADMIN_TOKEN}` },
+      }).catch(() => undefined);
+    }
+  },
 });
 if (!noHistory) await watcher.scan().catch((e) => console.error(dim(`RPC error: ${(e as Error).message}`)));
 if (watcher.observations.length === 0) console.log(dim("nothing yet; waiting for transactions..."));

@@ -9,7 +9,7 @@ import { BN, BorshAccountsCoder } from "@anchor-lang/core";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { USDC_DEVNET_MINT, VAULT_IDL, vaultAta } from "@blindfold/protocol";
+import { USDC_DEVNET_MINT, VAULT_IDL, checkReserves, configPda, issuancePda, vaultAta } from "@blindfold/protocol";
 import { makeProviderKey } from "@blindfold/testkit";
 import { AgentWallet, DevDepositor, PaymentRefused, ownerFund } from "@blindfold/wallet";
 import { FakeSender, MemoryVault } from "../../../services/mint/src/chain/memory.js";
@@ -66,9 +66,18 @@ describe.skipIf(!DATABASE_URL)("real mint + mock API + owner + agent", () => {
       max_deposit: new BN(1), deposit_count: new BN(0), provider_count: 0, last_batch_id: new BN(0), bump: 1,
     });
   }
-  /** Fake Solana connection: vault balance is read from the mint's in-memory vault unless overridden. */
+  /** Fake Solana connection: vault balance and issuance log are read from the mint's in-memory vault unless overridden. */
   const connection = (override?: { vaultCents: number }) => ({
-    async getAccountInfo() { return { owner: programId, data: await configData() }; },
+    async getAccountInfo(a: PublicKey) {
+      if (a.equals(configPda(programId))) return { owner: programId, data: await configData() };
+      const l = vault.issuanceLog;
+      if (!a.equals(issuancePda(programId)) || !l) return null;
+      const data = await new BorshAccountsCoder(VAULT_IDL).encode("IssuanceLog", {
+        issued: new BN(l.issued.toString()), settled: new BN(l.settled.toString()), seq: new BN(l.seq.toString()),
+        updated_slot: new BN(1), updated_at: new BN(1), bump: l.bump,
+      });
+      return { owner: programId, data };
+    },
     async getTokenAccountBalance() {
       const base = override ? BigInt(override.vaultCents) * 10_000n : vault.balanceBase;
       return { value: { amount: base.toString() } };
@@ -222,6 +231,17 @@ describe.skipIf(!DATABASE_URL)("real mint + mock API + owner + agent", () => {
     expect(res).toMatchObject({ issued: 100, settled: 2 * PRICE, outstanding: 100 - 2 * PRICE });
     // The agent still passes against the true vault balance.
     expect((await agent(["--topic", "sol"])).code).toBe(0);
+  });
+
+  it("issuance log: created after a settlement, it verifies the same liabilities the mint reports", async () => {
+    expect((await mintReq("/v1/blindfold/admin/log-issuance", {}, true)).json).toEqual({ result: "initialized" });
+    const r = await checkReserves({ connection: connection(), programId, usdcMint: usdc, mintUrl });
+    const res = (await mintReq("/v1/blindfold/reserves")).json;
+    expect(r).toMatchObject({ ok: true, verified: true, onchainOutstandingCents: res.outstanding, mintOutstandingCents: res.outstanding });
+    // A mint that under-reports cannot hide what it already logged.
+    const lying: typeof fetch = async () => new Response(JSON.stringify({ issued: 0, settled: 0, outstanding: 0, keyset_id: "x", updated_at: 0 }));
+    expect(await checkReserves({ connection: connection(), programId, usdcMint: usdc, mintUrl, fetch: lying })).toMatchObject({ outstandingCents: res.outstanding });
+    expect((await checkReserves({ connection: connection({ vaultCents: res.outstanding - 1 }), programId, usdcMint: usdc, mintUrl, fetch: lying })).ok).toBe(false);
   });
 
   it("seams: uppercase provider key onchain is served lowercase; trailing-slash mint URLs work end to end", async () => {
