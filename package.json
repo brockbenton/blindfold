@@ -12,6 +12,8 @@
     "bot": "pnpm --filter @blindfold/scripts bot",
     "crowd": "pnpm --filter @blindfold/scripts crowd",
     "streams:setup": "pnpm --filter @blindfold/scripts streams:setup",
+    "gateway": "pnpm --filter @blindfold/gateway start",
+    "gateway:setup": "pnpm --filter @blindfold/scripts gateway:setup",
     "replay": "pnpm --filter @blindfold/scripts replay",
     "replay:publish": "pnpm --filter @blindfold/scripts replay:publish"
   },
