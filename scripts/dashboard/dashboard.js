@@ -18,7 +18,7 @@ const MARKUP = `
   </header>
   <main>
     ${side("exact", "Standard x402", "exact")}
-    ${side("blind", "Blindfold", "cashu")}
+    ${side("blind", "Blindfold", "blindfold")}
   </main>
   <footer>
     <span>agent wallet<b data-ref="b-exact">-</b></span>

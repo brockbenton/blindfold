@@ -68,7 +68,7 @@ export async function challenge(url: string) {
 
 /** Hand-built PAYMENT-SIGNATURE with `accepted` copied from the 402. */
 export function forge(pr: any, token: string): string {
-  const accepted = pr.accepts.find((a: any) => a.scheme === "cashu");
+  const accepted = pr.accepts.find((a: any) => a.scheme === "blindfold");
   return Buffer.from(JSON.stringify({ x402Version: 2, resource: pr.resource, accepted, payload: { token } })).toString("base64");
 }
 
@@ -76,7 +76,7 @@ export function forge(pr: any, token: string): string {
 export function payClient(wallet: { proofs: Proof[] }, capCents = 10) {
   let lastHeader: string | null = null;
   const scheme = {
-    scheme: "cashu",
+    scheme: "blindfold",
     async createPaymentPayload(x402Version: number, req: any) {
       const cents = Number(BigInt(req.amount) / 10_000n);
       const pk = req.extra.nut10.d as string;

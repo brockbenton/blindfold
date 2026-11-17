@@ -5,7 +5,7 @@ These references provide background on x402 and Cashu. They are not a security a
 ## External reading
 
 - [Cashu NUTs](https://cashubtc.github.io/nuts/): token encoding, keysets, P2PK locks, DLEQ and quote signatures. Blindfold implements a subset plus a custom `solana-usdc` mint method; see [the interface contract](design/00-interfaces.md).
-- [x402 specification](https://github.com/x402-foundation/x402): payment requirements, payloads and HTTP transport. Blindfold uses its v2 SDKs with a custom `cashu` scheme.
+- [x402 specification](https://github.com/x402-foundation/x402): payment requirements, payloads and HTTP transport. Blindfold uses its v2 SDKs with a custom `blindfold` scheme.
 - [Wang et al., “When HTTP 402 Meets the Blockchain: Risks on Emerging x402 Payments”](https://arxiv.org/abs/2607.19545): facilitator security research. Check the paper's version, scope and tested implementations before quoting counts or generalizing its results.
 - [Cloud Security Alliance research note](https://labs.cloudsecurityalliance.org/research/csa-research-note-x402-agent-payment-sdk-flaws-20261025-csa/) and [Safeguard coverage](https://safeguard.sh/resources/blog/x402-protocol-25-vulnerabilities-ai-agent-payments): secondary discussions of V12's x402 findings. Verify the primary report and affected versions before quoting vulnerability counts, disclosure dates or patch status.
 - [Cashu privacy FAQ](https://docs.cashu.space/faq) and [Oblivious HTTP](https://www.rfc-editor.org/rfc/rfc9458.html): privacy background. Blindfold does not implement a relay or OHTTP.

@@ -30,7 +30,7 @@ async function rawServer(accept: Record<string, unknown>) {
 }
 
 const accept = (over: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) => ({
-  scheme: "cashu", network: SOLANA_DEVNET_CAIP2, asset: USDC_DEVNET_MINT, amount: "50000", maxTimeoutSeconds: 60,
+  scheme: "blindfold", network: SOLANA_DEVNET_CAIP2, asset: USDC_DEVNET_MINT, amount: "50000", maxTimeoutSeconds: 60,
   payTo: "", extra: { mints: [] as string[], unit: "usd", nut10: { k: "P2PK", d: "" }, paymentFlow: "upfront", ...extra }, ...over,
 });
 
