@@ -51,6 +51,8 @@ describe("infer", () => {
   it("describes each transaction the way Copycat reads it", () => {
     expect(describeTx(pay(AGENT, "whale-flow/SOL", 0))).toBe("7xKX...gAsU paid the feed $0.05 for whale-flow on SOL");
     expect(describeTx({ kind: "vault_payout", signature: "p", slot: 2, time: null, from: "v", to: "f", amountBase: 150_000n })).toContain("Payer: unknown");
+    expect(describeTx({ kind: "vault_payout", signature: "p", slot: 2, time: null, from: "v", to: "f", amountBase: 100_000n }, { f: "NewsWire" }))
+      .toBe("Blindfold vault paid NewsWire $0.10 in a batch. Payer: unknown");
   });
 });
 
