@@ -171,7 +171,7 @@ Requires PostgreSQL, a deployed vault, `ADMIN_KEYPAIR`, `OWNER_KEYPAIR` (SOL and
 
 ## 9. Live stack (`pnpm serve`)
 
-`npx --yes pnpm@10.33.0 serve` runs Blindfold on this machine against the deployed devnet vault and keeps running until Ctrl-C: PostgreSQL (through `dev-pg.sh` unless `DATABASE_URL` is set), the mint in real chain mode with `.keys/mint-authority.json`, TokenFeed on port 4000 and NewsWire on 4001 (once `pnpm demo` has registered it), and a cloudflared quick tunnel for each so wallets elsewhere can reach them. It prints the public URLs and copy-paste commands to fund a token file and run the agent against them.
+`npx --yes pnpm@10.33.0 serve` runs Blindfold on this machine against the deployed devnet vault and keeps running until Ctrl-C: PostgreSQL (through `dev-pg.sh` unless `DATABASE_URL` is set), the mint in real chain mode with `.keys/mint-authority.json`, TokenFeed on port 4000 with the standard x402 `exact` baseline (when `.keys/provider-payout.json` and `facilitator.json` exist), NewsWire on 4001 (once `pnpm demo` has registered it), the [gateway](design/06-gateway.md) on 4100 (once `pnpm gateway:setup` has created its keys and registered it; its devnet stand-in vendor is TokenFeed's `exact` route), and a cloudflared quick tunnel for each so wallets elsewhere can reach them. It prints the public URLs and copy-paste commands to fund a token file and run the agent against them.
 
 Unlike `pnpm demo`, the mint is persistent. Its database lives in the `serve` schema and its seed in `.keys/serve-mint-seed.hex`, with the admin token in `.keys/serve-admin-token`; both files are created on first run, so add them to your key backup. Tokens funded through it keep redeeming across restarts, and settlement runs on the normal schedule (`--window`, default 600 seconds, with a hold of one window and 10-cent units).
 
@@ -179,7 +179,7 @@ Unlike `pnpm demo`, the mint is persistent. Its database lives in the `serve` sc
 |---|---|
 | `--local` | No tunnels. Everything on `http://localhost`, so the mint URL, and the token files bound to it, stay the same across restarts. Use this for an agent or MCP client on the same machine |
 | `--window S` | Settlement window and hold in seconds (default 600) |
-| `SERVE_MINT_URL`, `SERVE_FEED_URL`, `SERVE_NEWS_URL` | Your own stable public URLs (for example a named Cloudflare tunnel to ports 3338, 4000 and 4001); the quick tunnel for that service is skipped |
+| `SERVE_MINT_URL`, `SERVE_FEED_URL`, `SERVE_NEWS_URL`, `SERVE_GATEWAY_URL` | Your own stable public URLs (for example a named Cloudflare tunnel to ports 3338, 4000, 4001 and 4100); the quick tunnel for that service is skipped |
 
 Quick tunnel URLs change on every run, and a token file only pays the mint URL it was funded through. Use `--local` or `SERVE_MINT_URL` when token files need to outlive one run.
 
