@@ -59,7 +59,9 @@ The admin reconciliation endpoint reports `vault_balance`, `deposited`, `issued`
 | Public chain | Shows depositor, amount, deposit reference and registered provider payouts; no per-call onchain payment. Payouts land at fixed windows after a hold, in rounded amounts |
 | Provider | Sees query and token proofs; can also observe client network metadata |
 | Mint | Sees deposits, issuance amounts, provider redemptions and timing; blinding hides the direct issuance-to-proof link |
-| Small population or distinctive amounts | Can make correlation easy; privacy is not guaranteed |
+| One depositor in a window | Its deposit and the next payout are linked: the owner paid that provider, though not for which token or calls |
+| Several equal depositors, one payout | No single depositor can be attributed from amounts; Copycat's `attributeVault` reports `CANNOT ATTRIBUTE` |
+| Distinctive amounts, shared funding, repeated timing | Can attribute or link depositors: odd amounts fingerprint, a deposit too small for a payout is ruled out, a common funding wallet links owners; privacy is not guaranteed |
 | Leaked tokens | Anyone holding them can submit payments to allowed providers; locks prevent arbitrary-recipient redemption, not budget theft through allowed services |
 | Double spend | Online redemption and a unique spent-proof key prevent double credit |
 | Lost redemption response | Provider may be paid without serving data; wallet uses checkstate to drop spent proofs or recover unspent ones |
@@ -69,7 +71,7 @@ The current provider does not log client IPs, token headers or secrets. Omitting
 
 ## Baseline comparison
 
-The mock API can also accept the standard x402 `exact` scheme on the same routes, and Copycat (`scripts/bot.ts`, `scripts/lib/copycat.ts`) observes the chain like a front-running competitor would. With `exact`, every call is a USDC transfer from the agent's wallet to the provider, so the observer learns the payer, the provider, each amount and each time, plus the token when the seller tags payments with a memo. Copycat turns repeated research on one token into a signal such as `BUY SOL`. With `cashu`, it sees owner deposits into the vault and batched vault payouts at fixed windows in rounded amounts, with no agent wallet and no per-call transaction. The demo registers a second feed so one batch pays more than one provider. `pnpm demo` runs both flows side by side ([demo](DEMO.md)).
+The mock API can also accept the standard x402 `exact` scheme on the same routes, and Copycat (`scripts/bot.ts`, `scripts/lib/copycat.ts`) observes the chain like a front-running competitor would. With `exact`, every call is a USDC transfer from the agent's wallet to the provider, so the observer learns the payer, the provider, each amount and each time, plus the token when the seller tags payments with a memo. Copycat turns repeated research on one token into a signal such as `BUY SOL`. With `cashu`, it sees owner deposits into the vault and batched vault payouts, at fixed windows in rounded amounts, with no agent wallet and no per-call transaction; the demo registers a second feed so one batch pays more than one provider. `attributeVault` then asks whether a payout can be pinned on a depositor (`LINKED` with one, `PARTIAL` when amounts force one in, `CANNOT ATTRIBUTE` otherwise). `pnpm demo` runs both flows side by side with one agent, and `pnpm crowd` with several ([demo](DEMO.md)).
 
 ## Planned work
 

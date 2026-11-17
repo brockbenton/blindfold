@@ -15,7 +15,7 @@ import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { DEFAULT_VAULT_PROGRAM_ID, SOLANA_COMMITMENT, USDC_DEVNET_MINT, vaultAta } from "@blindfold/protocol";
 import type { Observation } from "./lib/bot.js";
-import { ChainWatcher, describe, infer } from "./lib/copycat.js";
+import { ChainWatcher, attributeVault, describe, infer } from "./lib/copycat.js";
 import { explorerTx } from "./lib/explorer.js";
 import { act, bold, dim, green, magenta, red, say, short } from "./lib/narrate.js";
 
@@ -48,7 +48,9 @@ function report(o: Observation, all: Observation[]) {
   console.log(`${time(o)}  ${label}  ${describe(o)}`);
   say(dim(explorerTx(o.signature, rpc)));
   if (o.kind !== "direct_payment") {
-    console.log(`          ${bold(magenta("Copycat"))}  ${green(bold("NO SIGNAL"))}  ${dim("nothing here names an agent")}`);
+    const r = attributeVault(all);
+    const tone = r.action === "NO SIGNAL" || r.action === "CANNOT ATTRIBUTE" ? green : red;
+    console.log(`          ${bold(magenta("Copycat"))}  ${tone(bold(r.action))}  ${dim(r.reason)}`);
     return;
   }
   const s = infer(all).find((x) => x.payer === o.from);

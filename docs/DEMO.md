@@ -90,7 +90,25 @@ An `exact` payment is a USDC transfer plus a memo. TokenFeed sets x402's `extra.
 | 7. Replay | Replayed call refused with 402 | "A copied payment buys nothing." |
 | 8. Reserve gate | Agent stops with exit code 7 | "If the mint claims more than the vault holds, the agent pays nothing." |
 
-State the limit honestly: payouts still show which registered feeds earned. With few users, a deposit and a later payout can still be linked; windows, the hold and rounding make that weaker, not impossible.
+State the limit honestly: payouts still show which registered feeds earned. In this run only one owner deposits, so Copycat can link the batch payout to that owner, though not to the token or the calls; windows, the hold and rounding make timing and amounts weaker signals, not a crowd. The crowd demo below shows what changes with several owners.
+
+## Crowd demo: privacy needs other people
+
+```sh
+npx -y pnpm@10.33.0 crowd            # 3 agents; --agents 2..5, --no-pause, --no-dashboard
+```
+
+Three agents, each with its own owner wallet, research different tokens (SOL, BTC, ETH) at TokenFeed with interleaved calls. With `exact`, Copycat still sorts the payments by wallet and reports `BUY SOL`, `BUY BTC` and `BUY ETH`, one per wallet. With Blindfold, each owner deposits the same $1.00, the agents make the same purchases with tokens, and one settlement batch pays the feed for all of them. Copycat sees three deposits and one payout and reports **CANNOT ATTRIBUTE**: who bought what, and which token anyone researched, is unknown. For contrast it prints what the same payout would show with a single depositor (`LINKED`).
+
+A second round shows what breaks it: Agent A's owner deposits an odd $2.37 and the others $0.10 each, and each agent spends only that round's tokens. The small deposits together cannot cover the payout, so Copycat reports **PARTIAL** and names the big depositor: it must have bought from TokenFeed, though the token stays hidden. Copycat assumes a round's payout was funded by that round's deposits; older tokens would widen the real crowd, but in a thin pool the guess is right, as it is here.
+
+The crowd dashboard (http://localhost:5173, or the next free port) asks "Who is researching what?". The `exact` side lists every wallet Copycat profiled with its token and `BUY` signal ("3 of 3 named"). The Blindfold side lists the vault's deposits and payouts with "agent ? · bought ?", answers "can't tell" after round 1, then "amounts leak" in round 2 with the big deposit highlighted. Purchases appear as ticks per agent, and the status line shows each agent's tokens, which only the agents know.
+
+It runs on a throwaway local validator only (needs `anchor build` and the Solana tools) and takes about a minute and a half. Each owner and `exact` agent is funded straight from the test USDC mint before Copycat starts watching, the local stand-in for owners who bought USDC independently. A devnet crowd would need owners funded the same way, for example each from faucet.circle.com; funding them from the main owner would put a transfer onchain linking them all.
+
+What it does not hide, and says so at the end: transfers that fund the owners from a common wallet; the payout total, which bounds the crowd's spending; timing patterns across many deposits and payouts; and what the feed and the mint see off chain. Equal deposits matter because a distinctive amount is a fingerprint, and a deposit too small to cover a payout rules its owner out, as round 2 shows.
+
+**For the video:** keep `pnpm demo` as the main story and record `pnpm crowd` as a short separate clip after Act 5, answering "but there is only one user", with the crowd dashboard on screen. A flag on the main demo would add five acts to an already long run.
 
 ## Recording tips
 

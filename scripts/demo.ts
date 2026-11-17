@@ -664,7 +664,7 @@ async function main() {
   kv("Per-call data", `none: ${CALLS + NEWS_CALLS} purchases, 0 transactions`);
   kv("Signal", bold(green("NO SIGNAL")));
   blank();
-  say(dim("Honest limit: payouts show which registered feeds earned. Fixed windows, a hold and rounding stop payouts from tracking calls, but with very few users a deposit and a payout can still be linked. Privacy grows with the number of people and feeds using the mint."));
+  say(dim("Honest limit: payouts show which registered feeds earned. Fixed windows, a hold and rounding stop payouts from tracking calls, but only one owner deposited in this run, so Copycat can link the payout to that owner, though not to the token or the calls. With several owners depositing equal amounts it cannot (`pnpm crowd`)."));
   await pause(pausing);
 
   // Act 6: an LLM agent meets a poisoned feed.
