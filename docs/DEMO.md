@@ -1,6 +1,6 @@
 # Run the demo
 
-One command runs **Copycat vs. your trading agent** on Solana devnet with real transactions. Your agent researches SOL by buying whale-flow data from TokenFeed, a mock token data feed. First it pays with standard x402 `exact`, and Copycat, a front-running bot that reads only public Solana data, turns those payments into "BUY SOL". Then the owner funds Blindfold tokens and the agent does the same research: Copycat sees a deposit and a batch payout, and reports no signal. Two safety acts follow: a replayed payment is refused and the agent refuses a mint that lies about its reserves. A local dashboard shows both sides live.
+One command runs **Copycat vs. your trading agent** on Solana devnet with real transactions. Your agent researches SOL by buying whale-flow data from TokenFeed, a mock token data feed. First it pays with standard x402 `exact`, and Copycat, a front-running bot that reads only public Solana data, turns those payments into "BUY SOL". Then the owner funds Blindfold tokens and the agent does the same research: Copycat sees a deposit and a batch payout, and reports no signal. Three safety acts follow: an AI agent reads a feed response carrying a prompt injection that points it at an attacker, and its tokens cannot pay the attacker; a replayed payment is refused; and the agent refuses a mint that lies about its reserves. A local dashboard shows both sides live.
 
 Commands work in fish, bash and zsh. Run them from the repository root.
 
@@ -12,12 +12,13 @@ Commands work in fish, bash and zsh. Run them from the repository root.
    npx -y pnpm@10.33.0 -r build
    ```
 2. **Keys.** The demo reads `.keys/` (gitignored). It needs `deployer.json`, `owner.json`, `mint-authority.json`, `provider-payout.json` and `provider-secret.hex`, and creates `exact-agent.json` and `facilitator.json` on first run. If `.keys/` is missing, restore it from your backup: each `== name` line in the backup file is followed by that file's contents.
-3. **A private RPC (recommended).** The public devnet RPC allows about 10 requests per method in a short window. The demo retries through that, but a free devnet endpoint from Helius or QuickNode makes the run faster and smoother:
+3. **An LLM key (optional, for Act 6).** Save a Gemini API key (free tier at aistudio.google.com) to `.keys/llm.key`, or set `LLM_API_KEY`. `LLM_BASE_URL` and `LLM_MODEL` switch to any OpenAI-compatible provider. Without a key, Act 6 skips the model and shows only the refused hijack attempt.
+4. **A private RPC (recommended).** The public devnet RPC allows about 10 requests per method in a short window. The demo retries through that, but a free devnet endpoint from Helius or QuickNode makes the run faster and smoother:
    ```sh
    set -x SOLANA_RPC_URL https://devnet.helius-rpc.com/?api-key=YOUR_KEY   # fish
    export SOLANA_RPC_URL=https://devnet.helius-rpc.com/?api-key=YOUR_KEY   # bash/zsh
    ```
-4. **PostgreSQL** starts automatically through `services/mint/scripts/dev-pg.sh` unless `DATABASE_URL` is set. Each run uses a throwaway schema.
+5. **PostgreSQL** starts automatically through `services/mint/scripts/dev-pg.sh` unless `DATABASE_URL` is set. Each run uses a throwaway schema.
 
 ## Running it on a teammate's machine
 
@@ -82,8 +83,9 @@ An `exact` payment is a USDC transfer plus a memo. TokenFeed sets x402's `extra.
 | 3. Blindfold | Reserve check, the same 3 purchases; Copycat: **NO SIGNAL** | "Same research. Each payment is a token in an HTTP header: no transaction, nothing for Copycat to read." |
 | 4. Settle | One batch payout, balanced books; Copycat sees a payout, payer unknown | "TokenFeed is paid in USDC in one batch that covers many calls and names no agent." |
 | 5. Copycat's report | Everything Copycat learned, side by side | "Same purchases. One told Copycat who, what and when. The other showed money in and money out." |
-| 6. Replay | Replayed call refused with 402 | "Privacy without giving up safety: a copied payment buys nothing." |
-| 7. Reserve gate | Agent stops with exit code 7 | "If the mint claims more than the vault holds, the agent pays nothing. And its tokens only pay registered providers, so a hijacked agent can't pay an attacker." |
+| 6. Poisoned feed | Gemini agent buys data and decides; the injection's attacker URL is refused, nothing paid | "Privacy without giving up safety. The feed's response tells the agent to pay an attacker. Whatever the model believes, its tokens only pay registered providers." |
+| 7. Replay | Replayed call refused with 402 | "A copied payment buys nothing." |
+| 8. Reserve gate | Agent stops with exit code 7 | "If the mint claims more than the vault holds, the agent pays nothing." |
 
 State the limit honestly: with few users, or distinctive amounts and timing, deposits and payouts can still be correlated.
 

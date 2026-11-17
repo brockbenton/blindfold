@@ -1,4 +1,5 @@
 import type { ProviderInfo } from "@blindfold/protocol";
+import type { LlmRunResult } from "./llm.js";
 
 export interface ReserveSummary {
   ok: boolean;
@@ -35,7 +36,7 @@ export interface ErrorReport {
 /** Where the agent's output goes. JSON mode keeps stdout to exactly one line. */
 export interface Reporter {
   log(line: string): void;
-  result(r: RunResult): void;
+  result(r: RunResult | LlmRunResult): void;
   error(e: ErrorReport): void;
 }
 
@@ -43,6 +44,12 @@ export function humanReporter(io: { stdout: (s: string) => void; stderr: (s: str
   return {
     log: (l) => io.stderr(`${l}\n`),
     result(r) {
+      if ("mode" in r) {
+        for (const s of r.steps) io.stdout(`step       ${s.tool} ${s.args.url ?? ""} ${s.outcome}${s.reason ? ` (${s.reason})` : ""}${s.paidCents ? ` paid ${s.paidCents}c` : ""}\n`);
+        io.stdout(`decision   ${r.decision}: ${r.rationale}\n`);
+        io.stdout(`balance    ${r.balanceBefore}c -> ${r.balanceAfter}c\n`);
+        return;
+      }
       const p = r.provider;
       io.stdout(`provider   ${p.name ?? "?"} (${p.url ?? "?"})\n`);
       io.stdout(`topic      ${r.topic}\n`);

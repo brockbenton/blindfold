@@ -75,7 +75,6 @@ The mock API can also accept the standard x402 `exact` scheme on the same routes
 
 See [MVP and add-ons](mvp.md#add-ons) for priority. These are design options, not current features:
 
-- A complete prompt-injection demo using the existing hostile-response test hooks.
 - QuickNode Streams to trigger deposit polling; the mint currently polls without a webhook.
 - Owner approval through a second, co-signed reserve pocket. Current locks accept only 1-of-N and reject refund/time-lock tags; this requires protocol changes.
 - Temporal for durable top-ups. Workflow randomness and signing would run in activities; existing persisted funding checkpoints still have recovery limits.

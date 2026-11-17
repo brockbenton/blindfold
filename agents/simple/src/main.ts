@@ -7,6 +7,7 @@ import { DEFAULT_MINT_URL } from "@blindfold/protocol";
 import { ConfigError, HttpError, NetworkError, NoProviderError, ReservesFailedError } from "./errors.js";
 import { humanReporter, jsonReporter, type ErrorReport, type Reporter } from "./reporter.js";
 import { runScripted } from "./scripted.js";
+import { DEFAULT_LLM_MODEL, GEMINI_OPENAI_BASE_URL, openAiChat, runLlm, type Chat } from "./llm.js";
 import { fakeProviders, fakeReserves, fakeWallet } from "./stubs.js";
 import { makeTools, type Tools, type WalletLike } from "./tools.js";
 
@@ -34,7 +35,7 @@ export async function runMain(
   argv: string[],
   env: Record<string, string | undefined>,
   io: Io,
-  overrides: { tools?: Tools; connection?: Connection } = {},
+  overrides: { tools?: Tools; connection?: Connection; chat?: Chat } = {},
 ): Promise<number> {
   // Parse failures still honor JSON output, even if --json follows the bad flag.
   let out: Reporter = argv.slice(0, argv.indexOf("--") < 0 ? argv.length : argv.indexOf("--")).includes("--json")
@@ -49,6 +50,7 @@ export async function runMain(
           "token-file": { type: "string" }, "mint-url": { type: "string" }, "max-per-call": { type: "string" },
           topic: { type: "string" }, provider: { type: "string" }, calls: { type: "string" },
           json: { type: "boolean" }, fake: { type: "boolean" },
+          llm: { type: "boolean" }, goal: { type: "string" }, budget: { type: "string" },
         },
       }).values;
     } catch (e) {
@@ -99,6 +101,21 @@ export async function runMain(
         opened = wallet;
         tools = makeTools({ wallet, mintUrl, out, connection: overrides.connection ?? new Connection(env.SOLANA_RPC_URL!, "confirmed"), programId, usdcMint });
       }
+    }
+    if (a.llm) {
+      let chat = overrides.chat;
+      if (!chat) {
+        if (!env.LLM_API_KEY) throw new ConfigError("LLM_API_KEY is required with --llm");
+        chat = openAiChat({ baseUrl: env.LLM_BASE_URL ?? GEMINI_OPENAI_BASE_URL, apiKey: env.LLM_API_KEY, model: env.LLM_MODEL ?? DEFAULT_LLM_MODEL });
+      }
+      const topic = a.topic ?? "sol";
+      const result = await runLlm(tools, {
+        goal: a.goal ?? `Decide whether to buy ${topic.toUpperCase()} in the next hour.`, chat,
+        budgetCents: int(a.budget, 30, "--budget"), reserveEvery,
+        onStep: (s) => out.log(`${s.tool} ${s.args.url ?? ""} -> ${s.outcome}${s.reason ? ` (${s.reason})` : ""}`),
+      });
+      out.result(result);
+      return 0;
     }
     const result = await runScripted(tools, { topic: a.topic ?? "sol", provider: a.provider, calls, reserveEvery });
     out.result(result);

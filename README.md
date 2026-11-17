@@ -29,7 +29,7 @@ The real-vault path additionally needs Rust 1.89.0, Anchor 1.2.2 and Solana tool
 
 ## What works
 
-`pnpm demo` runs "Copycat vs. your trading agent" on Solana devnet with real transactions. Your agent researches SOL with standard x402 `exact` and Copycat, a bot reading only public Solana data, turns its payments into "BUY SOL". The same research paid with Blindfold gives Copycat no signal. A local dashboard shows both sides live. See [Run the demo](docs/DEMO.md).
+`pnpm demo` runs "Copycat vs. your trading agent" on Solana devnet with real transactions. Your agent researches SOL with standard x402 `exact` and Copycat, a bot reading only public Solana data, turns its payments into "BUY SOL". The same research paid with Blindfold gives Copycat no signal. Then an AI agent reads a poisoned feed whose prompt injection points it at an attacker, and its tokens cannot pay the attacker. A local dashboard shows both sides live. See [Run the demo](docs/DEMO.md).
 
 | Component | Current behavior |
 |---|---|
@@ -37,10 +37,10 @@ The real-vault path additionally needs Rust 1.89.0, Anchor 1.2.2 and Solana tool
 | Mint | Confirms vault deposits, issues blind-signed tokens with DLEQ proofs, checks provider signatures, rejects spent tokens, tracks balances and settles batches |
 | Provider (mock token data feed) | Sells whale flow and order-book depth per call over x402 `cashu`; redeems before serving; optionally also accepts standard `exact` as a baseline |
 | Wallet and owner CLI | Funds provider-locked tokens, pays exact amounts, applies per-call caps and reconciles pending payments |
-| Agent | Checks vault reserves before paying and periodically after, buys data, reports results and refusals |
+| Agent | Scripted or LLM-driven (`--llm`, Gemini by default, any OpenAI-compatible model): chooses data, decides BUY/SELL/HOLD; code enforces the reserve gate, a budget and a step limit, and refusals go back to the model ([decision loop and limits](docs/design/05-agent.md)) |
 | Copycat and dashboard | Copycat reads only public Solana data and infers trading signals from `exact` payments; the dashboard puts `exact` and Blindfold side by side with live balances |
 
-A Claude-driven trading agent with a prompt-injection act, QuickNode Streams, owner co-signing, Temporal, onchain issuance logging and hidden provider revenue are planned. See [MVP and add-ons](docs/mvp.md).
+QuickNode Streams, owner co-signing, Temporal, onchain issuance logging and hidden provider revenue are planned. See [MVP and add-ons](docs/mvp.md).
 
 ## Payment flow
 
