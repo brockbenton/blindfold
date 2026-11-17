@@ -17,7 +17,7 @@ The original component build is present. The [vault notes](design/01-vault.md#10
 
 1. Keep the TypeScript build, type checks and PostgreSQL-backed tests passing; validate the real vault separately with the [runbook](RUNNING.md).
 2. Rehearse and record `pnpm demo` ([demo](DEMO.md)), which includes the `exact` baseline, Copycat and the live dashboard. Then build the full hostile-response demo.
-3. Add QuickNode Streams only after the base demo is repeatable. Polling already supports the mint workflow.
+3. QuickNode Streams feeds Copycat (`pnpm streams:setup`, [README](../README.md#quicknode-streams)); rehearse one devnet demo with the Stream connected. The mint keeps polling.
 4. Consider owner approval, Temporal, issuance logging and hidden revenue in the [add-on order](mvp.md#add-ons). Do not present them as implemented.
 5. Record a backup with known balances, provider configuration and matching program/keypair IDs.
 
