@@ -543,7 +543,7 @@ async function main() {
   kv("Per-call data", `none: ${CALLS} purchases, 0 transactions`);
   kv("Signal", bold(green("NO SIGNAL")));
   blank();
-  say(dim("Honest limit: with very few users, or distinctive amounts and timing, deposits and payouts can still be correlated. Privacy grows with the number of people using the mint."));
+  say(dim("Honest limit: only one owner deposited in this run, so Copycat can link the payout to that owner, though not to the token or the calls. With several owners depositing equal amounts it cannot (`pnpm crowd`)."));
   await pause(pausing);
 
   // Act 6: an LLM agent meets a poisoned feed.
