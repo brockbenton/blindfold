@@ -291,9 +291,13 @@ async function renderIssuance(issuancePda, list) {
   if (!info?.value && !updates.length) { $("issuance-panel").hidden = true; return; }
   $("issuance-panel").hidden = false;
   const last = updates[0];
-  const size = info?.value ? b64bytes(info.value.data[0]).length : 0;
+  const bytes = info?.value ? b64bytes(info.value.data[0]) : null;
+  // IssuanceLog: 8-byte discriminator, then issued, settled, seq (u64 LE, cumulative USDC base units).
+  const u64 = (o) => { let v = 0n; for (let i = 7; i >= 0; i--) v = (v << 8n) | BigInt(bytes[o + i]); return v; };
+  const totals = bytes && bytes.length >= 32 ? { issued: u64(8), settled: u64(16), seq: u64(24) } : null;
   $("issuance").innerHTML = [
-    info?.value ? `The mint publishes its issuance totals to <a href="${explorerAddr(issuancePda)}" target="_blank" rel="noopener">${short(issuancePda)}</a> (${size} bytes).` : "The issuance account is not present.",
+    info?.value ? `The mint publishes its issuance totals to <a href="${explorerAddr(issuancePda)}" target="_blank" rel="noopener">${short(issuancePda)}</a>.` : "The issuance account is not present.",
+    totals ? `Issued ${usd(totals.issued)}, settled ${usd(totals.settled)}: <strong>${usd(totals.issued - totals.settled)} outstanding</strong> by the mint's own public claim, after ${totals.seq} update${totals.seq === 1n ? "" : "s"}. Agents compare this with the vault's USDC before paying.` : "",
     `${updates.length} update${updates.length === 1 ? "" : "s"} on record.`,
     last ? `Last: ${fmtTime(last.s.time)} UTC, <a href="${explorerTx(last.s.sig)}" target="_blank" rel="noopener">tx</a>.` : "",
   ].join(" ");

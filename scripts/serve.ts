@@ -26,6 +26,7 @@ import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.j
 import { DEFAULT_VAULT_PROGRAM_ID, SOLANA_COMMITMENT, SOLANA_DEVNET_CAIP2, USDC_DEVNET_MINT, configPda, decodeConfig, decodeProviderRecord, providerPda, vaultAta } from "@blindfold/protocol";
 import { getPubKeyFromPrivKey } from "@cashu/cashu-ts";
 import { createApp } from "../apps/mock-api/src/app.js";
+import { marketSourceFromEnv } from "../apps/mock-api/src/data/liveMarket.js";
 import { exactFacilitator } from "../apps/mock-api/src/x402/exactBaseline.js";
 import { HttpKeysetSource } from "../apps/mock-api/src/x402/keysets.js";
 import { createGateway } from "../apps/gateway/src/app.js";
@@ -228,7 +229,7 @@ async function main() {
   const feed = createApp({
     mintUrl, providerSecretKey: feedSecret, priceCents: PRICE, depthPriceCents: DEPTH_PRICE, signalsPriceCents: SIGNALS_PRICE,
     usdcMint: usdcMint.toBase58(), providerId: feedId, redeem: new HttpRedeemClient(localMint), keysets: new HttpKeysetSource(localMint), log: feedLog("TokenFeed"),
-    exact,
+    exact, market: marketSourceFromEnv(), // live Coinbase data unless MARKET_DATA=mock
   });
   const feedServer = serve({ fetch: atPublicUrl(feed, feedUrl), port: feedPort, hostname: "127.0.0.1" });
   cleanups.push(() => stop(feedServer));
