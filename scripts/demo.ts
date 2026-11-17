@@ -8,8 +8,10 @@
 //   pnpm demo --no-pause       run straight through (default pauses between acts when interactive)
 //   pnpm demo --calls 3        paid calls per payment method (1-10, default 3)
 //   pnpm demo --no-dashboard   skip the live dashboard (default http://localhost:5173)
+//   pnpm demo --no-streams     Copycat polls RPC instead of reading the QuickNode Stream
 //
 // Act 6 uses an LLM agent when LLM_API_KEY or .keys/llm.key is set (LLM_BASE_URL and LLM_MODEL override Gemini).
+// Copycat reads a QuickNode Stream when .keys/quicknode.json exists (devnet only), falling back to RPC polling.
 // Optional env: SOLANA_RPC_URL (a private devnet RPC avoids rate limits), DATABASE_URL (default: starts the
 // repository's dev PostgreSQL), KEYS_DIR (default .keys).
 import "./lib/quiet.js";
@@ -47,7 +49,9 @@ import { makeTools } from "../agents/simple/src/tools.js";
 import { ReservesFailedError } from "../agents/simple/src/errors.js";
 import { marketData } from "../apps/mock-api/src/data/marketData.js";
 import type { Observation } from "./lib/bot.js";
-import { ChainWatcher, describe as describeTx, infer } from "./lib/copycat.js";
+import { describe as describeTx, infer } from "./lib/copycat.js";
+import { StreamWatcher } from "./lib/streamWatcher.js";
+import { loadApiKey } from "./lib/streams.js";
 import { startDashboard, type Dashboard, type DashboardEvent } from "./lib/dashboard.js";
 import { exactPayFetch, paymentResponse } from "./lib/exactClient.js";
 import { explorerAddress, explorerTx } from "./lib/explorer.js";
@@ -59,6 +63,7 @@ const argv = process.argv.slice(2);
 const localnet = argv.includes("--localnet");
 const pausing = !argv.includes("--no-pause");
 const withDashboard = !argv.includes("--no-dashboard");
+const withStreams = !argv.includes("--no-streams");
 const callsArg = argv.indexOf("--calls");
 const CALLS = callsArg >= 0 ? Number(argv[callsArg + 1]) : 3;
 if (!Number.isInteger(CALLS) || CALLS < 1 || CALLS > 10) throw new Error("--calls must be an integer from 1 to 10");
@@ -354,8 +359,14 @@ async function main() {
     })().catch(() => undefined).finally(() => { balancing = null; });
     return balancing;
   };
-  const watcher = new ChainWatcher({
-    connection, accounts: [cast.payoutAta, vaultToken], usdcMint, vaultToken, sinceSlot: startSlot, intervalMs: localnet ? 2000 : 5000,
+  const qnKey = withStreams && !localnet ? loadApiKey(KEYS) : null;
+  const watcher = new StreamWatcher({
+    connection, accounts: [cast.payoutAta, vaultToken], usdcMint, vaultToken, vaultProgram: cast.programId, sinceSlot: startSlot,
+    intervalMs: localnet ? 2000 : 5000, streams: qnKey ? { apiKey: qnKey } : null,
+    onStatus: (state, detail) => {
+      say(dim(`Copycat's source: ${detail}`));
+      emit({ type: "source", text: state === "streams" ? "QuickNode Streams" : state === "starting" ? "RPC (Streams starting)" : "RPC polling" });
+    },
     onObservation: (o) => {
       emit({
         type: "chain", side: tagged(o), kind: o.kind, text: describeTx(o), amountBase: String(o.amountBase), from: o.from, memo: o.memo,
@@ -366,7 +377,7 @@ async function main() {
       void refreshBalances();
     },
   });
-  if (dash) watcher.start();
+  if (dash || qnKey) watcher.start();
   cleanups.push(() => watcher.stop());
   const copycat = (text: string) => console.log(`  ${bold(magenta("Copycat"))}  ${text}`);
   const llm = llmConfig();

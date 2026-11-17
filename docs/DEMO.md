@@ -19,6 +19,27 @@ Commands work in fish, bash and zsh. Run them from the repository root.
    export SOLANA_RPC_URL=https://devnet.helius-rpc.com/?api-key=YOUR_KEY   # bash/zsh
    ```
 5. **PostgreSQL** starts automatically through `services/mint/scripts/dev-pg.sh` unless `DATABASE_URL` is set. Each run uses a throwaway schema.
+6. **QuickNode Streams (optional, recommended).** Copycat reads new transactions from a QuickNode Stream. Without one it polls RPC. See [QuickNode Streams](#quicknode-streams-optional).
+
+## QuickNode Streams (optional)
+
+With a QuickNode API key, Copycat gets transactions pushed by a Stream instead of polling RPC. The [README](../README.md#quicknode-streams) explains the configuration. The free trial plan is enough.
+
+1. **API key.** In the QuickNode dashboard, open the avatar menu, then **API Keys**, and create a key with Streams access. Save it (gitignored, never commit it), then back up the file like the other keys:
+   ```sh
+   printf '{"apiKey":"YOUR_KEY"}\n' > .keys/quicknode.json; chmod 600 .keys/quicknode.json
+   ```
+   `QUICKNODE_API_KEY` works too.
+2. **cloudflared**, for a free public HTTPS URL to the local webhook (no Cloudflare account needed): `sudo pacman -S cloudflared`, `brew install cloudflared`, or download the single binary from Cloudflare's [releases](https://github.com/cloudflare/cloudflared/releases) into `~/.local/bin`. To use your own tunnel instead, set `STREAMS_WEBHOOK_URL` to its public URL and `STREAMS_PORT` to the local port it forwards to (`pnpm bot` only).
+3. **Create the Stream** and check the filter on a known devnet block:
+   ```sh
+   npx -y pnpm@10.33.0 streams:setup --test 522985052
+   ```
+   The result should show one record with memo `whale-flow/SOL`. `--status` shows the Stream, `--delete` removes it.
+
+Each `pnpm demo` (devnet) or `pnpm bot` run then opens a tunnel, replaces the Stream with one that points at it, and pauses the Stream on exit. The terminal prints `Copycat's source: reading QuickNode Streams`, and the dashboard footer shows "watcher reads QuickNode Streams". Startup takes 10 to 60 seconds while QuickNode waits for the new tunnel hostname to resolve; Copycat polls RPC meanwhile, so nothing is missed. `--no-streams` (demo) or `--rpc` (bot) skips the Stream.
+
+The free plan allows one active Solana Stream. If `pnpm bot` runs next to the demo, whichever starts last owns the Stream and the other falls back to RPC polling. Start the bot first if the demo should read the Stream.
 
 ## Running it on a teammate's machine
 
@@ -48,6 +69,7 @@ The demo pauses before each act; press Enter to continue. It ends with Solana Ex
 |---|---|
 | `--no-pause` | Run straight through (also skips the final hold that keeps the dashboard up) |
 | `--no-dashboard` | Don't start the dashboard |
+| `--no-streams` | Copycat polls RPC instead of reading the QuickNode Stream |
 | `--calls N` | Paid calls per payment method (default 3) |
 | `--localnet` | Rehearsal on a throwaway local validator with fresh keys; needs `anchor build` and the Solana tools, spends no devnet funds |
 
@@ -57,17 +79,17 @@ A run takes a few minutes, longer on the public RPC. Each run deposits $1.00 of 
 
 The demo serves a live dashboard at **http://localhost:5173** (the next free port if that one is taken; the demo prints the URL). Open it next to the terminal before Act 1. Each half shows the watcher's signal (Copycat's verdict), the transactions it found onchain, and the agent's purchases as ticks: filled red for standard x402, where each purchase is a public transfer, and hollow for Blindfold. A status line at the bottom shows the `exact` agent's wallet, the Blindfold agent's tokens, what the feed earned this run and the vault's USDC.
 
-Transactions appear as Copycat finds them by polling the chain, a few seconds after they confirm. Reloading the page replays the run so far. After the summary the demo keeps the dashboard up until you press Enter. For recording, use a 1600x900 or larger browser window; it loads the Geist fonts from Google Fonts and falls back to system fonts offline.
+Transactions appear as Copycat finds them: pushed by the QuickNode Stream when it is connected, otherwise by polling the chain a few seconds after they confirm. The footer shows which source Copycat is reading. Reloading the page replays the run so far. After the summary the demo keeps the dashboard up until you press Enter. For recording, use a 1600x900 or larger browser window; it loads the Geist fonts from Google Fonts and falls back to system fonts offline.
 
 ### Second terminal: Copycat on its own
 
-Copycat also runs standalone. It watches TokenFeed's USDC account and the vault using only public RPC data and prints each transaction with its signal:
+Copycat also runs standalone. It watches TokenFeed's USDC account and the vault using only public data and prints each transaction with its signal and source (`via QuickNode Streams` or `via RPC`):
 
 ```sh
 npx -y pnpm@10.33.0 bot
 ```
 
-`--once` prints what is visible in the last 20 transactions per account and exits.
+`--once` prints what is visible in the last 20 transactions per account and exits. `--no-history` skips that initial scan, and `--rpc` polls without the Stream.
 
 ### How Copycat knows the token
 
@@ -107,5 +129,8 @@ State the limit honestly: with few users, or distinctive amounts and timing, dep
 | `no active vault provider uses .keys/provider-secret.hex` | Wrong key folder, or provider 0 was deactivated; see `docs/design/01-vault.md` |
 | Port 3338, 4000 or 5173 busy | The demo picks free ports automatically and prints them |
 | `a validator is already running` (`--localnet`) | Stop the other `solana-test-validator` |
+| `QuickNode Streams unavailable, polling RPC: cloudflared not found` | Install cloudflared (see [QuickNode Streams](#quicknode-streams-optional)), or ignore: polling works |
+| `QuickNode Streams unavailable ... HTTP 4xx` | Check the API key in `.keys/quicknode.json`. A plan-limit error means another Solana Stream is active in the account: pause it in the QuickNode dashboard |
+| `no QuickNode delivery for 20 s; polling RPC` | The tunnel or QuickNode dropped. Copycat keeps going over RPC and switches back when deliveries resume |
 
 For the step-by-step services and the acceptance test, see [Run it locally](RUNNING.md).

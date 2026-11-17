@@ -158,7 +158,7 @@ Two deposits built against the same `deposit_count` collide on the `DepositRecor
 
 ### 4.4 Events
 
-Emitted with `emit!`. The MVP mint does **not** rely on events; they exist for the QuickNode Stream add-on. Copycat, the demo's competitor bot, reads token account history instead.
+Emitted with `emit!`. The mint does **not** rely on events (section 6). Copycat's QuickNode Stream filter (`scripts/streams/copycat-filter.js`) decodes `DepositMade` from the `Program data:` log line (8-byte discriminator `sha256("event:DepositMade")[0..8]`, then the Borsh fields) and reports it; Copycat's signals come from USDC balance changes, not events.
 
 | Event | Fields |
 |---|---|
@@ -328,7 +328,7 @@ Every `DEPOSIT_POLL_MS`, at `confirmed` commitment:
 3. In one DB transaction per record: insert the deposit (unique on `index`), find the quote whose `request == deposit_ref`, add `amount / 10_000` to its `amount_paid`, bump `updated_at`, advance the cursor.
 4. A deposit with no matching quote is stored as unmatched. (Refunds are deferred.)
 
-Later, the QuickNode Stream add-on posts to an internal webhook that triggers the same poll immediately. No other code changes.
+The QuickNode Stream feeds Copycat only. A Stream event could later trigger this same poll immediately; it would never credit a deposit by itself, because the mint credits only from vault-owned account state.
 
 ## 7. Payment handshake: x402 v2, scheme `cashu`
 
@@ -492,7 +492,7 @@ packages/testkit/      shared test helpers (fake keyset, locked token issuance)
 packages/wallet/       04: wallet SDK + owner CLI
 agents/simple/         05: simple agent
 config/providers.json  provider_id → name, url
-scripts/               devnet setup (initialize, register provider), e2e test
+scripts/               devnet setup, e2e test, demo, Copycat (bot.ts), streams/ (QuickNode Stream filter)
 spikes/x402-cashu/     feasibility spike (reference only, not production code)
 docker-compose.yml     Postgres
 .env.example
@@ -510,6 +510,7 @@ docker-compose.yml     Postgres
 | `RESERVE_CHECK_EVERY` (10) | agent; checks before calls 1, 11, 21, … by default |
 | `LLM_API_KEY`, `LLM_BASE_URL` (Gemini's OpenAI-compatible endpoint), `LLM_MODEL` (`gemini-3.5-flash-lite,gemini-flash-latest`) | agent `--llm` mode ([05](05-agent.md#llm-decision-loop)); `pnpm demo` also reads `.keys/llm.key` |
 | `MINT_DEV_FAKE_CHAIN` (`1` to enable), `PROVIDERS_FILE`, `DEPOSIT_POLL_MS`, `SETTLE_INTERVAL_S` | mint; fake-chain mode is local development only |
+| `QUICKNODE_API_KEY` (or `.keys/quicknode.json`), `CLOUDFLARED`, `STREAMS_WEBHOOK_URL`, `STREAMS_PORT` | Copycat's QuickNode Stream in `pnpm demo`, `pnpm bot` and `pnpm streams:setup` |
 | `TOKEN_FILE`, `MAX_PER_CALL_CENTS` (10), `WALLET_ALLOWLIST` (comma list of provider pubkeys; default: union of the proofs' signer sets) | wallet SDK, agent |
 
 **Test layers:** TypeScript tests use fakes; mint and application integration tests require PostgreSQL. Rust vault tests use LiteSVM and a built `target/deploy/vault.so`. The separate `e2e:localnet` script uses `solana-test-validator` and a six-decimal test mint; `e2e` uses a deployed devnet vault and funded keys. See [the runbook](../RUNNING.md).

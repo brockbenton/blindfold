@@ -29,9 +29,9 @@ Acceptance requires:
 
 Planned, in priority order. Existing hooks and tests are not complete demos.
 
-1. **Copycat and baseline comparison.** Implemented: the mock API accepts standard x402 `exact` alongside `cashu` when configured, Copycat (`scripts/bot.ts`) reports what a chain observer sees and infers trading signals, and `pnpm demo` compares both with a live dashboard ([demo](DEMO.md)). Copycat polls token account history; it does not use a Stream yet.
+1. **Copycat and baseline comparison.** Implemented: the mock API accepts standard x402 `exact` alongside `cashu` when configured, Copycat (`scripts/bot.ts`) reports what a chain observer sees and infers trading signals, and `pnpm demo` compares both with a live dashboard ([demo](DEMO.md)). Copycat reads a QuickNode Stream, with token account polling as the fallback.
 2. **LLM agent and prompt-injection demo.** Implemented: `agent --llm` runs a model-driven decision loop with code-enforced limits ([agent](design/05-agent.md#llm-decision-loop)), and `pnpm demo` Act 6 poisons a feed response with an injection pointing at an attacker; payment to the unregistered attacker is refused. Not yet shown: an allowed provider consuming the whole budget.
-3. **QuickNode Stream.** Trigger the deposit poller from a webhook and feed the bot. No Stream or webhook configuration exists yet.
+3. **QuickNode Stream.** Implemented for Copycat: a `solana-devnet` block Stream with a checked-in filter and a webhook into `pnpm demo` and `pnpm bot`, created by `pnpm streams:setup` ([README](../README.md#quicknode-streams)). Not done: triggering the mint's deposit poll from the Stream's `DepositMade` events.
 4. **Owner approval.** Add a co-signed reserve pocket. Current 1-of-N locks and redemption validation do not support this.
 5. **Temporal top-up.** Recover multi-step funding through a durable workflow; do not equate the current checkpoint files with exactly-once execution.
 6. **Onchain issuance log and reconciliation view.** The admin reconciliation endpoint exists; public issuance evidence does not.
@@ -41,4 +41,4 @@ Cut lower-priority add-ons first. Refunds, key rotation, an approval UI, Tor/OHT
 
 ## Submission checklist
 
-Document the decision loop, spending limits, program ID, deployment evidence and threat model. If a Stream is built, include its network, dataset, filter and destination; otherwise state that the mint uses polling.
+Document the decision loop, spending limits, program ID, deployment evidence and threat model. The README's [QuickNode Streams](../README.md#quicknode-streams) section covers the Stream's network, dataset, filter and destination, and states that the mint still polls.
