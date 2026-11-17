@@ -89,6 +89,10 @@ describe("attributeVault", () => {
     expect(r.reason).toContain("Amounts give it away");
   });
 
+  it("does not link a payout to anyone when no deposit is in view", () => {
+    expect(attributeVault([out(100_000n)])).toMatchObject({ action: "NO SIGNAL", depositors: [], forced: [] });
+  });
+
   it("reports nothing before a payout and ignores direct payments", () => {
     expect(attributeVault([dep(AGENT), dep(OTHER)]).action).toBe("NO SIGNAL");
     expect(attributeVault([pay(AGENT, "whale-flow/SOL", 0)])).toMatchObject({ action: "NO SIGNAL", depositors: [] });

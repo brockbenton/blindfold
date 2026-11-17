@@ -38,9 +38,47 @@ The real-vault path additionally needs Rust 1.89.0, Anchor 1.2.2 and Solana tool
 | Provider (mock token data feed) | Sells whale flow, order-book depth and premium trade signals per call over x402 `cashu`; redeems before serving; optionally also accepts standard `exact` as a baseline |
 | Wallet and owner CLI | Funds provider-locked tokens, pays exact amounts, applies per-call caps, asks the owner before paying above a threshold (terminal, dashboard or timeout denial) and reconciles pending payments |
 | Agent | Scripted or LLM-driven (`--llm`, Gemini by default, any OpenAI-compatible model): chooses data, decides BUY/SELL/HOLD; code enforces the reserve gate, a budget, owner approval and a step limit, and refusals go back to the model ([decision loop and limits](docs/design/05-agent.md)) |
-| Copycat and dashboard | Copycat reads only public Solana data, infers trading signals from `exact` payments and tests whether vault payouts can be attributed to depositors; the dashboard puts `exact` and Blindfold side by side with live balances; `pnpm crowd` runs several agents at once |
+| Copycat and dashboard | Copycat reads only public Solana data, pushed to it by a [QuickNode Stream](#quicknode-streams) with RPC polling as the fallback; it infers trading signals from `exact` payments and tests whether vault payouts can be attributed to depositors; the dashboard puts `exact` and Blindfold side by side with live balances; `pnpm crowd` runs several agents at once |
 
-QuickNode Streams, protocol-level owner co-signing, Temporal, onchain issuance logging and hidden provider revenue are planned. See [MVP and add-ons](docs/mvp.md).
+Protocol-level owner co-signing, Temporal, onchain issuance logging and hidden provider revenue are planned. See [MVP and add-ons](docs/mvp.md).
+
+## QuickNode Streams
+
+Copycat plays a real front-running bot, and a real one does not poll. A QuickNode Stream pushes every transaction that pays a data feed or touches the Blindfold vault to Copycat as it lands on devnet, already reduced to the few fields Copycat needs. The demo's dashboard, its narration and Copycat's `BUY SOL` call all run on that data.
+
+| Setting | Value |
+|---|---|
+| Network | `solana-devnet` (where the vault and the demo run) |
+| Dataset | `block`: full blocks with parsed transactions, token balances and logs. Batches of 5 blocks, elastic batching on, starting at the chain tip |
+| Filter | [`scripts/streams/copycat-filter.js`](scripts/streams/copycat-filter.js), JavaScript, with the watched addresses filled in at upload |
+| Destination | Webhook: `POST /streams` on a receiver inside `pnpm demo` or `pnpm bot`, exposed through a free cloudflared quick tunnel. Every delivery is checked against QuickNode's HMAC signature (`X-QN-Signature`) with a fresh security token per run |
+| Created by | [`pnpm streams:setup`](scripts/streams-setup.ts) through the Streams REST API. Each demo or bot run replaces the Stream with one that points at its own tunnel |
+
+**Filter logic.** For each successful transaction in the batch:
+
+1. Skip it unless it changes the USDC balance of a watched token account: a data feed's payout account (TokenFeed's and NewsWire's in the demo) or the vault's USDC account.
+2. Work out the movement from pre and post token balances (any instruction layout works): who sent it, from which account, how much. This mirrors what Copycat's RPC path computes, and a test checks that both paths give identical results on real devnet blocks.
+3. Attach the SPL Memo, which is where an x402 `exact` payment says what was bought, such as `whale-flow/SOL`.
+4. For vault transactions, decode the Anchor `DepositMade` event from the logs (index, depositor, amount, deposit reference).
+
+Each batch returns `{ tip, records, deposits }`, even when nothing matched. One record looks like this:
+
+```json
+{ "signature": "KCWm...tRH4A", "slot": 522985052, "time": 1794850619, "account": "GVaF...VECe",
+  "sender": "4pHm...usqE", "senderAccount": "8dHd...Vkk3", "recipient": "ELPm...5bzd", "amount": "50000", "memo": "whale-flow/SOL" }
+```
+
+**Why this setup.**
+
+- **Speed.** In devnet tests, the record reached Copycat by the time the sender's own confirmation returned. Polling the public RPC takes two calls per account per pass, plus one per new transaction, and runs into its rate limit.
+- **Filter on QuickNode's side.** The devnet block we sampled was about 250 KB. The filter sends Copycat a few hundred bytes per relevant transaction, already in Copycat's `Observation` shape, so the dashboard and the inference code did not change.
+- **Proof of an empty block.** The `tip` in every batch says how far the Stream has read. When the demo claims that Blindfold payments left nothing onchain, Copycat first waits until the Stream has delivered past the current slot.
+- **Automatic fallback.** The demo never depends on QuickNode. With no API key, no tunnel, a refused request, or 20 seconds without a delivery, Copycat polls RPC and switches back when deliveries resume. Both sources feed the same deduplicated list, so a transaction is reported once whichever source sees it first.
+- **Free plan.** Streams is included in QuickNode's free trial. The trial allows 1 active Solana Stream that follows the tip, with no backfill, so `pnpm bot` reads its starting history over RPC. Only one process can own the Stream at a time: a second `pnpm bot` or demo takes it over, and the first falls back to polling.
+
+**The mint does not credit deposits from the Stream.** It keeps reading the vault's own `DepositRecord` accounts over RPC: crediting money from a third-party feed would weaken its trust model, and its 2-second poll is already fast. The decoded `DepositMade` events are printed by `pnpm bot`; using them only as a trigger for an immediate poll is a possible next step.
+
+Setup steps are in [Run the demo](docs/DEMO.md#quicknode-streams-optional).
 
 ## Payment flow
 

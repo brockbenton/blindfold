@@ -78,7 +78,7 @@ export interface VaultReading {
   /** Depositors whose money must be in the payouts: everyone else's deposits together cannot cover them. */
   forced: string[];
   /**
-   * `NO SIGNAL`: nothing paid out yet. `LINKED`: one depositor, so it funded the payouts. `PARTIAL`: amounts force
+   * `NO SIGNAL`: nothing paid out yet, or no deposit in view. `LINKED`: one depositor, so it funded the payouts. `PARTIAL`: amounts force
    * some depositors into the payouts. `CANNOT ATTRIBUTE`: any depositor could have bought any of it.
    */
   action: "NO SIGNAL" | "LINKED" | "PARTIAL" | "CANNOT ATTRIBUTE";
@@ -111,9 +111,14 @@ export function attributeVault(obs: Observation[]): VaultReading {
   if (payoutList.length === 0) {
     return { ...base, action: "NO SIGNAL", reason: `${plural(depositors.length, "deposit")} into the vault, nothing paid out yet. Who will buy what: unknown.` };
   }
-  if (depositors.length <= 1) {
-    const who = depositors[0] ? `Only ${short(depositors[0].wallet)} deposited in this window, so it funded the ${paid} to the feed` : `No deposits in this window`;
-    return { ...base, action: "LINKED", reason: `${who}. Which token it researched: unknown, but the wallet is linked to the feed.` };
+  if (depositors.length === 0) {
+    return { ...base, action: "NO SIGNAL", reason: `${paid} from the vault, but no deposit in view to pin ${payoutList.length === 1 ? "it" : "them"} on. Who paid: unknown.` };
+  }
+  if (depositors.length === 1) {
+    return {
+      ...base, action: "LINKED",
+      reason: `Only ${short(depositors[0].wallet)} deposited in this window, so it funded the ${paid} to the feed. Which token it researched: unknown, but the wallet is linked to the feed.`,
+    };
   }
   const amounts = equalDeposits ? `the same ${usd(depositors[0].totalBase)} each` : `${usd(total)} between them`;
   if (forced.length) {
@@ -145,7 +150,9 @@ export function describe(o: Observation, names: Record<string, string> = {}): st
  */
 export class ChainWatcher {
   readonly observations: Observation[] = [];
+  /** `account:signature` pairs already fetched (or skipped), and those reported as observations. */
   private readonly seen = new Set<string>();
+  private readonly reported = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
   private scanning: Promise<void> | null = null;
 
@@ -155,6 +162,7 @@ export class ChainWatcher {
   }) {}
 
   start(): this {
+    if (this.timer) return this;
     const tick = () => {
       this.scan().catch((e) => this.o.onError?.(e)).finally(() => {
         if (this.timer) this.timer = setTimeout(tick, this.o.intervalMs ?? 4000);
@@ -185,14 +193,27 @@ export class ChainWatcher {
         if (s.err || (this.o.sinceSlot !== undefined && s.slot < this.o.sinceSlot)) { this.seen.add(key); continue; }
         const tx = await getParsed(this.o.connection, s.signature);
         if (!tx) continue; // not visible yet at this commitment; retried next pass
+        if (this.seen.has(key)) continue; // delivered by a Stream while this fetch was in flight
         this.seen.add(key);
         const ob = toObservation(tx, s, account, this.o.usdcMint, this.o.vaultToken);
-        if (!ob) continue;
-        this.observations.push(ob);
-        this.observations.sort((a, b) => a.slot - b.slot);
-        this.o.onObservation?.(ob);
+        if (ob) this.ingest(account.toBase58(), { ...ob, via: "rpc" });
       }
     }
+  }
+
+  /**
+   * Adds an observation of USDC arriving at `account` unless that transaction was already reported for it. RPC
+   * polls and Stream deliveries share this, so each transaction is reported once whichever source sees it first.
+   */
+  ingest(account: string, ob: Observation): boolean {
+    const key = `${account}:${ob.signature}`;
+    if (this.reported.has(key)) return false;
+    this.reported.add(key);
+    this.seen.add(key);
+    this.observations.push(ob);
+    this.observations.sort((a, b) => a.slot - b.slot);
+    this.o.onObservation?.(ob);
+    return true;
   }
 
   /** Scans until `want` holds or the timeout passes (RPC history lags confirmation by a few seconds). */

@@ -10,7 +10,8 @@
     "typecheck": "pnpm -r typecheck",
     "demo": "pnpm --filter @blindfold/scripts demo",
     "bot": "pnpm --filter @blindfold/scripts bot",
-    "crowd": "pnpm --filter @blindfold/scripts crowd"
+    "crowd": "pnpm --filter @blindfold/scripts crowd",
+    "streams:setup": "pnpm --filter @blindfold/scripts streams:setup"
   },
   "devDependencies": {
     "@types/node": "26.6.6",
