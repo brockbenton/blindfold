@@ -1,4 +1,5 @@
-# Publishes the replay page (scripts/dashboard/replay.html and the committed recording) to GitHub Pages.
+# Publishes the replay page (scripts/dashboard/replay.html and the committed recording) to GitHub Pages,
+# and the vault history page (scripts/vault-history, static) under /vault/.
 name: pages
 on:
   push:
@@ -8,6 +9,7 @@ on:
       - scripts/lib/replaySite.ts
       - scripts/lib/dashboard.ts
       - scripts/replay.ts
+      - scripts/vault-history/**
       - .github/workflows/pages.yml
   workflow_dispatch:
 permissions:
@@ -32,6 +34,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile --filter @blindfold/scripts...
       - run: pnpm replay --site "$GITHUB_WORKSPACE/site"
+      - run: cp -r scripts/vault-history "$GITHUB_WORKSPACE/site/vault"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

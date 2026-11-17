@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vault History</title>
+  <meta name="description" content="Every deposit, settlement and provider change of the Blindfold vault on Solana devnet, read straight from the chain.">
+  <link rel="stylesheet" href="vault-history.css">
+  <script src="https://cdn.jsdelivr.net/npm/@solana/web3.js@1.99.0/lib/index.iife.min.js"></script>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <div>
+        <h1>Vault history</h1>
+        <p class="sub">Every deposit, settlement and provider change of the Blindfold vault, read straight from Solana. No server, no mint, nothing to trust but the chain.</p>
+      </div>
+      <div class="meta">
+        <div><span class="k">program</span> <a id="program" target="_blank" rel="noopener"></a></div>
+        <div><span class="k">vault USDC</span> <a id="vault" target="_blank" rel="noopener"></a></div>
+        <div><span class="k">network</span> <span id="network"></span></div>
+        <div class="status"><span id="status">loading</span> <button id="refresh" type="button">refresh</button></div>
+      </div>
+    </header>
+
+    <section class="totals" aria-label="Totals">
+      <div class="stat"><div class="label">held now</div><div class="value" id="t-held">–</div></div>
+      <div class="stat"><div class="label">deposited</div><div class="value" id="t-in">–</div><div class="note" id="t-in-n"></div></div>
+      <div class="stat"><div class="label">paid to providers</div><div class="value" id="t-out">–</div><div class="note" id="t-out-n"></div></div>
+      <div class="stat"><div class="label">providers</div><div class="value" id="t-prov">–</div><div class="note" id="t-prov-n"></div></div>
+    </section>
+
+    <section class="panel">
+      <div class="section"><span>Vault USDC balance</span><span id="chart-range"></span></div>
+      <div id="chart" class="chart"></div>
+    </section>
+
+    <section class="panel" id="issuance-panel" hidden>
+      <div class="section"><span>Issuance log</span><span id="issuance-age"></span></div>
+      <p class="issuance" id="issuance"></p>
+    </section>
+
+    <section class="panel">
+      <div class="section"><span>Timeline</span><span id="count"></span></div>
+      <div class="filters" role="group" aria-label="Filter">
+        <button type="button" data-f="all" class="on">all</button>
+        <button type="button" data-f="deposit">deposits</button>
+        <button type="button" data-f="settle">settlements</button>
+        <button type="button" data-f="provider">providers</button>
+        <button type="button" data-f="other">other</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>time (UTC)</th><th>event</th><th>detail</th><th class="num">vault</th><th class="num">balance</th><th></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="empty" hidden>No vault transactions found.</p>
+    </section>
+
+    <footer>
+      Reads public devnet RPC from your browser, with results cached locally. Add <code>?rpc=&lt;url&gt;</code> for your own endpoint, or <code>?program=</code> and <code>?usdc=</code> for another deployment.
+      <a href="https://github.com/brockbenton/blindfold">Source</a>
+    </footer>
+  </div>
+  <script src="vault-history.js"></script>
+</body>
+</html>

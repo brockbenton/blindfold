@@ -314,6 +314,8 @@ pnpm demo
 
 The demo uses the deployed vault, so it needs no Rust or Solana tools. It needs funded devnet keys in `.keys/`. Optional extras: an LLM key in `.keys/llm.key` for the AI-agent act, a private devnet RPC through `SOLANA_RPC_URL`, and a QuickNode API key in `.keys/quicknode.json` for Streams. See [Run the demo](docs/DEMO.md) for the full checklist and what each act shows. To watch without running anything, open the [recorded run](https://brockbenton.github.io/blindfold/).
 
+To keep the mint and feeds running between demos, `pnpm serve` starts them on this machine with public tunnel URLs, and the [vault history](https://brockbenton.github.io/blindfold/vault/) page shows every deposit and settlement as it lands ([Run it locally › Live stack](docs/RUNNING.md#9-live-stack-pnpm-serve)).
+
 ### Configuration
 
 Programs read process environment variables; `.env` is not loaded automatically. [`.env.example`](.env.example) lists every setting.
