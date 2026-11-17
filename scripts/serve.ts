@@ -1,6 +1,6 @@
 // The live Blindfold stack on this machine, against the deployed devnet vault: PostgreSQL, the mint (real chain,
-// settling on its normal schedule), TokenFeed and NewsWire, and cloudflared quick tunnels so wallets elsewhere can
-// reach them. Unlike `pnpm demo`, the mint keeps its database and seed between runs, so tokens funded today still
+// settling on its normal schedule), TokenFeed (with the standard x402 `exact` baseline), NewsWire and the gateway
+// (docs/design/06-gateway.md) when their keys exist, and cloudflared quick tunnels so wallets elsewhere can reach them. Unlike `pnpm demo`, the mint keeps its database and seed between runs, so tokens funded today still
 // redeem tomorrow and the vault's history (scripts/vault-history) keeps growing.
 //
 //   pnpm serve                 tunnels for the mint and the feeds (needs cloudflared)
@@ -9,7 +9,8 @@
 //
 // Env: SOLANA_RPC_URL (a private devnet RPC avoids rate limits), DATABASE_URL (default: the repository's dev
 // PostgreSQL), KEYS_DIR (default .keys), SERVE_MINT_URL / SERVE_FEED_URL / SERVE_NEWS_URL (your own stable public
-// URLs, e.g. a named Cloudflare tunnel to the local port; skips the quick tunnel for that service).
+// URLs, e.g. a named Cloudflare tunnel to the local port; skips the quick tunnel for that service), and
+// SERVE_GATEWAY_URL likewise for the gateway.
 // Refuses to start while a devnet `pnpm demo` or another `pnpm serve` holds the settlement lock.
 import "./lib/quiet.js";
 import { execFileSync } from "node:child_process";
@@ -20,11 +21,17 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import pg from "pg";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
-import { DEFAULT_VAULT_PROGRAM_ID, SOLANA_COMMITMENT, USDC_DEVNET_MINT, configPda, decodeConfig, decodeProviderRecord, providerPda, vaultAta } from "@blindfold/protocol";
+import { DEFAULT_VAULT_PROGRAM_ID, SOLANA_COMMITMENT, SOLANA_DEVNET_CAIP2, USDC_DEVNET_MINT, configPda, decodeConfig, decodeProviderRecord, providerPda, vaultAta } from "@blindfold/protocol";
 import { getPubKeyFromPrivKey } from "@cashu/cashu-ts";
 import { createApp } from "../apps/mock-api/src/app.js";
+import { exactFacilitator } from "../apps/mock-api/src/x402/exactBaseline.js";
 import { HttpKeysetSource } from "../apps/mock-api/src/x402/keysets.js";
+import { createGateway } from "../apps/gateway/src/app.js";
+import { standInRoutes } from "../apps/gateway/src/routes.js";
+import { UpstreamClient } from "../apps/gateway/src/upstream.js";
+import { loadOrCreateKeypair, walletPayFetch } from "../apps/gateway/src/wallet.js";
 import { HttpRedeemClient } from "../apps/mock-api/src/x402/redeemClient.js";
 import { SolanaSettleSender } from "../services/mint/src/chain/settleSender.js";
 import { SolanaVaultReader } from "../services/mint/src/chain/vaultReader.js";
@@ -137,10 +144,23 @@ async function main() {
   const newsSecretPath = join(KEYS, "news-secret.hex");
   const newsSecret = existsSync(newsSecretPath) ? readFileSync(newsSecretPath, "utf8").trim() : null;
   const newsId = newsSecret ? await findProvider(newsSecret) : null;
-  if (newsId === null) say(dim("NewsWire is not registered yet (run pnpm demo once); serving TokenFeed only."));
+  if (newsId === null) say(dim("NewsWire is not registered yet (run pnpm demo once); serving without it."));
+  // The gateway: its provider key and shared wallet from `pnpm gateway:setup`, and a vault registration.
+  const gatewaySecretPath = join(KEYS, "gateway-secret.hex");
+  const gatewayWalletPath = join(KEYS, "gateway-wallet.json");
+  const gatewaySecret = existsSync(gatewaySecretPath) && existsSync(gatewayWalletPath) ? readFileSync(gatewaySecretPath, "utf8").trim() : null;
+  const gatewayId = gatewaySecret ? await findProvider(gatewaySecret) : null;
+  if (gatewaySecret && gatewayId === null) warn("the gateway's key is not an active vault provider; run pnpm gateway:setup. Serving without the gateway.");
+  else if (!gatewaySecret) say(dim("No gateway keys (pnpm gateway:setup creates them); serving without the gateway."));
+  // TokenFeed also sells over standard x402 `exact` (the gateway's devnet stand-in vendor buys there).
+  const payoutPath = join(KEYS, "provider-payout.json");
+  const facilitatorPath = join(KEYS, "facilitator.json");
+  const exactOn = existsSync(payoutPath) && existsSync(facilitatorPath);
+  if (!exactOn) warn("no .keys/provider-payout.json or facilitator.json: TokenFeed serves Blindfold only (no exact baseline, so the gateway's stand-in vendor cannot sell)");
 
   const [mintPort, feedPort] = [await needPort(3338, "mint"), await needPort(4000, "TokenFeed")];
   const newsPort = newsId !== null ? await needPort(4001, "NewsWire") : null;
+  const gatewayPort = gatewayId !== null ? await needPort(4100, "gateway") : null;
   const localMint = `http://localhost:${mintPort}`;
 
   // Public URLs: your own (SERVE_*_URL), a quick tunnel, or localhost with --local. Tunnels start before the
@@ -156,10 +176,11 @@ async function main() {
     fail("cloudflared not found. Install it (docs/DEMO.md, QuickNode Streams), or run pnpm serve --local.");
   }
   if (!local) step("opening cloudflared tunnels (10 to 60 seconds)");
-  const [mintUrl, feedUrl, newsUrl] = await Promise.all([
+  const [mintUrl, feedUrl, newsUrl, gatewayUrl] = await Promise.all([
     tunnel(mintPort, process.env.SERVE_MINT_URL, "mint"),
     tunnel(feedPort, process.env.SERVE_FEED_URL, "feed"),
     newsPort !== null ? tunnel(newsPort, process.env.SERVE_NEWS_URL, "news") : Promise.resolve(null),
+    gatewayPort !== null ? tunnel(gatewayPort, process.env.SERVE_GATEWAY_URL, "gateway") : Promise.resolve(null),
   ]);
 
   // The mint: a stable schema and seed, so balances, spent proofs and the deposit cursor survive restarts.
@@ -178,6 +199,7 @@ async function main() {
     providers: [
       { provider_id: feedId, name: "token-feed", url: feedUrl, price_cents: PRICE, topics },
       ...(newsId !== null && newsUrl ? [{ provider_id: newsId, name: "news-wire", url: newsUrl, price_cents: NEWS_PRICE, topics }] : []),
+      ...(gatewayId !== null && gatewayUrl ? [{ provider_id: gatewayId, name: "Gateway", url: gatewayUrl, price_cents: PRICE, topics }] : []),
     ],
     depositPollMs: 2000, settleIntervalS: WINDOW_S, settleHoldS: WINDOW_S, settleUnitCents: UNIT_CENTS, devFakeChain: false,
   };
@@ -197,10 +219,16 @@ async function main() {
     if (e.outcome === "served") ok(`${name} served ${e.route} (paid)`);
     else if (e.outcome && e.outcome !== "challenge") say(dim(`${name} ${e.route}: ${e.outcome}${e.reason ? ` (${e.reason})` : ""}`));
   };
-  step("starting TokenFeed");
+  step(`starting TokenFeed${exactOn ? " (Blindfold and the exact baseline)" : ""}`);
+  const exact = exactOn
+    ? { payTo: loadKeypair(payoutPath).publicKey.toBase58(), facilitator: await exactFacilitator({ keypair: loadKeypair(facilitatorPath).secretKey, rpcUrl: rpc }), memoTopics: topics }
+    : undefined;
+  const facSol = exactOn ? (await connection.getBalance(loadKeypair(facilitatorPath).publicKey, SOLANA_COMMITMENT)) / LAMPORTS_PER_SOL : 1;
+  if (facSol < 0.01) warn(`the exact facilitator has ${facSol} SOL; exact payments need fees (it pays them)`);
   const feed = createApp({
     mintUrl, providerSecretKey: feedSecret, priceCents: PRICE, depthPriceCents: DEPTH_PRICE, signalsPriceCents: SIGNALS_PRICE,
     usdcMint: usdcMint.toBase58(), providerId: feedId, redeem: new HttpRedeemClient(localMint), keysets: new HttpKeysetSource(localMint), log: feedLog("TokenFeed"),
+    exact,
   });
   const feedServer = serve({ fetch: atPublicUrl(feed, feedUrl), port: feedPort, hostname: "127.0.0.1" });
   cleanups.push(() => stop(feedServer));
@@ -215,6 +243,21 @@ async function main() {
     cleanups.push(() => stop(newsServer));
   }
 
+  if (gatewayId !== null && gatewaySecret && gatewayPort !== null && gatewayUrl) {
+    step("starting the gateway (resells TokenFeed's exact routes to Blindfold agents)");
+    const { bytes } = loadOrCreateKeypair(gatewayWalletPath, false);
+    const wallet = await walletPayFetch({ keypair: bytes, rpcUrl: rpc, network: SOLANA_DEVNET_CAIP2, asset: usdcMint.toBase58() });
+    const gateway = createGateway({
+      mintUrl, providerSecretKey: gatewaySecret, routes: standInRoutes(`http://localhost:${feedPort}`), usdcMint: usdcMint.toBase58(), providerId: gatewayId,
+      redeem: new HttpRedeemClient(localMint), keysets: new HttpKeysetSource(localMint), log: feedLog("Gateway"),
+      upstream: new UpstreamClient({ payFetch: wallet.payFetch, network: SOLANA_DEVNET_CAIP2, asset: usdcMint.toBase58() }),
+    });
+    const gatewayServer = serve({ fetch: atPublicUrl(gateway, gatewayUrl), port: gatewayPort, hostname: "127.0.0.1" });
+    cleanups.push(() => stop(gatewayServer));
+    const walletUsdc = (await connection.getTokenAccountBalance(getAssociatedTokenAddressSync(usdcMint, new PublicKey(wallet.address)), SOLANA_COMMITMENT).catch(() => null))?.value.amount ?? "0";
+    if (BigInt(walletUsdc) < 250_000n) warn(`the gateway wallet ${wallet.address} holds ${usd(BigInt(walletUsdc))}; pnpm gateway:setup tops it up`);
+  }
+
   const vaultToken = vaultAta(usdcMint, programId);
   const vaultBase = (await connection.getTokenAccountBalance(vaultToken, SOLANA_COMMITMENT).catch(() => null))?.value.amount ?? "0";
   blank();
@@ -222,6 +265,7 @@ async function main() {
   kv("Mint", mintUrl);
   kv("TokenFeed", `${feedUrl}/v1/data/sol`);
   if (newsUrl) kv("NewsWire", `${newsUrl}/v1/data/sol`);
+  if (gatewayUrl) kv("Gateway", `${gatewayUrl}/v1/data/sol  (agent: --provider Gateway)`);
   kv("Vault", `${usd(BigInt(vaultBase))} held · ${explorerAddress(vaultToken.toBase58(), rpc)}`);
   kv("Settlement", `every ${WINDOW_S}s window, after a ${WINDOW_S}s hold, in ${UNIT_CENTS}-cent units`);
   kv("Admin token", join(KEYS, "serve-admin-token"));
