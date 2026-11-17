@@ -413,7 +413,7 @@ On failure: `{ "success": false, "errorReason": "<reason>", "transaction": "", "
 |---|---|
 | Scheme registration | `new x402Client().register(<devnet CAIP-2>, cashuClientScheme)`. The wallet registers only `cashu`, so it never pays with any other scheme |
 | Spend controls | `setSpendControls({ allowedAssets: [{ network, asset: USDC_MINT, maxAmountPerPayment: String(MAX_PER_CALL_CENTS * 10_000) }] })`. Required: x402 rejects non-default assets for custom schemes otherwise. This is also the first per-call cap |
-| `createPaymentPayload` | Runs the Blindfold refusals (allowlist, signer set, exact sum, mint, unit, cap) and throws `PaymentRefused` before any proof leaves. Moves chosen proofs to `pending` |
+| `createPaymentPayload` | Runs the Blindfold refusals (allowlist, signer set, exact sum, mint, unit, cap) and throws `PaymentRefused` before any proof leaves. Then, for a price above `APPROVAL_OVER_CENTS`, asks the owner's approver and refuses with `approval_denied` or `approval_timeout` unless it approves in time ([04](04-wallet-sdk.md#owner-approval)). Moves chosen proofs to `pending` |
 | `schemeHooks.onPaymentResponse` | Success: drop the pending proofs. Failure or no `SettleResponse`: `POST /v1/checkstate` (NUT-07) for them; `UNSPENT` go back, `SPENT` are dropped. This also covers a lost `200` |
 
 ### 7.5 Mock API paid endpoint
@@ -431,9 +431,11 @@ The mock provider is a token data feed in the style of the Solana DeFi feeds tha
 
 `GET /v1/data/:topic/depth` (order-book depth), default 10 cents: `{ topic, feed: "depth", bids: [{price, size}] x5, asks: [{price, size}] x5, spread_bps, as_of }`.
 
+`GET /v1/data/:topic/signals` (premium trade signal), default 25 cents, above the default approval threshold: `{ topic, feed: "signals", signal: "BUY" | "SELL" | "HOLD", confidence, horizon: "1h", as_of }`. The signal follows `whale_netflow` (above +20,000 BUY, below -20,000 SELL).
+
 Fake, deterministic per topic. `GET /health` is free.
 
-**`exact` memos.** With the `exact` baseline, a provider may set x402's `extra.memo` on a route's `exact` entry; the payer's transaction then carries that text in an SPL Memo instruction, onchain. Sellers use memos to reconcile payments. The demo provider tags its listed tokens' routes `whale-flow/<TOKEN>` and `depth/<TOKEN>` (`ExactOptions.memoTopics`); other `exact` payments carry the payer's random nonce memo. `cashu` entries never carry a memo.
+**`exact` memos.** With the `exact` baseline, a provider may set x402's `extra.memo` on a route's `exact` entry; the payer's transaction then carries that text in an SPL Memo instruction, onchain. Sellers use memos to reconcile payments. The demo provider tags its listed tokens' routes `whale-flow/<TOKEN>`, `depth/<TOKEN>` and `signals/<TOKEN>` (`ExactOptions.memoTopics`); other `exact` payments carry the payer's random nonce memo. `cashu` entries never carry a memo.
 
 ### 7.6 Agent reserve check [BF]
 
@@ -468,7 +470,10 @@ What the agent and other callers may rely on. Details in `04-wallet-sdk.md`.
 
 ```ts
 class AgentWallet {
-  static open(opts?: { tokenFile?: string; maxPerCallCents?: number; allowlist?: string[]; fetch?: typeof fetch }): Promise<AgentWallet>;
+  static open(opts?: {
+    tokenFile?: string; maxPerCallCents?: number; allowlist?: string[]; fetch?: typeof fetch;
+    approvalOverCents?: number; approve?: Approver; approvalTimeoutMs?: number; // owner approval (04)
+  }): Promise<AgentWallet>;
   balance(): number;          // spendable cents (excludes pending)
   payFetch(url: string | URL, init?: RequestInit): Promise<Response>; // fetch-compatible
 }
@@ -476,7 +481,7 @@ class PaymentRefused extends Error { reason: RefusalReason }  // thrown before a
 class PaymentFailed extends Error { status: number; errorReason?: string } // paid retry not settled (after checkstate recovery). status is 402 for any settle failure (§7.3); errorReason only if the SDK surfaced it
 ```
 
-`payFetch` wraps `@x402/fetch` (§7.4). It returns non-402 responses unchanged and never throws for them. x402 wraps errors thrown inside a scheme ("Failed to create payment payload: ..."), and its spend controls refuse over-cap requests before our scheme runs; `payFetch` unwraps both into `PaymentRefused` (the latter as `over_cap`). `RefusalReason` includes `provider_not_allowed`, `provider_not_in_signer_set`, `over_cap`, `insufficient_balance`, `insufficient_exact`, `unit`, `mint`, `bad_request`. Call `wallet.close()` when finished to release the file lock. If a payment was attempted, a non-2xx final response raises `PaymentFailed`; an unpaid non-402 response is returned unchanged.
+`payFetch` wraps `@x402/fetch` (§7.4). It returns non-402 responses unchanged and never throws for them. x402 wraps errors thrown inside a scheme ("Failed to create payment payload: ..."), and its spend controls refuse over-cap requests before our scheme runs; `payFetch` unwraps both into `PaymentRefused` (the latter as `over_cap`). `RefusalReason` includes `provider_not_allowed`, `provider_not_in_signer_set`, `over_cap`, `insufficient_balance`, `insufficient_exact`, `unit`, `mint`, `bad_request`, `approval_denied`, `approval_timeout`. `Approver` is `(req, signal) => Promise<boolean>`; see [04](04-wallet-sdk.md#owner-approval). Call `wallet.close()` when finished to release the file lock. If a payment was attempted, a non-2xx final response raises `PaymentFailed`; an unpaid non-402 response is returned unchanged.
 
 ## 9. Repo layout and configuration
 
@@ -511,6 +516,7 @@ docker-compose.yml     Postgres
 | `LLM_API_KEY`, `LLM_BASE_URL` (Gemini's OpenAI-compatible endpoint), `LLM_MODEL` (`gemini-3.5-flash-lite,gemini-flash-latest`) | agent `--llm` mode ([05](05-agent.md#llm-decision-loop)); `pnpm demo` also reads `.keys/llm.key` |
 | `MINT_DEV_FAKE_CHAIN` (`1` to enable), `PROVIDERS_FILE`, `DEPOSIT_POLL_MS`, `SETTLE_INTERVAL_S` | mint; fake-chain mode is local development only |
 | `TOKEN_FILE`, `MAX_PER_CALL_CENTS` (10), `WALLET_ALLOWLIST` (comma list of provider pubkeys; default: union of the proofs' signer sets) | wallet SDK, agent |
+| `APPROVAL_OVER_CENTS` (20; higher prices need the owner's approval), `APPROVAL_TIMEOUT_S` (60, agent only) | wallet SDK, agent ([05](05-agent.md#owner-approval)) |
 
 **Test layers:** TypeScript tests use fakes; mint and application integration tests require PostgreSQL. Rust vault tests use LiteSVM and a built `target/deploy/vault.so`. The separate `e2e:localnet` script uses `solana-test-validator` and a six-decimal test mint; `e2e` uses a deployed devnet vault and funded keys. See [the runbook](../RUNNING.md).
 

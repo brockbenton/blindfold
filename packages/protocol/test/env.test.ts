@@ -16,7 +16,7 @@ describe("env", () => {
     expect(() => loadMockApiEnv({})).toThrow(/PROVIDER_SECRET_KEY/);
   });
   it("wallet and agent", () => {
-    expect(loadWalletEnv({})).toMatchObject({ MAX_PER_CALL_CENTS: 10, WALLET_ALLOWLIST: [] });
+    expect(loadWalletEnv({})).toMatchObject({ MAX_PER_CALL_CENTS: 10, APPROVAL_OVER_CENTS: 20, WALLET_ALLOWLIST: [] });
     expect(loadWalletEnv({ WALLET_ALLOWLIST: `${PK.toUpperCase()}, ${PK}` }).WALLET_ALLOWLIST).toEqual([PK, PK]);
     expect(() => loadWalletEnv({ WALLET_ALLOWLIST: "nope" })).toThrow();
     expect(loadAgentEnv({}).RESERVE_CHECK_EVERY).toBe(10);

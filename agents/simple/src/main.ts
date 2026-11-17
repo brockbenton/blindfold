@@ -2,7 +2,7 @@
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 import { Connection, PublicKey } from "@solana/web3.js";
-import { PaymentFailed, PaymentRefused, AgentWallet } from "@blindfold/wallet";
+import { PaymentFailed, PaymentRefused, AgentWallet, terminalApprover } from "@blindfold/wallet";
 import { DEFAULT_MINT_URL } from "@blindfold/protocol";
 import { ConfigError, HttpError, NetworkError, NoProviderError, ReservesFailedError } from "./errors.js";
 import { humanReporter, jsonReporter, type ErrorReport, type Reporter } from "./reporter.js";
@@ -50,7 +50,7 @@ export async function runMain(
           "token-file": { type: "string" }, "mint-url": { type: "string" }, "max-per-call": { type: "string" },
           topic: { type: "string" }, provider: { type: "string" }, calls: { type: "string" },
           json: { type: "boolean" }, fake: { type: "boolean" },
-          llm: { type: "boolean" }, goal: { type: "string" }, budget: { type: "string" },
+          llm: { type: "boolean" }, goal: { type: "string" }, budget: { type: "string" }, "approve-over": { type: "string" },
         },
       }).values;
     } catch (e) {
@@ -67,6 +67,9 @@ export async function runMain(
     const reserveEvery = int(env.RESERVE_CHECK_EVERY, 10, "RESERVE_CHECK_EVERY");
     const mintUrl = a["mint-url"] ?? env.MINT_URL ?? DEFAULT_MINT_URL;
     const maxPerCall = int(a["max-per-call"] ?? env.MAX_PER_CALL_CENTS, 10, "max per call");
+    const approveOver = Number(a["approve-over"] ?? env.APPROVAL_OVER_CENTS ?? 20);
+    if (!Number.isInteger(approveOver) || approveOver < 0) throw new ConfigError("approval threshold must be a non-negative integer");
+    const approvalTimeoutS = int(env.APPROVAL_TIMEOUT_S, 60, "APPROVAL_TIMEOUT_S");
 
     let tools = overrides.tools;
     if (!tools) {
@@ -94,7 +97,12 @@ export async function runMain(
         const allow = (env.WALLET_ALLOWLIST ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
         let wallet: AgentWallet;
         try {
-          wallet = await AgentWallet.open({ tokenFile, maxPerCallCents: maxPerCall, allowlist: allow.length ? allow : undefined, usdcMint: env.USDC_MINT });
+          wallet = await AgentWallet.open({
+            tokenFile, maxPerCallCents: maxPerCall, allowlist: allow.length ? allow : undefined, usdcMint: env.USDC_MINT,
+            // Above the threshold the owner is asked on the terminal; without one (no TTY) such payments are refused.
+            approvalOverCents: approveOver, approvalTimeoutMs: approvalTimeoutS * 1000,
+            approve: process.stdin.isTTY ? terminalApprover() : undefined,
+          });
         } catch (e) {
           throw new ConfigError(`cannot open token file: ${(e as Error).message}`);
         }
