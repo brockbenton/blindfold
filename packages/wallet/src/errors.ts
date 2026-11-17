@@ -6,7 +6,9 @@ export type RefusalReason =
   | "provider_not_allowed"
   | "provider_not_in_signer_set"
   | "insufficient_exact"
-  | "insufficient_balance";
+  | "insufficient_balance"
+  | "approval_denied"
+  | "approval_timeout";
 
 /** Thrown before any proof leaves the wallet. The message format lets us recognise it after x402 wraps it. */
 export class PaymentRefused extends Error {

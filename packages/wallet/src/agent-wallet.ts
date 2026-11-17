@@ -3,6 +3,7 @@ import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
 import {
   SOLANA_DEVNET_CAIP2, USDC_DEVNET_MINT, centsToBaseUnits, loadWalletEnv, signerSet, type WireProof,
 } from "@blindfold/protocol";
+import { askApproval, type ApprovalOutcome, type Approver } from "./approval.js";
 import { CashuClientScheme, type SpendHost } from "./cashu-scheme.js";
 import { classify, type MintLike } from "./checkstate.js";
 import { PaymentFailed, PaymentRefused, type RefusalReason } from "./errors.js";
@@ -12,6 +13,12 @@ import { FileTokenStore, type PendingWire, type StoredFile } from "./store.js";
 export interface WalletOptions {
   tokenFile?: string;
   maxPerCallCents?: number;
+  /** Payments above this many cents need the owner's approval (default 20). Must stay below the cap to matter. */
+  approvalOverCents?: number;
+  /** Asked before paying above `approvalOverCents`. Without one, such payments are refused. */
+  approve?: Approver;
+  /** No answer within this time is a denial (default 60 000). */
+  approvalTimeoutMs?: number;
   /** Provider pubkeys (hex33). Default: env WALLET_ALLOWLIST, else the union of the proofs' signer sets. */
   allowlist?: string[];
   fetch?: typeof fetch;
@@ -32,7 +39,9 @@ export class AgentWallet implements SpendHost {
   readonly allowlist: readonly string[];
   readonly maxPerCallCents: number;
   readonly usdcMint: string;
+  readonly approvalOverCents: number;
   currentUrl = "";
+  private approvals = 0;
   private mutex = new Mutex();
   private inFlight = new Map<string, PendingWire>();
   private lastRefusal: PaymentRefused | undefined;
@@ -50,7 +59,9 @@ export class AgentWallet implements SpendHost {
     maxPerCallCents: number,
     usdcMint: string,
     fetchImpl: typeof fetch,
+    private approval: { overCents: number; approve?: Approver; timeoutMs: number },
   ) {
+    this.approvalOverCents = approval.overCents;
     this.allowlist = allowlist;
     this.maxPerCallCents = maxPerCallCents;
     this.usdcMint = usdcMint;
@@ -89,6 +100,7 @@ export class AgentWallet implements SpendHost {
         opts.maxPerCallCents ?? env?.MAX_PER_CALL_CENTS ?? 10,
         opts.usdcMint ?? env?.USDC_MINT ?? USDC_DEVNET_MINT,
         opts.fetch ?? globalThis.fetch,
+        { overCents: opts.approvalOverCents ?? env?.APPROVAL_OVER_CENTS ?? 20, approve: opts.approve, timeoutMs: opts.approvalTimeoutMs ?? 60_000 },
       );
       await w.recoverPending();
       return w;
@@ -142,6 +154,13 @@ export class AgentWallet implements SpendHost {
 
   rememberInFlight(token: string, entry: PendingWire): void {
     this.inFlight.set(token, entry);
+  }
+
+  requestApproval(cents: number, provider: string): Promise<ApprovalOutcome> {
+    return askApproval(this.approval.approve, {
+      id: `approval-${process.pid}-${++this.approvals}`, cents, url: this.currentUrl, provider,
+      thresholdCents: this.approval.overCents, timeoutMs: this.approval.timeoutMs,
+    });
   }
 
   refused(e: PaymentRefused): void {
