@@ -30,8 +30,8 @@ export interface Dashboard<E extends { type: string } = DashboardEvent> {
 
 export const DASHBOARD_DIR = new URL("../dashboard/", import.meta.url);
 const TYPES: Record<string, string> = { html: "text/html; charset=utf-8", js: "text/javascript; charset=utf-8", css: "text/css; charset=utf-8", json: "application/json" };
-/** Files shared by the live dashboard and the replay page. */
-export const SHARED_ASSETS = ["dashboard.css", "dashboard.js"];
+/** Files shared by the live dashboards (main demo and crowd) and the replay page. */
+export const SHARED_ASSETS = ["dashboard.css", "dashboard.js", "crowd.css", "crowd-dashboard.js"];
 
 /** Serves a file from scripts/dashboard/ (read per request, so edits show on reload). */
 export function serveAsset(app: Hono, path: string, file: string | URL) {

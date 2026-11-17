@@ -424,7 +424,7 @@ async function main() {
     onDone: (r, outcome) => emit({ type: "approval_done", id: r.id, outcome }),
   });
   if (withDashboard) {
-    dash = dashboard = await startDashboard({ port: await pickPort(5173), onApproval: (id, yes) => approvals.resolve(id, yes), onEmit: recorder?.event });
+    dash = dashboard = await startDashboard<DashboardEvent>({ port: await pickPort(5173), onApproval: (id, yes) => approvals.resolve(id, yes), onEmit: recorder?.event });
     cleanups.push(() => dash!.close());
   }
   const emit = (e: DashboardEvent) => dash?.emit(e);

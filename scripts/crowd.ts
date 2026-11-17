@@ -8,6 +8,7 @@
 //   pnpm crowd --agents 3      agents in the crowd (2-5, default 3)
 //   pnpm crowd --no-pause      run straight through
 //   pnpm crowd --no-dashboard  skip the live crowd dashboard (default http://localhost:5173)
+//   pnpm crowd --record FILE   also save the dashboard events and narration for the replay page (pnpm replay FILE)
 //
 // Localnet only: a devnet crowd needs owners funded independently of each other (see docs/DEMO.md).
 // Optional env: DATABASE_URL (default: starts the repository's dev PostgreSQL).
@@ -17,7 +18,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import pg from "pg";
@@ -40,11 +41,15 @@ import { ChainWatcher, attributeVault, describe as describeTx, infer } from "./l
 import { startDashboard, type Dashboard } from "./lib/dashboard.js";
 import { exactPayFetch, paymentResponse } from "./lib/exactClient.js";
 import { explorerTx } from "./lib/explorer.js";
+import { startRecorder } from "./lib/recorder.js";
 import { act, blank, bold, dim, green, kv, magenta, ok, pause, red, say, short, step, usd, yellow } from "./lib/narrate.js";
 
 const argv = process.argv.slice(2);
 const pausing = !argv.includes("--no-pause");
-const withDashboard = !argv.includes("--no-dashboard");
+const recordArg = argv.indexOf("--record");
+if (recordArg >= 0 && !/^[^-]/.test(argv[recordArg + 1] ?? "")) throw new Error("--record needs a file name");
+const recorder = recordArg >= 0 ? startRecorder({ file: resolve(process.env.INIT_CWD ?? process.cwd(), argv[recordArg + 1]), demo: "crowd" }) : null;
+const withDashboard = !argv.includes("--no-dashboard") || recorder !== null;
 const agentsArg = argv.indexOf("--agents");
 const N = agentsArg >= 0 ? Number(argv[agentsArg + 1]) : 3;
 if (!Number.isInteger(N) || N < 2 || N > 5) throw new Error("--agents must be an integer from 2 to 5");
@@ -71,7 +76,7 @@ let dashboard = null as Dashboard<CrowdEvent> | null; // set in main(); read aft
 
 /** What the crowd dashboard (scripts/dashboard/crowd.html) receives. */
 export type CrowdEvent =
-  | { type: "setup"; prices: { whaleFlow: number; depth: number }; agents: { name: string; token: string; wallet: string; owner: string }[] }
+  | { type: "setup"; mode: "localnet"; prices: { whaleFlow: number; depth: number }; agents: { name: string; token: string; wallet: string; owner: string }[] }
   | { type: "act"; n: number; title: string }
   | { type: "call"; side: "exact" | "blindfold"; agent: number; label: string; cents: number; url?: string }
   | { type: "chain"; kind: string; from: string; amountBase: string; memo?: string; time: string | null; url: string; round: 1 | 2 }
@@ -227,7 +232,7 @@ async function main() {
   const vaultStart = await tokenBalance(connection, vaultToken);
   let dash: Dashboard<CrowdEvent> | null = null;
   if (withDashboard) {
-    dash = dashboard = await startDashboard<CrowdEvent>({ port: await pickPort(5173), page: "crowd.html" });
+    dash = dashboard = await startDashboard<CrowdEvent>({ port: await pickPort(5173), page: "crowd.html", onEmit: recorder?.event });
     cleanups.push(() => dash!.close());
   }
   const emit = (e: CrowdEvent) => dash?.emit(e);
@@ -270,7 +275,7 @@ async function main() {
     say(`${bold("Live dashboard:")} ${dash.url}  ${dim("(open it next to this terminal)")}`);
   }
   emit({
-    type: "setup", prices: { whaleFlow: PRICE, depth: DEPTH_PRICE },
+    type: "setup", mode: "localnet", prices: { whaleFlow: PRICE, depth: DEPTH_PRICE },
     agents: owners.map((o, i) => ({ name: name(i), token: TOPICS[i].toUpperCase(), wallet: payers[i].address, owner: o.publicKey.toBase58() })),
   });
   emit({ type: "act", n: 0, title: captions[0] });
@@ -446,4 +451,5 @@ try {
   dashboard?.emit({ type: "done", ok: false });
 }
 await cleanup();
+if (recorder) { recorder.stop(); recorder.save(); console.log(dim(`Recording saved to ${argv[recordArg + 1]}; preview it with: pnpm replay ${argv[recordArg + 1]}`)); }
 process.exit(failed ? 1 : 0);

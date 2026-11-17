@@ -168,6 +168,32 @@ function classify(raw, inHeader, headerFirst) {
   return { cls: "say", text };
 }
 
+/**
+ * False for a link nobody else can open: an Explorer link whose custom RPC is this machine (a localnet run), or a
+ * plain http:// URL (a local service). Everything else is public.
+ */
+export function isPublicUrl(u) {
+  try {
+    const url = new URL(u);
+    if (url.protocol !== "https:") return false;
+    const rpc = url.searchParams.get("customUrl");
+    if (!rpc) return true;
+    const host = new URL(rpc).hostname;
+    return !(host === "localhost" || host === "[::1]" || /^127\./.test(host) || /^0\.0\.0\.0$/.test(host));
+  } catch {
+    return false;
+  }
+}
+
+/** A copy of a dashboard event without links nobody else can open (`url` and the `links` map). */
+export function stripLocalLinks(e) {
+  if (!e || typeof e !== "object") return e;
+  const out = { ...e };
+  if (typeof out.url === "string" && !isPublicUrl(out.url)) delete out.url;
+  if (out.links && typeof out.links === "object") out.links = Object.fromEntries(Object.entries(out.links).filter(([, u]) => isPublicUrl(u)));
+  return out;
+}
+
 /** A readable label for a URL: Solana Explorer links become "explorer tx 5Kq3…Zt9f". */
 export function shortUrl(u) {
   try {
