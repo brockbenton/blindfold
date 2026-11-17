@@ -1,4 +1,4 @@
-# Publishes the replay page (scripts/dashboard/replay.html and the committed recording) to GitHub Pages.
+# Publishes the replay site (scripts/dashboard: home.html, replay.html and the committed recordings) to GitHub Pages.
 name: pages
 on:
   push:

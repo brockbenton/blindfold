@@ -1,9 +1,10 @@
-// Records a demo run for the replay page: every dashboard event and every terminal line, with milliseconds since
+// Records a demo run (pnpm demo or pnpm crowd) for the replay page: every dashboard event and every terminal line, with milliseconds since
 // the start. Terminal lines are captured from stdout and stderr, so the recording has exactly what was printed.
 // Each line is tagged with its act; an act's banner, printed just before its dashboard event, belongs to that act.
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { DashboardEvent } from "./dashboard.js";
+/** A dashboard event as emitted: DashboardEvent (pnpm demo) or CrowdEvent (pnpm crowd), with its sequence number. */
+export type RecordedEvent = { type: string; seq: number; [k: string]: unknown };
 
 export const RECORDING_FORMAT = "blindfold-recording";
 
@@ -11,16 +12,18 @@ export interface Recording {
   format: typeof RECORDING_FORMAT;
   version: 1;
   recordedAt: string;
+  /** Which demo: `pnpm demo` (single, the default for recordings without the field) or `pnpm crowd`. */
+  demo?: "single" | "crowd";
   mode: "devnet" | "localnet" | null;
   /** Terminal width the narration was wrapped to. */
   columns: number;
   durationMs: number;
-  events: { t: number; event: DashboardEvent & { seq: number } }[];
+  events: { t: number; event: RecordedEvent }[];
   narration: { t: number; act: number; text: string }[];
 }
 
 export interface Recorder {
-  event(e: DashboardEvent & { seq: number }): void;
+  event(e: { type: string; seq: number }): void;
   line(text: string): void;
   snapshot(): Recording;
   /** Writes the recording (atomically) to the file. */
@@ -33,12 +36,13 @@ export interface Recorder {
 const ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g;
 const BAR = /^\s*=+\s*$/;
 
-export function startRecorder(o: { file: string; now?: () => number; capture?: boolean; columns?: number }): Recorder {
+export function startRecorder(o: { file: string; demo?: "single" | "crowd"; now?: () => number; capture?: boolean; columns?: number }): Recorder {
   const now = o.now ?? (() => performance.now());
   const start = now();
   const t = () => Math.round(now() - start);
   const recordedAt = new Date().toISOString();
   const events: Recording["events"] = [];
+  const demo = o.demo ?? "single";
   const narration: Recording["narration"] = [];
   let act = 0;
   let linesAtLastEvent = 0;
@@ -46,15 +50,16 @@ export function startRecorder(o: { file: string; now?: () => number; capture?: b
   const line = (text: string) => {
     for (const l of text.replace(ANSI, "").replace(/\r/g, "").split("\n")) narration.push({ t: t(), act, text: l.trimEnd() });
   };
-  const event = (e: DashboardEvent & { seq: number }) => {
-    events.push({ t: t(), event: e });
+  const event = (e: { type: string; seq: number }) => {
+    events.push({ t: t(), event: e as RecordedEvent });
     if (e.type === "act") {
       // Lines printed since the previous event, from the act banner's first rule (and the blank line before it), go with this act.
       const run = narration.slice(linesAtLastEvent);
       let i = run.findIndex((l) => BAR.test(l.text));
       if (i > 0 && !run[i - 1].text) i--;
-      if (i >= 0) for (const l of run.slice(i)) l.act = e.n;
-      act = e.n;
+      const n = Number((e as { n?: unknown }).n);
+      if (i >= 0) for (const l of run.slice(i)) l.act = n;
+      act = n;
     }
     linesAtLastEvent = narration.length;
   };
@@ -82,7 +87,7 @@ export function startRecorder(o: { file: string; now?: () => number; capture?: b
   }
 
   const snapshot = (): Recording => ({
-    format: RECORDING_FORMAT, version: 1, recordedAt,
+    format: RECORDING_FORMAT, version: 1, recordedAt, demo,
     mode: (events.find((e) => e.event.type === "setup")?.event as { mode?: "devnet" | "localnet" } | undefined)?.mode ?? null,
     columns: o.columns ?? Math.min(process.stdout.columns || 100, 100),
     durationMs: Math.max(events.at(-1)?.t ?? 0, narration.at(-1)?.t ?? 0),
@@ -102,9 +107,10 @@ export function startRecorder(o: { file: string; now?: () => number; capture?: b
 }
 
 /** Problems that make a recording unfit to publish; empty when it is fine. */
-export function recordingProblems(rec: Recording, o: { mode?: "devnet" | "localnet" } = {}): string[] {
+export function recordingProblems(rec: Recording, o: { mode?: "devnet" | "localnet"; demo?: "single" | "crowd" } = {}): string[] {
   const problems: string[] = [];
   if (rec.format !== RECORDING_FORMAT || rec.version !== 1) return ["not a version 1 Blindfold recording"];
+  if (o.demo && (rec.demo ?? "single") !== o.demo) problems.push(`a ${rec.demo ?? "single"} recording, expected ${o.demo}`);
   if (o.mode && rec.mode !== o.mode) problems.push(`recorded on ${rec.mode ?? "an unknown cluster"}, expected ${o.mode}`);
   const done = rec.events.find((e) => e.event.type === "done")?.event as { ok?: boolean } | undefined;
   if (!done) problems.push("the run did not finish");

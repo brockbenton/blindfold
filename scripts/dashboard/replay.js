@@ -1,17 +1,18 @@
-// Plays a recorded demo run through the live dashboard's renderer, with the terminal narration beside it.
-// Query parameters: src (recording URL, default recording.json), act (start at act n), speed (1, 2 or 4),
-// autoplay=0 (start paused).
+// Plays a recorded demo run through the live dashboard's renderer, with the terminal narration beside it. A
+// recording of `pnpm crowd` plays through the crowd dashboard, any other through the main demo's.
+// Query parameters: demo=crowd (play crowd-recording.json), src (recording URL, default recording.json),
+// act (start at act n), speed (1, 2 or 4), autoplay=0 (start paused).
 import { esc, mountDashboard } from "./dashboard.js";
-import { Player, actAt, buildTimeline, clock, formatLines, indexAt, parseRecording, shortUrl } from "./replay-core.js";
+import { mountCrowd } from "./crowd-dashboard.js";
+import { Player, actAt, buildTimeline, clock, formatLines, indexAt, isPublicUrl, parseRecording, shortUrl, stripLocalLinks } from "./replay-core.js";
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const root = $("dashboard");
-const dashboard = mountDashboard(root, { interactive: false });
 
 let rec;
 try {
-  const res = await fetch(params.get("src") || "recording.json", { cache: "no-cache" });
+  const res = await fetch(params.get("src") || (params.get("demo") === "crowd" ? "crowd-recording.json" : "recording.json"), { cache: "no-cache" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   rec = parseRecording(await res.json());
 } catch (e) {
@@ -21,11 +22,13 @@ try {
   throw e;
 }
 
+const crowd = rec.demo === "crowd";
+const dashboard = crowd ? mountCrowd(root) : mountDashboard(root, { interactive: false });
 const { entries, acts, duration } = buildTimeline(rec);
 const player = new Player({ duration });
-const cluster = rec.mode === "devnet" ? "devnet" : rec.mode === "localnet" ? "localnet rehearsal" : "recorded";
+const cluster = rec.mode === "devnet" ? "devnet" : rec.mode === "localnet" ? "local validator" : "recorded";
 const date = rec.recordedAt ? new Date(rec.recordedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
-document.title = rec.mode === "devnet" ? "Blindfold: a recorded devnet run" : "Blindfold replay";
+document.title = crowd ? "Blindfold: the crowd demo" : rec.mode === "devnet" ? "Blindfold: a recorded devnet run" : "Blindfold replay";
 $("meta").innerHTML = `${esc(cluster)} run${date ? ", " + esc(date) : ""} · <a href="https://github.com/brockbenton/blindfold" target="_blank" rel="noopener">source</a>`;
 
 // ------------------------------------------------------------------------------------------- acts bar
@@ -47,7 +50,7 @@ function render(pos) {
   const upto = indexAt(entries, pos);
   if (upto < applied) { dashboard.reset(); applied = 0; }
   const jump = upto - applied > 3;
-  for (; applied < upto; applied++) if (entries[applied].kind === "event") dashboard.apply(entries[applied].event);
+  for (; applied < upto; applied++) if (entries[applied].kind === "event") dashboard.apply(stripLocalLinks(entries[applied].event));
   // After a jump, show the state at once: what is on screen now does not animate in.
   if (jump) {
     const all = [...root.querySelectorAll("*")];
@@ -84,10 +87,13 @@ function render(pos) {
 }
 
 const URL_RE = /https:\/\/[^\s)]+/g; // http:// URLs in a recording are local services
+/** Public URLs become links; Explorer links into a local validator stay text, since nobody else can open them. */
 function linkify(s) {
   let out = "", last = 0;
   for (const m of s.matchAll(URL_RE)) {
-    out += esc(s.slice(last, m.index)) + `<a href="${esc(m[0])}" target="_blank" rel="noopener">${esc(shortUrl(m[0]))}</a>`;
+    out += esc(s.slice(last, m.index)) + (isPublicUrl(m[0])
+      ? `<a href="${esc(m[0])}" target="_blank" rel="noopener">${esc(shortUrl(m[0]))}</a>`
+      : `<span class="local" title="On the local validator this run used; not public">${esc(shortUrl(m[0]))}</span>`);
     last = m.index + m[0].length;
   }
   return out + esc(s.slice(last));
