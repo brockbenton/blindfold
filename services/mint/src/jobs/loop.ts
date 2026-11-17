@@ -28,9 +28,14 @@ export function msToNextBoundary(periodMs: number, now: number): number {
 export function everyAligned(periodMs: number, name: string, fn: () => Promise<unknown>, clock: () => number = Date.now): () => void {
   let t: NodeJS.Timeout | undefined;
   let stopped = false;
+  let last = -1; // the boundary of the previous run, so a timer that wakes a little early cannot run it twice
   const schedule = () => {
     if (stopped) return;
+    const now = clock();
+    let target = now + msToNextBoundary(periodMs, now);
+    if (target <= last) target = last + periodMs;
     t = setTimeout(async () => {
+      last = target;
       try {
         await fn();
       } catch (e) {
@@ -38,7 +43,7 @@ export function everyAligned(periodMs: number, name: string, fn: () => Promise<u
       } finally {
         schedule();
       }
-    }, msToNextBoundary(periodMs, clock()));
+    }, Math.max(0, target - now));
     t.unref();
   };
   schedule();
