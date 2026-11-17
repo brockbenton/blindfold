@@ -17,22 +17,27 @@ export type DashboardEvent =
   | { type: "approval_done"; id: string; outcome: "approved" | "denied" | "timeout" }
   | { type: "done"; ok: boolean };
 
-export interface Dashboard {
+export interface Dashboard<E extends { type: string } = DashboardEvent> {
   url: string;
-  emit(e: DashboardEvent): void;
+  emit(e: E): void;
   /** Events so far (for tests). */
-  readonly history: (DashboardEvent & { seq: number })[];
+  readonly history: (E & { seq: number })[];
   close(): Promise<void>;
 }
 
-const page = () => readFileSync(new URL("../dashboard/index.html", import.meta.url), "utf8");
+const read = (file: string) => readFileSync(new URL(`../dashboard/${file}`, import.meta.url), "utf8");
 
-/** `onApproval` receives the owner's Approve/Deny clicks; it returns false when the request is no longer pending. */
-export async function startDashboard(o: { port: number; hostname?: string; onApproval?: (id: string, approve: boolean) => boolean }): Promise<Dashboard> {
-  const history: (DashboardEvent & { seq: number })[] = [];
-  const listeners = new Set<(e: DashboardEvent & { seq: number }) => void>();
+/**
+ * `page` is a file in scripts/dashboard (default index.html, the main demo's page); `pnpm crowd` serves crowd.html.
+ * `onApproval` receives the owner's Approve/Deny clicks; it returns false when the request is no longer pending.
+ */
+export async function startDashboard<E extends { type: string } = DashboardEvent>(o: {
+  port: number; hostname?: string; page?: string; onApproval?: (id: string, approve: boolean) => boolean;
+}): Promise<Dashboard<E>> {
+  const history: (E & { seq: number })[] = [];
+  const listeners = new Set<(e: E & { seq: number }) => void>();
   const app = new Hono();
-  app.get("/", (c) => c.html(page()));
+  app.get("/", (c) => c.html(read(o.page ?? "index.html")));
   // JSON only: a cross-site form cannot send it without a CORS preflight, which this server never answers.
   app.post("/approval/:id", async (c) => {
     if (!c.req.header("content-type")?.startsWith("application/json")) return c.json({ error: "json only" }, 415);
@@ -42,9 +47,9 @@ export async function startDashboard(o: { port: number; hostname?: string; onApp
   });
   app.get("/events", (c) =>
     streamSSE(c, async (stream) => {
-      const queue: (DashboardEvent & { seq: number })[] = [...history];
+      const queue: (E & { seq: number })[] = [...history];
       let wake: (() => void) | null = null;
-      const push = (e: DashboardEvent & { seq: number }) => { queue.push(e); wake?.(); };
+      const push = (e: E & { seq: number }) => { queue.push(e); wake?.(); };
       listeners.add(push);
       stream.onAbort(() => { listeners.delete(push); wake?.(); });
       while (!stream.aborted) {
