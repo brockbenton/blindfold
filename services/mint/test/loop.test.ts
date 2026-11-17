@@ -23,4 +23,16 @@ describe("aligned settlement windows", () => {
     await vi.advanceTimersByTimeAsync(20_000);
     expect(runs).toHaveLength(4);
   });
+
+  it("a clock that reads just before the boundary after a run does not repeat that window", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(5_000);
+    let skew = 0;
+    const runs: number[] = [];
+    // After the first run the clock reads 1 ms behind, as if the timer had woken early.
+    const stop = everyAligned(10_000, "early", async () => { runs.push(Date.now()); skew = runs.length === 1 ? -1 : 0; }, () => Date.now() + skew);
+    await vi.advanceTimersByTimeAsync(25_000);
+    stop();
+    expect(runs.map((t) => Math.floor(t / 10_000))).toEqual([1, 2, 3]); // one run per window
+  });
 });

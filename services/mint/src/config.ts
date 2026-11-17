@@ -44,12 +44,19 @@ export function loadConfig(env: Env = process.env): AppConfig {
   return {
     ...e,
     providers: loadProvidersFile(file),
-    depositPollMs: Number(env.DEPOSIT_POLL_MS ?? DEPOSIT_POLL_MS),
-    settleIntervalS: Number(env.SETTLE_INTERVAL_S ?? SETTLE_INTERVAL_S),
-    settleHoldS: Number(env.SETTLE_HOLD_S ?? env.SETTLE_INTERVAL_S ?? SETTLE_HOLD_S),
-    settleUnitCents: Number(env.SETTLE_UNIT_CENTS ?? SETTLE_UNIT_CENTS),
+    depositPollMs: num(env, "DEPOSIT_POLL_MS", DEPOSIT_POLL_MS, 1),
+    settleIntervalS: num(env, "SETTLE_INTERVAL_S", SETTLE_INTERVAL_S, 1),
+    settleHoldS: num(env, "SETTLE_HOLD_S", Number(env.SETTLE_INTERVAL_S ?? SETTLE_HOLD_S), 0),
+    settleUnitCents: num(env, "SETTLE_UNIT_CENTS", SETTLE_UNIT_CENTS, 1),
     devFakeChain: env.MINT_DEV_FAKE_CHAIN === "1",
   };
+}
+
+/** A whole-number setting at or above `min`; a typo fails at boot instead of breaking every timer run. */
+function num(env: Env, key: string, fallback: number, min: number): number {
+  const v = env[key] === undefined || env[key] === "" ? fallback : Number(env[key]);
+  if (!Number.isInteger(v) || v < min) throw new Error(`${key} must be an integer >= ${min}, got ${env[key]}`);
+  return v;
 }
 
 export function loadKeypair(path: string): Keypair {
