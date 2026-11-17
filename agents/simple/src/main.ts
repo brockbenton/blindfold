@@ -67,7 +67,7 @@ export async function runMain(
     const reserveEvery = int(env.RESERVE_CHECK_EVERY, 10, "RESERVE_CHECK_EVERY");
     const mintUrl = a["mint-url"] ?? env.MINT_URL ?? DEFAULT_MINT_URL;
     const maxPerCall = int(a["max-per-call"] ?? env.MAX_PER_CALL_CENTS, 10, "max per call");
-    const approveOver = Number(a["approve-over"] ?? env.APPROVAL_OVER_CENTS ?? 20);
+    const approveOver = Number(a["approve-over"] ?? (env.APPROVAL_OVER_CENTS || 20)); // an empty variable means the default
     if (!Number.isInteger(approveOver) || approveOver < 0) throw new ConfigError("approval threshold must be a non-negative integer");
     const approvalTimeoutS = int(env.APPROVAL_TIMEOUT_S, 60, "APPROVAL_TIMEOUT_S");
 

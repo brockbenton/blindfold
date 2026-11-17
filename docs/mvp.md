@@ -35,7 +35,7 @@ Planned, in priority order. Existing hooks and tests are not complete demos.
 4. **Owner approval.** Implemented in the wallet: a price above `APPROVAL_OVER_CENTS` waits for the owner (terminal prompt, the demo dashboard, denial on timeout), and `pnpm demo` Act 6 shows it ([agent](design/05-agent.md#owner-approval)). Not yet: a protocol-level co-signed reserve pocket that a compromised agent process could not bypass; current 1-of-N locks and redemption validation do not support it.
 5. **Temporal top-up.** Recover multi-step funding through a durable workflow; do not equate the current checkpoint files with exactly-once execution.
 6. **Onchain issuance log and reconciliation view.** The admin reconciliation endpoint exists; public issuance evidence does not.
-7. **Hidden provider revenue.** Revisit fixed payout accounts, fees and registry trust before implementing fresh addresses or chunked withdrawals.
+7. **Hidden provider revenue.** Partly implemented: fixed settlement windows, a hold and rounded payouts ([settlement privacy](design/02-mint.md#46-settlement-privacy)). Not done: hiding which provider earned, which needs fresh payout accounts and a new registry trust model.
 
 Cut lower-priority add-ons first. Refunds, key rotation, Tor/OHTTP and standard Cashu-wallet support are deferred. Mainnet, multiple mint operators and an onchain escape hatch are outside the current scope.
 
