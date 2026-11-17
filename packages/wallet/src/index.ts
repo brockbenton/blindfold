@@ -1,5 +1,9 @@
 export * from "./errors.js";
 export { AgentWallet, type WalletOptions, type RecoverReport } from "./agent-wallet.js";
+export {
+  askApproval, anyApprover, approvalBroker, fixedApprover, terminalApprover,
+  type ApprovalOutcome, type ApprovalRequest, type Approver,
+} from "./approval.js";
 export { CashuClientScheme, type SpendHost } from "./cashu-scheme.js";
 export { selectExact, type SelectError } from "./select.js";
 export { FileTokenStore, validateFile, type TokenStore, type StoredFile, type PendingWire } from "./store.js";

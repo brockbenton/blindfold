@@ -198,7 +198,9 @@ async function main() {
     db, cfg, vault: new SolanaVaultReader(connection, programId, usdcMint),
     sender: new SolanaSettleSender(connection, programId, usdcMint, authority), confirmTimeoutMs: 90_000,
   });
-  const stopJobs = start();
+  // Deposits and provider sync only: this demo settles on demand (below), so the mint's clock-aligned settlement
+  // timer stays off and cannot race those calls.
+  const stopJobs = start(["deposits", "providers"]);
   cleanups.push(stopJobs);
   const stop = (s: ReturnType<typeof serve>) => new Promise<void>((r) => { (s as any).closeAllConnections?.(); s.close(() => r()); });
   const mintServer = serve({ fetch: mintApp.fetch, port: mintPort, hostname: "127.0.0.1" });
@@ -347,6 +349,7 @@ async function main() {
 
   // ---------------------------------------------------------------- 4. one settlement batch
   scene(4, "One settlement pays the feed for everyone", "The mint pays what the feed is owed in one vault transaction.");
+  say(dim("To keep this run short the mint settles on request and pays in full. A deployed mint pays at its next fixed window, after a hold, in rounded amounts (pnpm demo, Act 4); that hides timing, not who deposited."));
   const settle = async (expectedCents: number) => {
     const before = await tokenBalance(connection, payoutAta);
     const settled = await admin_("/v1/blindfold/admin/settle", {});
@@ -371,12 +374,14 @@ async function main() {
 
   // ---------------------------------------------------------------- 5. odd amounts
   scene(5, "What breaks it: odd amounts", `A second round. Agent A's owner deposits ${usd(centsToBaseUnits(BIG_CENTS))}; the others deposit ${usd(centsToBaseUnits(SMALL_CENTS))} each. Each agent spends only this round's tokens.`);
-  round2Slot = await connection.getSlot(SOLANA_COMMITMENT);
+  // The first slot after everything round 1 put onchain: the settlement can sit in the current confirmed slot, and
+  // any new transaction lands in a later one.
+  round2Slot = Math.max(await connection.getSlot(SOLANA_COMMITMENT), ...watcher.observations.map((o) => o.slot)) + 1;
   const deposits2: string[] = [];
   for (const i of shuffle([...Array(N).keys()])) {
     deposits2.push(await fund(i, i === 0 ? BIG_CENTS : SMALL_CENTS, tokenFiles[1][i], join(dir, `owner-${i}-r2`)));
   }
-  // Funding is done; settlement syncs itself, so the mint's background jobs can stop.
+  // Funding is done; on-demand settlement syncs providers itself, so the mint's background jobs can stop.
   stopJobs();
   const plan2 = [...BIG_PLAN.map((p) => ({ agent: 0, path: `/v1/data/${TOPICS[0]}${p === "d" ? "/depth" : ""}` })), ...[...Array(N).keys()].slice(1).map((i) => ({ agent: i, path: `/v1/data/${TOPICS[i]}` }))];
   const spent2 = await buy(tokenFiles[1], shuffle(plan2));

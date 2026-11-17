@@ -58,6 +58,7 @@ describe("exit codes", () => {
   it("2: config errors", async () => {
     expect((await cli(["--calls", "0"])).code).toBe(2);
     expect((await cli(["--bogus"])).code).toBe(2);
+    expect((await cli(["--approve-over", "-1"])).code).toBe(2);
     const r = await cli([], { AGENT_FAKE: "" });
     expect(r.code).toBe(2);
     expect(r.stderr).toContain("TOKEN_FILE");
@@ -75,7 +76,7 @@ describe("exit codes", () => {
     const base = (over: Partial<Tools>): Tools => ({
       balance: async () => ({ cents: 100 }), list_providers: async () => fakeProviders,
       call_paid_api: async () => ({ status: 200, data: {}, paidCents: 5 }), check_reserves: async () => ({ ok: true, vaultCents: 1, outstandingCents: 0 }),
-      report: async () => undefined, request_approval: async () => { throw new Error("x"); }, ...over,
+      report: async () => undefined, ...over,
     });
     expect((await cli([], {}, base({ list_providers: async () => { throw new NetworkError("down"); } }))).code).toBe(4);
     expect((await cli([], {}, base({ call_paid_api: async () => { throw new TypeError("fetch failed"); } }))).code).toBe(4);
@@ -92,7 +93,7 @@ describe("reserve gate", () => {
     balance: async () => ({ cents: 100 }), list_providers: async () => fakeProviders,
     call_paid_api: async () => { log.push("pay"); return { status: 200, data: {}, paidCents: 5 }; },
     check_reserves: async () => { log.push("check"); return { ok: true, vaultCents: 9, outstandingCents: 1 }; },
-    report: async () => undefined, request_approval: async () => { throw new Error("x"); }, ...over,
+    report: async () => undefined, ...over,
   });
   it("checks before the first call and every RESERVE_CHECK_EVERY calls", async () => {
     const log: string[] = [];

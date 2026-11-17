@@ -1,6 +1,6 @@
 # Run the demo
 
-One command runs **Copycat vs. your trading agent** on Solana devnet with real transactions. Your agent researches SOL by buying whale-flow data from TokenFeed, a mock token data feed. First it pays with standard x402 `exact`, and Copycat, a front-running bot that reads only public Solana data, turns those payments into "BUY SOL". Then the owner funds Blindfold tokens and the agent does the same research: Copycat sees a deposit and a batch payout, and reports no signal. Three safety acts follow: an AI agent reads a feed response carrying a prompt injection that points it at an attacker, and its tokens cannot pay the attacker; a replayed payment is refused; and the agent refuses a mint that lies about its reserves. A local dashboard shows both sides live.
+One command runs **Copycat vs. your trading agent** on Solana devnet with real transactions. Your agent researches SOL by buying whale-flow data from TokenFeed, a mock token data feed. First it pays with standard x402 `exact`, and Copycat, a front-running bot that reads only public Solana data, turns those payments into "BUY SOL". Then the owner funds Blindfold tokens and the agent does the same research, plus a few reads from NewsWire, a second registered feed. Copycat sees a deposit and, at the next fixed settlement window, one batch paying both feeds rounded amounts, and reports no signal. Three safety acts follow: an AI agent reads a feed response carrying a prompt injection that points it at an attacker, its tokens cannot pay the attacker, and a 25-cent purchase waits for the owner's approval; a replayed payment is refused; and the agent refuses a mint that lies about its reserves. A local dashboard shows both sides live.
 
 Commands work in fish, bash and zsh. Run them from the repository root.
 
@@ -11,7 +11,7 @@ Commands work in fish, bash and zsh. Run them from the repository root.
    npx -y pnpm@10.33.0 install --frozen-lockfile
    npx -y pnpm@10.33.0 -r build
    ```
-2. **Keys.** The demo reads `.keys/` (gitignored). It needs `deployer.json`, `owner.json`, `mint-authority.json`, `provider-payout.json` and `provider-secret.hex`, and creates `exact-agent.json` and `facilitator.json` on first run. If `.keys/` is missing, restore it from your backup: each `== name` line in the backup file is followed by that file's contents.
+2. **Keys.** The demo reads `.keys/` (gitignored). It needs `deployer.json`, `owner.json`, `mint-authority.json`, `provider-payout.json` and `provider-secret.hex`, and creates `exact-agent.json`, `facilitator.json`, `news-payout.json` and `news-secret.hex` on first run. The first run also registers NewsWire with the vault, signed by the deployer (the vault admin). Add the created files to your key backup; losing them strands NewsWire's registration, and the next run registers a new one. If `.keys/` is missing, restore it from your backup: each `== name` line in the backup file is followed by that file's contents.
 3. **An LLM key (optional, for Act 6).** Save a Gemini API key (free tier at aistudio.google.com) to `.keys/llm.key`, or set `LLM_API_KEY`. `LLM_BASE_URL` and `LLM_MODEL` switch to any OpenAI-compatible provider. Without a key, Act 6 skips the model and shows only the refused hijack attempt.
 4. **A private RPC (recommended).** The public devnet RPC allows about 10 requests per method in a short window. The demo retries through that, but a free devnet endpoint from Helius or QuickNode makes the run faster and smoother:
    ```sh
@@ -46,16 +46,19 @@ The demo pauses before each act; press Enter to continue. It ends with Solana Ex
 
 | Option | Effect |
 |---|---|
-| `--no-pause` | Run straight through (also skips the final hold that keeps the dashboard up) |
+| `--no-pause` | Run straight through (also skips the final hold that keeps the dashboard up, and denies Act 6's approval request without asking, so the run is deterministic) |
 | `--no-dashboard` | Don't start the dashboard |
 | `--calls N` | Paid calls per payment method (default 3) |
-| `--localnet` | Rehearsal on a throwaway local validator with fresh keys; needs `anchor build` and the Solana tools, spends no devnet funds |
+| `--window S` | Settlement window and hold in seconds (10 to 600, default 30). Act 4 waits for the first window at least one hold after the last call, so up to two windows |
+| `--localnet` | Rehearsal on a throwaway local validator with fresh keys; needs `anchor build` and the Solana tools, spends no devnet funds. `LOCALNET_PORT` runs it beside another validator |
 
 A run takes a few minutes, longer on the public RPC. Each run deposits $1.00 of devnet USDC (most of it stays in the vault backing the agent's unspent tokens), pays $0.15 through `exact` and spends about 0.01 SOL in fees. Before the run it tops up the facilitator's SOL from the deployer and the `exact` agent's USDC from the owner when they run low.
 
 ### The dashboard
 
-The demo serves a live dashboard at **http://localhost:5173** (the next free port if that one is taken; the demo prints the URL). Open it next to the terminal before Act 1. Each half shows the watcher's signal (Copycat's verdict), the transactions it found onchain, and the agent's purchases as ticks: filled red for standard x402, where each purchase is a public transfer, and hollow for Blindfold. A status line at the bottom shows the `exact` agent's wallet, the Blindfold agent's tokens, what the feed earned this run and the vault's USDC.
+The demo serves a live dashboard at **http://localhost:5173** (the next free port if that one is taken; the demo prints the URL). Open it next to the terminal before Act 1. Each half shows the watcher's signal (Copycat's verdict), the transactions it found onchain, and the agent's purchases as ticks: filled red for standard x402, where each purchase is a public transfer, and hollow for Blindfold. A status line at the bottom shows the `exact` agent's wallet, the Blindfold agent's tokens, what both feeds earned this run and the vault's USDC.
+
+In Act 6 an **owner approval** bar appears at the top when the agent wants the 25-cent trade signals, over the owner's 20-cent limit. Click Approve or Deny, or type `y` in the terminal; whichever answers first wins, and no answer within 60 seconds is a denial.
 
 Transactions appear as Copycat finds them by polling the chain, a few seconds after they confirm. Reloading the page replays the run so far. After the summary the demo keeps the dashboard up until you press Enter. For recording, use a 1600x900 or larger browser window; it loads the Geist fonts from Google Fonts and falls back to system fonts offline.
 
@@ -80,14 +83,14 @@ An `exact` payment is a USDC transfer plus a memo. TokenFeed sets x402's `extra.
 | Setup | Cast, dashboard URL, vault Explorer link | "Your agent buys token data before it trades. Copycat reads public Solana data, looking for someone to front-run." |
 | 1. Standard x402 | 3 whale-flow purchases, 3 Explorer links; Copycat: **BUY SOL** | "Every call is a public transfer from the agent's wallet, tagged with what it bought. Copycat knows what your agent is about to trade." |
 | 2. Fund | $1.00 deposit, 40 tokens; Copycat sees a deposit | "The owner deposits USDC into a vault. The mint signs tokens blind, so it can't link them to later purchases. The agent holds tokens, not a key." |
-| 3. Blindfold | Reserve check, the same 3 purchases; Copycat: **NO SIGNAL** | "Same research. Each payment is a token in an HTTP header: no transaction, nothing for Copycat to read." |
-| 4. Settle | One batch payout, balanced books; Copycat sees a payout, payer unknown | "TokenFeed is paid in USDC in one batch that covers many calls and names no agent." |
+| 3. Blindfold | Reserve check, the same 3 purchases plus 2 NewsWire reads; Copycat: **NO SIGNAL** | "Same research. Each payment is a token in an HTTP header: no transaction, nothing for Copycat to read." |
+| 4. Settle | Countdown to the next window; the mint's timer pays both feeds $0.10 in one batch, 5 cents carry over; balanced books | "Payouts follow the clock, not the calls. Nothing is paid in the window it was earned, and amounts are rounded, so a payout doesn't reveal when the agent bought or how much. Copycat sees two feeds paid, not which one this owner used." |
 | 5. Copycat's report | Everything Copycat learned, side by side | "Same purchases. One told Copycat who, what and when. The other showed money in and money out." |
-| 6. Poisoned feed | Gemini agent buys data and decides; the injection's attacker URL is refused, nothing paid | "Privacy without giving up safety. The feed's response tells the agent to pay an attacker. Whatever the model believes, its tokens only pay registered providers." |
+| 6. Poisoned feed | Gemini agent buys data and decides; it wants the 25-cent signals and the owner approves or denies on the dashboard; the injection's attacker URL is refused, nothing paid | "Privacy without giving up safety. Big purchases wait for you, and the wallet asks, not the model. The feed's response tells the agent to pay an attacker. Whatever the model believes, its tokens only pay registered providers." |
 | 7. Replay | Replayed call refused with 402 | "A copied payment buys nothing." |
 | 8. Reserve gate | Agent stops with exit code 7 | "If the mint claims more than the vault holds, the agent pays nothing." |
 
-State the limit honestly: in this run only one owner deposits, so Copycat can link the batch payout to that owner, though not to the token or the calls. The crowd demo below shows what changes with several owners.
+State the limit honestly: payouts still show which registered feeds earned. In this run only one owner deposits, so Copycat can link the batch payout to that owner, though not to the token or the calls; windows, the hold and rounding make timing and amounts weaker signals, not a crowd. The crowd demo below shows what changes with several owners.
 
 ## Crowd demo: privacy needs other people
 
