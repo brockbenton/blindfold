@@ -41,15 +41,17 @@ export async function createMint(deps: MintDeps) {
   await sync();
   const app = createApp(ctx);
 
-  function start(): () => void {
-    const stops = [
-      every(cfg.depositPollMs, "deposit-poller", () => pollDeposits(db, vault)),
-      every(30_000, "provider-sync", sync),
-      everyAligned(cfg.settleIntervalS * 1000, "settlement", () =>
+  /** Starts the background jobs, or only the named ones (a demo can keep settlement running and stop polling). */
+  function start(jobs: readonly ("deposits" | "providers" | "settlement")[] = ["deposits", "providers", "settlement"]): () => void {
+    const stops: (() => void)[] = [];
+    if (jobs.includes("deposits")) stops.push(every(cfg.depositPollMs, "deposit-poller", () => pollDeposits(db, vault)));
+    if (jobs.includes("providers")) stops.push(every(30_000, "provider-sync", sync));
+    if (jobs.includes("settlement")) {
+      stops.push(everyAligned(cfg.settleIntervalS * 1000, "settlement", () =>
         runSettlement({ ...settleDeps, syncProviders: undefined }).catch((e) => {
           if ((e as { status?: number }).status !== 409) throw e; // 409: already running or in flight
-        })),
-    ];
+        })));
+    }
     return () => stops.forEach((s) => s());
   }
   return { app, ctx, start };

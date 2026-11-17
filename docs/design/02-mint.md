@@ -20,7 +20,7 @@ Supported Cashu pieces: keys/keysets, signed quotes, minting with DLEQ, restrict
 
 ## 3. Boot and jobs
 
-`loadConfig` validates environment and provider metadata. `createMint` runs migrations, loads the keyset and syncs providers. `start()` installs non-overlapping timers for deposit polling, provider sync (30 seconds) and settlement. `index.ts` then serves the Hono app. The Solana reader rejects a Config whose mint or vault account disagrees with the configured deployment, so mismatched backing cannot silently reach issuance.
+`loadConfig` validates environment and provider metadata. `createMint` runs migrations, loads the keyset and syncs providers. `start()` installs non-overlapping timers for deposit polling, provider sync (30 seconds) and settlement; `start(["settlement"])` starts only the named jobs. `index.ts` then serves the Hono app. The Solana reader rejects a Config whose mint or vault account disagrees with the configured deployment, so mismatched backing cannot silently reach issuance.
 
 Jobs log errors and try again on later ticks. Deposit polling and provider sync are relative to process startup. Settlement runs at UTC multiples of `SETTLE_INTERVAL_S`, so every deployment with the same interval settles at the same wall-clock moments ([settlement privacy](#46-settlement-privacy)). `createMint` also returns the app and context for in-process tests.
 
