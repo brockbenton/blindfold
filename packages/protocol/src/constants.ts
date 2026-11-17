@@ -12,7 +12,12 @@ export const KEYSET_INPUT_FEE_PPK = 0;
 export const MAX_DEPOSIT_CENTS = 5000;
 export const QUOTE_EXPIRY_S = 3600;
 export const DEPOSIT_POLL_MS = 2000;
-export const SETTLE_INTERVAL_S = 60;
+/** Settlement windows: runs fire at UTC multiples of this period, so payout times do not track activity. */
+export const SETTLE_INTERVAL_S = 600;
+/** Only cents redeemed at least this long before a run are paid in it. Defaults to one window. */
+export const SETTLE_HOLD_S = SETTLE_INTERVAL_S;
+/** Payouts are rounded down to a multiple of this; the remainder waits for a later batch. */
+export const SETTLE_UNIT_CENTS = 10;
 export const MAX_PAYOUTS_PER_BATCH = 8;
 /** Redeem and mint request limits from sections 5.4 and 5.6. */
 export const MAX_REDEEM_PROOFS = 64;

@@ -68,14 +68,14 @@ export function infer(obs: Observation[]): Signal[] {
   });
 }
 
-/** Copycat's one-line reading of a single transaction, for live feeds. */
-export function describe(o: Observation): string {
+/** Copycat's one-line reading of a single transaction, for live feeds. `names` maps payout wallets to feed names. */
+export function describe(o: Observation, names: Record<string, string> = {}): string {
   const usd = `$${(Number(o.amountBase) / 1e6).toFixed(2)}`;
   if (o.kind === "direct_payment") {
     const tag = parseMemo(o.memo);
     return `${short(o.from)} paid the feed ${usd}${tag ? ` for ${tag.feed} on ${tag.token}` : ""}`;
   }
-  if (o.kind === "vault_payout") return `Blindfold vault paid the feed ${usd} in one batch. Payer: unknown`;
+  if (o.kind === "vault_payout") return `Blindfold vault paid ${names[o.to] ?? "the feed"} ${usd} in a batch. Payer: unknown`;
   return `${short(o.from)} deposited ${usd} into the Blindfold vault. What it buys: unknown`;
 }
 
