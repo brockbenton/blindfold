@@ -6,7 +6,7 @@ Data vendors such as CoinGecko, CoinMarketCap, Birdeye and Messari already sell 
 
 Blindfold is a custom x402 v2 scheme, `cashu`. An owner deposits USDC into a Solana vault and gets blind-signed ecash tokens for the agent. The agent pays each call with a token in an HTTP header: no transaction, no wallet, no onchain identity. Providers redeem tokens at the mint and receive one batched USDC payout from the vault that covers many calls. A watcher sees a deposit go in and a batch payout come out, not who bought what.
 
-**Privacy without giving up safety.** The agent holds tokens, not a Solana key. Tokens are locked to registered providers, so a hijacked agent cannot pay an attacker. Before paying, the agent reads the vault's USDC balance on Solana itself and refuses to pay a mint that claims more liabilities than the vault holds.
+**Privacy without giving up safety.** The agent holds tokens, not a Solana key. Tokens are locked to registered providers, so a hijacked agent cannot pay an attacker. A purchase above the owner's approval limit waits for the owner to approve it. Before paying, the agent reads the vault's USDC balance on Solana itself and refuses to pay a mint that claims more liabilities than the vault holds.
 
 What it does not hide: deposits and payouts are public, and providers see the queries and IP addresses. With one user, the batch payout is linked to that user's deposit; it takes several owners depositing equal amounts before Copycat cannot attribute a payout (`pnpm crowd`). See [Limits and trust](#limits-and-trust).
 
@@ -29,18 +29,18 @@ The real-vault path additionally needs Rust 1.89.0, Anchor 1.2.2 and Solana tool
 
 ## What works
 
-`pnpm demo` runs "Copycat vs. your trading agent" on Solana devnet with real transactions. Your agent researches SOL with standard x402 `exact` and Copycat, a bot reading only public Solana data, turns its payments into "BUY SOL". The same research paid with Blindfold gives Copycat no signal. Then an AI agent reads a poisoned feed whose prompt injection points it at an attacker, and its tokens cannot pay the attacker. A local dashboard shows both sides live. See [Run the demo](docs/DEMO.md).
+`pnpm demo` runs "Copycat vs. your trading agent" on Solana devnet with real transactions. Your agent researches SOL with standard x402 `exact` and Copycat, a bot reading only public Solana data, turns its payments into "BUY SOL". The same research paid with Blindfold gives Copycat no signal. Then an AI agent reads a poisoned feed whose prompt injection points it at an attacker, and its tokens cannot pay the attacker; a 25-cent purchase waits for the owner to approve it on the dashboard. A local dashboard shows both sides live. See [Run the demo](docs/DEMO.md).
 
 | Component | Current behavior |
 |---|---|
 | Vault (Anchor program, devnet) | Holds deposited USDC; admin registers and deactivates providers; the mint authority pays batches of up to eight providers |
 | Mint | Confirms vault deposits, issues blind-signed tokens with DLEQ proofs, checks provider signatures, rejects spent tokens, tracks balances and settles batches |
-| Provider (mock token data feed) | Sells whale flow and order-book depth per call over x402 `cashu`; redeems before serving; optionally also accepts standard `exact` as a baseline |
-| Wallet and owner CLI | Funds provider-locked tokens, pays exact amounts, applies per-call caps and reconciles pending payments |
-| Agent | Scripted or LLM-driven (`--llm`, Gemini by default, any OpenAI-compatible model): chooses data, decides BUY/SELL/HOLD; code enforces the reserve gate, a budget and a step limit, and refusals go back to the model ([decision loop and limits](docs/design/05-agent.md)) |
+| Provider (mock token data feed) | Sells whale flow, order-book depth and premium trade signals per call over x402 `cashu`; redeems before serving; optionally also accepts standard `exact` as a baseline |
+| Wallet and owner CLI | Funds provider-locked tokens, pays exact amounts, applies per-call caps, asks the owner before paying above a threshold (terminal, dashboard or timeout denial) and reconciles pending payments |
+| Agent | Scripted or LLM-driven (`--llm`, Gemini by default, any OpenAI-compatible model): chooses data, decides BUY/SELL/HOLD; code enforces the reserve gate, a budget, owner approval and a step limit, and refusals go back to the model ([decision loop and limits](docs/design/05-agent.md)) |
 | Copycat and dashboard | Copycat reads only public Solana data, infers trading signals from `exact` payments and tests whether vault payouts can be attributed to depositors; the dashboard puts `exact` and Blindfold side by side with live balances; `pnpm crowd` runs several agents at once |
 
-QuickNode Streams, owner co-signing, Temporal, onchain issuance logging and hidden provider revenue are planned. See [MVP and add-ons](docs/mvp.md).
+QuickNode Streams, protocol-level owner co-signing, Temporal, onchain issuance logging and hidden provider revenue are planned. See [MVP and add-ons](docs/mvp.md).
 
 ## Payment flow
 
@@ -53,6 +53,7 @@ QuickNode Streams, owner co-signing, Temporal, onchain issuance logging and hidd
 ## Limits and trust
 
 - **Budget and recipients:** tokens limit total spend and require an allowed provider's signature. The default token lock includes all active providers at funding time. `WALLET_ALLOWLIST` can narrow spending in wallet code; it does not change existing locks.
+- **Approval:** prices above `APPROVAL_OVER_CENTS` (default 20) need the owner's approval; no answer in time is a denial. The check runs in the agent's wallet code, where the 402 price is known. It stops a manipulated model, not a compromised agent process.
 - **Price and data:** an allowed provider can charge up to the wallet's per-call cap. An agent can waste its whole budget on allowed providers. Payment does not establish that returned data is accurate.
 - **Custody:** the mint can censor, under-report issuance or misuse its settlement authority. The vault restricts payout addresses, but it does not prove those payouts correspond to honest redemptions. Deployment and upgrade authorities remain trusted.
 - **Reserves:** the agent reads the vault balance itself and compares it with mint-reported outstanding liabilities. It fails closed on errors, but cannot detect a mint that lies about issuance. Fake-chain mode does not provide an onchain reserve check.

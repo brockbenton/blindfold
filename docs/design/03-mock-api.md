@@ -1,6 +1,6 @@
 # 03: Mock paid API
 
-`apps/mock-api/` is a provider using the [x402 `cashu` handshake](00-interfaces.md#7-payment-handshake-x402-v2-scheme-cashu). It redeems payments online before serving deterministic token data: whale flow and order-book depth, in the style of the Solana DeFi feeds that sell per call over x402. The demo calls it TokenFeed. [Runbook](../RUNNING.md#4-mock-api-and-owner-cli).
+`apps/mock-api/` is a provider using the [x402 `cashu` handshake](00-interfaces.md#7-payment-handshake-x402-v2-scheme-cashu). It redeems payments online before serving deterministic token data: whale flow, order-book depth and premium trade signals, in the style of the Solana DeFi feeds that sell per call over x402. The demo calls it TokenFeed. [Runbook](../RUNNING.md#4-mock-api-and-owner-cli).
 
 ## Configuration and routes
 
@@ -11,8 +11,9 @@ One Node 22+ process represents one provider. Required: `PROVIDER_SECRET_KEY` (3
 | `GET /health` | Free `{ok: true, pubkey, provider_id}` |
 | `GET /v1/data/:topic` | Paid whale flow at `PRICE_CENTS` ([body](00-interfaces.md#75-mock-api-paid-endpoint)) |
 | `GET /v1/data/:topic/depth` | Paid order-book depth, default 10 cents |
+| `GET /v1/data/:topic/signals` | Paid trade signal, default 25 cents: above the default approval threshold, so a Blindfold wallet asks its owner ([05](05-agent.md#owner-approval)) |
 
-`createApp` accepts `priceCents`, `depthPriceCents`, `dataHandler`, injectable redeem/keyset clients, logging and `exact`. The depth price has no CLI environment override. The replacement `dataHandler` runs only after redemption and provides a hostile-response demo/test hook. No complete prompt-injection demo, rate limiting or refund path is implemented.
+`createApp` accepts `priceCents`, `depthPriceCents`, `signalsPriceCents`, `dataHandler`, injectable redeem/keyset clients, logging and `exact`. The depth and signals prices have no CLI environment override. The replacement `dataHandler` runs only after redemption and provides a hostile-response demo/test hook. No complete prompt-injection demo, rate limiting or refund path is implemented.
 
 `PUBLIC_URL` rewrites the request origin through `withPublicUrl` in `index.ts`. It does not add a path prefix or provide a network relay.
 
@@ -20,7 +21,7 @@ One Node 22+ process represents one provider. Required: `PROVIDER_SECRET_KEY` (3
 
 For comparison only, the paid routes can also accept the standard x402 `exact` scheme (00 §7.1, add-on 1). With `exact` set, each challenge lists `cashu` first and an `exact` entry second, at the same price and asset; clients pay the scheme they registered. `exact` pays `EXACT_PAY_TO`, the provider's Solana wallet, through an in-process `@x402/svm` facilitator whose key (`EXACT_FACILITATOR_KEYPAIR`) pays fees and co-signs. The payer's transfer is public and names its wallet. The facilitator uses `SOLANA_RPC_URL` and retries RPC calls refused with HTTP 429. The CLI enables it only when both variables are set.
 
-`ExactOptions.memoTopics` (for example `["sol"]`) adds one route pair per listed token, ahead of the `:topic` routes, whose `exact` entry sets `extra.memo` to `whale-flow/SOL` or `depth/SOL`. The payer's transaction then carries that memo onchain, as a seller's reconciliation tag would. Topics must be 1 to 16 lowercase letters or digits. The CLI does not set it; `pnpm demo` does.
+`ExactOptions.memoTopics` (for example `["sol"]`) adds one route per feed per listed token, ahead of the `:topic` routes, whose `exact` entry sets `extra.memo` to `whale-flow/SOL`, `depth/SOL` or `signals/SOL`. The payer's transaction then carries that memo onchain, as a seller's reconciliation tag would. Topics must be 1 to 16 lowercase letters or digits. The CLI does not set it; `pnpm demo` does.
 
 `exact` verifies, serves the route, then settles onchain, so a settlement that fails after the transfer lands can charge the payer without returning data. The Blindfold mint is not involved in `exact` payments.
 

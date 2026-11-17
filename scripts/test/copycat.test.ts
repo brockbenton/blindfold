@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Observation } from "../lib/bot.js";
 import { attributeVault, describe as describeTx, infer, parseMemo } from "../lib/copycat.js";
 import { startDashboard, type Dashboard } from "../lib/dashboard.js";
+import { approvalBroker, askApproval } from "@blindfold/wallet";
 
 const AGENT = "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU";
 const OTHER = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
@@ -51,6 +52,8 @@ describe("infer", () => {
   it("describes each transaction the way Copycat reads it", () => {
     expect(describeTx(pay(AGENT, "whale-flow/SOL", 0))).toBe("7xKX...gAsU paid the feed $0.05 for whale-flow on SOL");
     expect(describeTx({ kind: "vault_payout", signature: "p", slot: 2, time: null, from: "v", to: "f", amountBase: 150_000n })).toContain("Payer: unknown");
+    expect(describeTx({ kind: "vault_payout", signature: "p", slot: 2, time: null, from: "v", to: "f", amountBase: 100_000n }, { f: "NewsWire" }))
+      .toBe("Blindfold vault paid NewsWire $0.10 in a batch. Payer: unknown");
   });
 });
 
@@ -129,5 +132,19 @@ describe("dashboard", () => {
     setTimeout(() => d!.emit({ type: "done", ok: true }), 100);
     const got = await pending;
     expect(got.map((e) => [e.seq, e.type])).toEqual([[1, "act"], [2, "copycat"], [3, "done"]]);
+  });
+
+  it("passes the owner's Approve click to the wallet's approval broker; only JSON, only pending ids", async () => {
+    const b = approvalBroker();
+    d = await startDashboard({ port: 0, onApproval: (id, ok) => b.resolve(id, ok) });
+    const answer = askApproval(b.approver, { id: "a1", cents: 25, url: "u", provider: "p", thresholdCents: 20, timeoutMs: 5000 });
+    const post = (id: string, body: string, type = "application/json") =>
+      fetch(`${d!.url}/approval/${id}`, { method: "POST", headers: { "content-type": type }, body }).then((r) => r.status);
+    expect(await post("a1", "approve=true", "application/x-www-form-urlencoded")).toBe(415);
+    expect(await post("a1", JSON.stringify({ approve: "yes" }))).toBe(400);
+    expect(await post("nope", JSON.stringify({ approve: true }))).toBe(404);
+    expect(await post("a1", JSON.stringify({ approve: true }))).toBe(200);
+    expect(await answer).toBe("approved");
+    expect(await post("a1", JSON.stringify({ approve: false }))).toBe(404);
   });
 });
