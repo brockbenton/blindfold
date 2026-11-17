@@ -1,0 +1,27 @@
+{
+  "name": "@blindfold/gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@blindfold/protocol": "workspace:*",
+    "@hono/node-server": "2.1.8",
+    "@solana/kit": "8.6.0",
+    "@x402/core": "2.31.0",
+    "@x402/fetch": "2.31.0",
+    "@x402/hono": "2.31.0",
+    "@x402/svm": "2.31.0",
+    "hono": "4.13.18",
+    "mock-api": "workspace:*"
+  },
+  "devDependencies": {
+    "@blindfold/testkit": "workspace:*",
+    "@cashu/cashu-ts": "4.13.1"
+  }
+}
