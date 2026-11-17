@@ -10,6 +10,7 @@
     "e2e:localnet": "tsx e2e.ts --localnet",
     "demo": "tsx demo.ts",
     "bot": "tsx bot.ts",
+    "crowd": "tsx crowd.ts",
     "streams:setup": "tsx streams-setup.ts"
   },
   "dependencies": {

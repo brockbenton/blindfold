@@ -1,9 +1,9 @@
-// Copycat, standalone: a front-running bot that watches a data provider's USDC account and the Blindfold vault
+// Copycat, standalone: a front-running bot that watches the data feeds' USDC accounts and the Blindfold vault
 // using only public Solana data, prints what each transaction reveals and the trading signal it infers. New
 // transactions arrive through a QuickNode Stream (webhook over a cloudflared quick tunnel) when .keys/quicknode.json
 // exists, with RPC polling as the fallback. Run it in a second terminal next to `pnpm demo`.
 //
-//   pnpm bot                         devnet, provider payout account from .keys/provider-payout.json
+//   pnpm bot                         devnet, the feeds' payout accounts from .keys/ (provider-payout.json, news-payout.json)
 //   pnpm bot --account <token-acct>  watch any USDC token account
 //   pnpm bot --once                  print what is visible from the last 20 transactions and exit
 //   pnpm bot --rpc                   poll RPC only, no QuickNode Stream
@@ -16,9 +16,9 @@ import { fileURLToPath } from "node:url";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { DEFAULT_VAULT_PROGRAM_ID, SOLANA_COMMITMENT, USDC_DEVNET_MINT } from "@blindfold/protocol";
 import type { Observation } from "./lib/bot.js";
-import { describe, infer } from "./lib/copycat.js";
+import { attributeVault, describe, infer } from "./lib/copycat.js";
 import { StreamWatcher } from "./lib/streamWatcher.js";
-import { defaultWatch, loadApiKey } from "./lib/streams.js";
+import { defaultWatch, feedWallets, loadApiKey } from "./lib/streams.js";
 import { explorerTx } from "./lib/explorer.js";
 import { act, bold, dim, green, magenta, red, say, short } from "./lib/narrate.js";
 
@@ -34,7 +34,8 @@ const keys = process.env.KEYS_DIR ?? fileURLToPath(new URL("../.keys", import.me
 const connection = new Connection(rpc, SOLANA_COMMITMENT);
 const a = flag("--account");
 const watch = defaultWatch({ keysDir: keys, usdcMint, programId, ...(a ? { account: new PublicKey(a) } : {}) });
-const account = new PublicKey(watch.tokenAccounts[0]);
+/** Payout wallet -> feed name, so payouts read "paid NewsWire" rather than "paid the feed". */
+const feedNames = a ? {} : Object.fromEntries(feedWallets(keys).map((f) => [f.owner.toBase58(), f.name]));
 const vaultToken = new PublicKey(watch.vaultToken);
 const apiKey = loadApiKey(keys);
 const noHistory = argv.includes("--no-history");
@@ -44,10 +45,12 @@ const signals = new Map<string, string>();
 
 function report(o: Observation, all: Observation[]) {
   const label = o.kind === "direct_payment" ? red(bold("PAYMENT     ")) : o.kind === "vault_payout" ? green(bold("VAULT PAYOUT")) : green(bold("VAULT DEPOSIT"));
-  console.log(`${time(o)}  ${label}  ${describe(o)}  ${dim(o.via === "streams" ? "via QuickNode Streams" : "via RPC")}`);
+  console.log(`${time(o)}  ${label}  ${describe(o, feedNames)}  ${dim(o.via === "streams" ? "via QuickNode Streams" : "via RPC")}`);
   say(dim(explorerTx(o.signature, rpc)));
   if (o.kind !== "direct_payment") {
-    console.log(`          ${bold(magenta("Copycat"))}  ${green(bold("NO SIGNAL"))}  ${dim("nothing here names an agent")}`);
+    const r = attributeVault(all);
+    const tone = r.action === "NO SIGNAL" || r.action === "CANNOT ATTRIBUTE" ? green : red;
+    console.log(`          ${bold(magenta("Copycat"))}  ${tone(bold(r.action))}  ${dim(r.reason)}`);
     return;
   }
   const s = infer(all).find((x) => x.payer === o.from);
@@ -56,11 +59,11 @@ function report(o: Observation, all: Observation[]) {
   console.log(`          ${bold(magenta("Copycat"))}  ${red(bold(s.action))}  ${s.reason}`);
 }
 
-act("Copycat", `A front-running bot reading public Solana data only. Feed account ${short(account.toBase58())}, vault ${short(vaultToken.toBase58())}.`);
+act("Copycat", `A front-running bot reading public Solana data only. ${watch.tokenAccounts.length > 2 ? "Feed accounts" : "Feed account"} ${watch.tokenAccounts.slice(0, -1).map(short).join(", ")}, vault ${short(vaultToken.toBase58())}.`);
 // Starts from recent history (the last 20 transactions per account, over RPC: a free-plan Stream only follows the
 // chain tip), then reports new ones as they land.
 const watcher = new StreamWatcher({
-  connection, accounts: [account, vaultToken], usdcMint, vaultToken, vaultProgram: programId, intervalMs: 4000,
+  connection, accounts: watch.tokenAccounts.map((x) => new PublicKey(x)), usdcMint, vaultToken, vaultProgram: programId, intervalMs: 4000,
   ...(noHistory ? { sinceSlot: await connection.getSlot(SOLANA_COMMITMENT) } : {}),
   streams: once || rpcOnly || !apiKey ? null : {
     apiKey, ...(process.env.STREAMS_WEBHOOK_URL ? { webhookUrl: process.env.STREAMS_WEBHOOK_URL, port: Number(process.env.STREAMS_PORT ?? 8787) } : {}),

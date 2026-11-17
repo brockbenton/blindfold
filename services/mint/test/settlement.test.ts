@@ -207,3 +207,54 @@ describe("job wiring", () => {
     expect(await runSettlement({ db: h.db, vault: h.vault, sender: h.sender })).toEqual({ batch_id: null });
   });
 });
+
+describe("settlement privacy policy", () => {
+  // Fresh harness per test, with a policy. The outer beforeEach harness is cleaned up by the outer afterEach.
+  let p: Harness;
+  afterEach(async () => { await p?.cleanup(); });
+  const pSettle = () => p.req("/v1/blindfold/admin/settle", { method: "POST", auth: true });
+  const age = (s: number) => p.db.query(`update redemptions set created_at = now() - make_interval(secs => ${s})`);
+  async function pEarn(prov: { sk: string; pubkey: string }, amount: number) {
+    const proofs = await issue(p, [prov.pubkey], [amount]);
+    expect((await redeem(p, sign(proofs.filter((x) => x.amount.toNumber() === amount).slice(0, 1), prov.sk))).status).toBe(200);
+  }
+
+  it("hold: cents redeemed inside the window wait for a later run", async () => {
+    p = await setupMint({ cfg: { settleHoldS: 600, settleUnitCents: 1 } });
+    const A = await addProvider(p);
+    await pEarn(A, 8);
+    expect((await pSettle()).json).toEqual({ batch_id: null });
+    expect(await balances(p)).toEqual({ [A.id]: 8 });
+    await age(601);
+    await pEarn(A, 4); // fresh: held back while the aged 8 is paid
+    const r = await pSettle();
+    expect(r.json).toMatchObject({ batch_id: 1, payouts: [{ provider_id: A.id, amount: 8 }] });
+    expect(await balances(p)).toEqual({ [A.id]: 4 });
+    expect(p.vault.paid.get(A.id)).toBe(80_000n);
+  });
+
+  it("unit: payouts round down and the remainder carries over", async () => {
+    p = await setupMint({ cfg: { settleHoldS: 0, settleUnitCents: 10 } });
+    const A = await addProvider(p), B = await addProvider(p);
+    await pEarn(A, 16);
+    await pEarn(B, 4);
+    const r = await pSettle();
+    expect(r.json).toMatchObject({ batch_id: 1, payouts: [{ provider_id: A.id, amount: 10 }] });
+    expect(await balances(p)).toEqual({ [A.id]: 6, [B.id]: 4 });
+    await pEarn(B, 8);
+    expect((await pSettle()).json).toMatchObject({ batch_id: 2, payouts: [{ provider_id: B.id, amount: 10 }] });
+    expect(await balances(p)).toEqual({ [A.id]: 6, [B.id]: 2 });
+    const rec = (await p.req("/v1/blindfold/admin/reconcile", { auth: true })).json;
+    expect(rec.vault_balance).toBe(rec.deposited - rec.settled);
+    expect((await p.req("/v1/blindfold/reserves")).json).toMatchObject({ settled: 20, outstanding: rec.issued - 20 });
+  });
+
+  it("a failed batch restores only what it debited", async () => {
+    p = await setupMint({ cfg: { settleHoldS: 0, settleUnitCents: 10 } });
+    const A = await addProvider(p);
+    await pEarn(A, 16);
+    p.sender.failNextProgram("PayoutAccountMismatch");
+    expect((await pSettle()).status).toBe(502);
+    expect(await balances(p)).toEqual({ [A.id]: 16 });
+  });
+});

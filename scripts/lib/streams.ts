@@ -58,17 +58,27 @@ export interface StreamBatch {
   deposits: StreamDeposit[];
 }
 
-/** The feed's payout account (from .keys/provider-payout.json) and the vault, as `pnpm bot` watches them. */
+/** The demo feeds' payout wallets in `keysDir`: TokenFeed (required) and NewsWire (once `pnpm demo` has created it). */
+export function feedWallets(keysDir: string): { name: string; owner: PublicKey }[] {
+  const load = (f: string) => Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(join(keysDir, f), "utf8")) as number[])).publicKey;
+  return [["TokenFeed", "provider-payout.json"], ["NewsWire", "news-payout.json"]]
+    .filter(([, f]) => existsSync(join(keysDir, f)))
+    .map(([name, f]) => ({ name, owner: load(f) }));
+}
+
+/**
+ * What `pnpm bot` watches: `account` if given, else every demo feed's payout account (from .keys/), plus the vault.
+ * The first token account is the main feed's.
+ */
 export function defaultWatch(o: { keysDir: string; usdcMint: PublicKey; programId: PublicKey; account?: PublicKey }): Watch {
-  let account = o.account;
-  if (!account) {
-    const p = join(o.keysDir, "provider-payout.json");
-    if (!existsSync(p)) throw new Error(`pass --account <token account>, or restore ${p}`);
-    const owner = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(p, "utf8")) as number[])).publicKey;
-    account = getAssociatedTokenAddressSync(o.usdcMint, owner);
+  let accounts = o.account ? [o.account] : [];
+  if (!o.account) {
+    const feeds = feedWallets(o.keysDir);
+    if (!feeds.some((f) => f.name === "TokenFeed")) throw new Error(`pass --account <token account>, or restore ${join(o.keysDir, "provider-payout.json")}`);
+    accounts = feeds.map((f) => getAssociatedTokenAddressSync(o.usdcMint, f.owner));
   }
   const vaultToken = vaultAta(o.usdcMint, o.programId).toBase58();
-  return { tokenAccounts: [account.toBase58(), vaultToken], vaultToken, vaultProgram: o.programId.toBase58(), usdcMint: o.usdcMint.toBase58() };
+  return { tokenAccounts: [...accounts.map((a) => a.toBase58()), vaultToken], vaultToken, vaultProgram: o.programId.toBase58(), usdcMint: o.usdcMint.toBase58() };
 }
 
 /** The filter's JavaScript with `watch` filled in: exactly what is uploaded to QuickNode. */

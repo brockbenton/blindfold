@@ -3,6 +3,7 @@ import type { PaymentPayloadResult, PaymentRequirements, SchemeClientHooks, Sche
 import {
   CASHU_SCHEME, CashuRequirementsError, fromWireProof, parseCashuRequirements, type WireProof,
 } from "@blindfold/protocol";
+import type { ApprovalOutcome } from "./approval.js";
 import { PaymentRefused, type RefusalReason } from "./errors.js";
 import { selectExact } from "./select.js";
 import type { PendingWire, StoredFile } from "./store.js";
@@ -11,6 +12,8 @@ import type { PendingWire, StoredFile } from "./store.js";
 export interface SpendHost {
   readonly file: StoredFile;
   readonly maxPerCallCents: number;
+  /** Payments above this need `requestApproval` to answer "approved". */
+  readonly approvalOverCents: number;
   readonly allowlist: readonly string[];
   readonly usdcMint: string;
   readonly currentUrl: string;
@@ -18,6 +21,8 @@ export interface SpendHost {
   markPending(chosen: WireProof[]): Promise<PendingWire>;
   /** Called by the hook: settled (drop) or not (checkstate recovery). */
   paymentSettled(token: string, ok: boolean, errorReason?: string): Promise<void>;
+  /** Asks the owner; resolves "timeout" when nobody answers in time. Never throws. */
+  requestApproval(cents: number, provider: string): Promise<ApprovalOutcome>;
   rememberInFlight(token: string, entry: PendingWire): void;
   refused(e: PaymentRefused): void;
 }
@@ -76,6 +81,13 @@ export class CashuClientScheme implements SchemeNetworkClient {
 
     const sel = selectExact(h.file.proofs, cents, pk);
     if ("error" in sel) return refuse(sel.error, { cents });
+
+    // Owner approval comes last: the owner is only asked about a payment the wallet would otherwise make, with the
+    // exact price from this 402 challenge, and before any proof leaves the wallet.
+    if (cents > h.approvalOverCents) {
+      const outcome = await h.requestApproval(cents, pk);
+      if (outcome !== "approved") refuse(outcome === "timeout" ? "approval_timeout" : "approval_denied", { cents, thresholdCents: h.approvalOverCents });
+    }
 
     await h.markPending(sel.chosen);
     const token = getEncodedToken(

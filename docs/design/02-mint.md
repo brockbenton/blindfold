@@ -8,7 +8,7 @@ Node 22+, PostgreSQL, `@cashu/cashu-ts` 4.13.1 and the shared protocol package. 
 
 Required settings: `DATABASE_URL`, `MINT_SEED` (32-byte hex), `MINT_AUTHORITY_KEYPAIR` and `MINT_ADMIN_TOKEN`. Protocol defaults supply `SOLANA_RPC_URL`, `VAULT_PROGRAM_ID`, `USDC_MINT`, `MINT_URL` and port 3338; real deployments must verify those values match their vault. The authority key must match `Config.mint_authority` and have SOL for settlement fees.
 
-Optional settings: `PROVIDERS_FILE`, `DEPOSIT_POLL_MS` (2000), `SETTLE_INTERVAL_S` (60), and `MINT_DEV_FAKE_CHAIN=1`. Provider metadata is read at boot from `config/providers.json` unless overridden.
+Optional settings: `PROVIDERS_FILE`, `DEPOSIT_POLL_MS` (2000), `SETTLE_INTERVAL_S` (600), `SETTLE_HOLD_S` (defaults to the interval), `SETTLE_UNIT_CENTS` (10), and `MINT_DEV_FAKE_CHAIN=1`. Provider metadata is read at boot from `config/providers.json` unless overridden.
 
 ## 2. Supported scope
 
@@ -20,9 +20,9 @@ Supported Cashu pieces: keys/keysets, signed quotes, minting with DLEQ, restrict
 
 ## 3. Boot and jobs
 
-`loadConfig` validates environment and provider metadata. `createMint` runs migrations, loads the keyset and syncs providers. `start()` installs non-overlapping timers for deposit polling, provider sync (30 seconds) and settlement. `index.ts` then serves the Hono app. The Solana reader rejects a Config whose mint or vault account disagrees with the configured deployment, so mismatched backing cannot silently reach issuance.
+`loadConfig` validates environment and provider metadata. `createMint` runs migrations, loads the keyset and syncs providers. `start()` installs non-overlapping timers for deposit polling, provider sync (30 seconds) and settlement; `start(["settlement"])` starts only the named jobs. `index.ts` then serves the Hono app. The Solana reader rejects a Config whose mint or vault account disagrees with the configured deployment, so mismatched backing cannot silently reach issuance.
 
-Jobs log errors and try again on later ticks. Each timer is relative to process startup; the service does not synchronize windows across deployments. `createMint` also returns the app and context for in-process tests.
+Jobs log errors and try again on later ticks. Deposit polling and provider sync are relative to process startup. Settlement runs at UTC multiples of `SETTLE_INTERVAL_S`, so every deployment with the same interval settles at the same wall-clock moments ([settlement privacy](#46-settlement-privacy)). `createMint` also returns the app and context for in-process tests.
 
 ## 4. Data and transaction boundaries
 
@@ -72,7 +72,7 @@ pending -> submitted -> confirmed
    +-----------+-----> failed (balances restored)
 ```
 
-1. Lock positive balances of active providers, largest first, up to eight. Debit them and persist the planned batch/payouts in one transaction. New redemptions add to the remaining balances.
+1. Lock positive balances of active providers and compute each payable amount ([settlement privacy](#46-settlement-privacy)). Take up to eight, largest first. Debit those amounts and persist the planned batch/payouts in one transaction. New redemptions add to the remaining balances.
 2. Submit `settle_batch`, then persist its signature and last-valid block height. `SettleSender` exposes `submit`, `confirm` and `isExpired`; it is not a single send-and-forget method.
 3. On recovery, `Config.last_batch_id >= batch_id` means the batch landed; do not resend. Otherwise confirm the known transaction, wait while it can still land, or resubmit after expiry.
 4. A deterministic program failure marks the attempt failed and restores balances atomically. Signature-status errors are terminal only at `confirmed` or `finalized` commitment; a `processed` error stays pending because its fork can disappear. A transient error leaves it open for recovery. Batch IDs prevent duplicate payouts, assuming this database is the sole settlement writer for the vault.
@@ -81,7 +81,17 @@ A submitted batch may need more than one job tick or admin call to finish. HTTP 
 
 Settle outstanding balances **before** deactivating a provider. Inactive providers are excluded from new batches and cannot be reactivated. Re-registering creates a new provider ID and does not migrate the old ID's balance; the same pubkey can be used again only after the old record is inactive. There is no automatic recovery or refund of that stranded balance.
 
-### 4.6 Reserves and reconciliation
+### 4.6 Settlement privacy
+
+Provider payouts are public. Without a policy, a payout shortly after an owner's deposit links that owner to the provider, and the amount reveals the call count. Three rules weaken both links:
+
+- **Fixed windows.** The timer fires at UTC multiples of `SETTLE_INTERVAL_S`, independent of activity and process start.
+- **Hold.** A run pays `balance - (cents redeemed in the last SETTLE_HOLD_S)`. With the default hold of one window, a redemption is never paid in the window it happened.
+- **Unit.** The payable amount rounds down to a multiple of `SETTLE_UNIT_CENTS`. The remainder stays in the balance for a later batch.
+
+Admin settlement applies the same policy. `createMint` callers that omit `settleHoldS` and `settleUnitCents` get 0 and 1 (pay everything now); `loadConfig` always sets the defaults above. Debiting the payable amount, not zeroing the balance, keeps reconciliation and `outstanding` unchanged. These rules do not hide which registered provider was paid. Several providers in one batch, plus enough users, are what make that ambiguous.
+
+### 4.7 Reserves and reconciliation
 
 `GET /v1/blindfold/reserves` reads issuance and confirmed settlements in one repeatable-read transaction: `outstanding = issued - settled`. This includes unredeemed tokens and redeemed, unpaid balances. It is mint-reported accounting, not proof of total liabilities.
 

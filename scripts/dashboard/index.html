@@ -35,6 +35,13 @@
   header { display: flex; align-items: baseline; justify-content: space-between; gap: 24px; }
   h1 { margin: 0; font: 500 24px/32px var(--sans); }
   .act { color: var(--text-2); }
+  .approval { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 8px 8px 8px 16px; background: var(--raised); border: 1px solid var(--line); border-radius: 12px; animation: enter 300ms var(--ease) both; }
+  .approval[hidden] { display: none; }
+  .approval b { color: var(--text); font-weight: 500; }
+  .approval .left { color: var(--muted); min-width: 40px; text-align: right; }
+  .approval button { font: inherit; color: var(--text); background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 6px 14px; cursor: pointer; }
+  .approval button:hover { background: var(--panel); }
+  .approval button.yes { border-color: var(--green); color: var(--green); }
 
   /* Sides */
   main { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; min-height: 0; }
@@ -99,6 +106,11 @@
 <div class="app">
   <header>
     <h1>Blindfold</h1>
+    <div class="approval" id="approval" hidden>
+      <span>owner approval: <b id="ap-what"></b></span>
+      <button class="yes" id="ap-yes">Approve</button><button id="ap-no">Deny</button>
+      <span class="left" id="ap-left"></span>
+    </div>
     <span class="act" id="act">Waiting for the demo</span>
   </header>
 
@@ -133,7 +145,7 @@
   <footer>
     <span>agent wallet<b id="b-exact">-</b></span>
     <span>agent tokens<b id="b-tokens">-</b></span>
-    <span>feed earned<b id="b-provider">-</b></span>
+    <span>feeds earned<b id="b-provider">-</b></span>
     <span>vault<b id="b-vault">-</b></span>
     <span>watcher reads<b id="b-source">RPC polling</b></span>
   </footer>
@@ -149,6 +161,7 @@ const sideEl = (s) => document.querySelector(s === "exact" ? ".exact" : ".blind"
 let state;
 
 function reset() {
+  approvals = {}; approvalId = null; clearInterval(approvalTimer); $("approval").hidden = true;
   state = { exact: { txs: [], buys: 0 }, blindfold: { txs: [], buys: 0 } };
   for (const s of ["exact", "blindfold"]) {
     const el = sideEl(s);
@@ -222,8 +235,33 @@ const handlers = {
   },
   source(e) { $("b-source").textContent = e.text; },
   note(e) { sideEl(e.side).querySelector(".notes").insertAdjacentHTML("beforeend", '<div class="note">' + esc(e.text) + "</div>"); },
+  approval(e) {
+    approvals[e.id] = e;
+    approvalId = e.id;
+    $("ap-what").textContent = e.label + " for $" + (e.cents / 100).toFixed(2) + " (limit $" + (e.thresholdCents / 100).toFixed(2) + ")";
+    const until = Date.now() + e.timeoutS * 1000;
+    clearInterval(approvalTimer);
+    const tick = () => { $("ap-left").textContent = Math.max(0, Math.ceil((until - Date.now()) / 1000)) + " s"; };
+    tick();
+    approvalTimer = setInterval(tick, 500);
+    $("approval").hidden = false;
+  },
+  approval_done(e) {
+    const a = approvals[e.id];
+    if (approvalId === e.id) { $("approval").hidden = true; clearInterval(approvalTimer); approvalId = null; }
+    const what = a ? a.label + " ($" + (a.cents / 100).toFixed(2) + ")" : "purchase";
+    const text = e.outcome === "approved" ? "Owner approved " + what : e.outcome === "denied" ? "Owner denied " + what + ", nothing paid" : "No owner answer: " + what + " denied, nothing paid";
+    handlers.note({ side: "blindfold", text });
+  },
   done(e) { $("act").textContent = e.ok ? "Done" : "Stopped"; },
 };
+let approvals = {}, approvalId = null, approvalTimer;
+const answer = (approve) => {
+  if (!approvalId) return;
+  fetch("/approval/" + encodeURIComponent(approvalId), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ approve }) });
+};
+$("ap-yes").onclick = () => answer(true);
+$("ap-no").onclick = () => answer(false);
 
 reset();
 const es = new EventSource("/events");

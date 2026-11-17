@@ -22,12 +22,6 @@ export class ConfigError extends Error {
     this.name = "ConfigError";
   }
 }
-export class NotImplemented extends Error {
-  constructor(what: string) {
-    super(`${what} is not implemented`);
-    this.name = "NotImplemented";
-  }
-}
 /** The reserve gate failed: nothing was paid. */
 export class ReservesFailedError extends Error {
   constructor(public reason: string, public vaultCents: number, public outstandingCents: number) {
