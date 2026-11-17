@@ -43,7 +43,7 @@ export class FakeProvider {
     const self = this;
     const facilitator = {
       async getSupported() {
-        return { kinds: [{ x402Version: 2, scheme: "cashu", network: NET }], extensions: [], signers: {} };
+        return { kinds: [{ x402Version: 2, scheme: "blindfold", network: NET }], extensions: [], signers: {} };
       },
       async verify() {
         return { isValid: true };
@@ -72,7 +72,7 @@ export class FakeProvider {
     const advertisedKey = () => (self.mode === "hostile" ? o.attackerKey! : self.pubkey);
     const advertisedPrice = () => (self.mode === "hostilePrice" ? 10_000 : price);
     const scheme = {
-      scheme: "cashu",
+      scheme: "blindfold",
       defaultAssetTransferMethod: "default",
       paymentFlows: { default: { supported: ["upfront"], default: "upfront" } },
       async parsePrice(p: any) {
@@ -91,7 +91,7 @@ export class FakeProvider {
     });
     app.use(paymentMiddleware({
       "GET /v1/data/:topic": {
-        accepts: [{ scheme: "cashu", network: NET, payTo: self.pubkey, price: { amount: String(price * 10_000), asset: USDC_DEVNET_MINT } }],
+        accepts: [{ scheme: "blindfold", network: NET, payTo: self.pubkey, price: { amount: String(price * 10_000), asset: USDC_DEVNET_MINT } }],
         description: "market data",
       },
     } as any, rs));

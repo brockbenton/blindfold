@@ -4,7 +4,7 @@ The MVP interface reference. Keep this file, component docs, implementation and 
 
 Where a Cashu NUT or the [x402 v2 spec](https://github.com/x402-foundation/x402/blob/main/specs/x402-specification-v2.md) already defines something, we use it unchanged and link it. Blindfold-specific choices are marked **[BF]**.
 
-Payments travel over **x402 v2** with a custom scheme, `cashu`: the Cashu token rides inside x402's standard payment envelope. A feasibility spike (real `@x402/hono` server, real `@x402/fetch` client, real `cashu-ts` crypto) passed all checks; see `spikes/x402-cashu/`.
+Payments travel over **x402 v2** with a custom scheme, `blindfold`: the Cashu token rides inside x402's standard payment envelope. A feasibility spike (real `@x402/hono` server, real `@x402/fetch` client, real `cashu-ts` crypto) passed all checks; see `spikes/x402-cashu/`.
 
 ## 1. Overview
 
@@ -25,7 +25,7 @@ Owner ───────────────▶ Agent ─ Wallet SDK ─x
 | 3. Detect | Mint → Vault | Poll `Config.deposit_count` + `DepositRecord` (§6) |
 | 4. Issue | Owner → Mint | `POST /v1/mint/solana-usdc` with locked blinded outputs (§5.4, §3.3) |
 | 5. Hand over | Owner → Agent | `cashuB` token file (§3.4) |
-| 6. Pay | Agent (wallet SDK) → Mock API | x402 v2 `PAYMENT-REQUIRED` / `PAYMENT-SIGNATURE`, scheme `cashu` (§7) |
+| 6. Pay | Agent (wallet SDK) → Mock API | x402 v2 `PAYMENT-REQUIRED` / `PAYMENT-SIGNATURE`, scheme `blindfold` (§7) |
 | 7. Redeem | Mock API (x402 settle) → Mint | `POST /v1/blindfold/redeem` (§5.6) |
 | 8. Settle | Mint → Vault | `settle_batch` instruction (§4.3) |
 
@@ -48,7 +48,7 @@ Owner ───────────────▶ Agent ─ Wallet SDK ─x
 | Devnet USDC mint | `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` | Circle devnet USDC, classic SPL Token program. Configurable via `USDC_MINT` |
 | Mint URL | `http://localhost:3338` | Configurable via `MINT_URL` |
 | x402 version | `2` | |
-| x402 scheme | `cashu` | **[BF]** custom scheme |
+| x402 scheme | `blindfold` | **[BF]** custom scheme |
 | x402 network | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | CAIP-2 id for Solana devnet (`SOLANA_DEVNET_CAIP2` in `@x402/svm`) |
 | x402 packages | `@x402/core`, `@x402/hono`, `@x402/fetch` `2.31.x` | Versions the spike used |
 
@@ -332,11 +332,11 @@ Every `DEPOSIT_POLL_MS`, at `confirmed` commitment:
 
 The QuickNode Stream feeds Copycat only. A Stream event could later trigger this same poll immediately; it would never credit a deposit by itself, because the mint credits only from vault-owned account state.
 
-## 7. Payment handshake: x402 v2, scheme `cashu`
+## 7. Payment handshake: x402 v2, scheme `blindfold`
 
 Headers, encodings and types are exactly [x402 v2 HTTP transport](https://github.com/x402-foundation/x402/blob/main/specs/transports-v2/http.md): `PAYMENT-REQUIRED` (server to client), `PAYMENT-SIGNATURE` (client to server) and `PAYMENT-RESPONSE` (server to client), each a base64-encoded JSON object. Only the scheme is ours.
 
-Prior art: [`x402-cashu`](https://github.com/orangerabbit-io/x402-cashu) carries sat-denominated Cashu over x402 as scheme `exact` on network `cashu:mainnet`. We share its payload shape (`payload.token`, `extra.mints`, `extra.unit`) but use our own scheme name `cashu` on the Solana network, because our value is Solana USDC, the lock is a required 1-of-N, and settlement is a redeem rather than a swap. Do not depend on that package (hackathon rule: no building on pre-existing projects).
+Prior art: [`x402-cashu`](https://github.com/orangerabbit-io/x402-cashu) carries sat-denominated Cashu over x402 as scheme `exact` on network `cashu:mainnet`. We share its payload shape (`payload.token`, `extra.mints`, `extra.unit`) but use our own scheme name, `blindfold`, rather than a generic `cashu`, because the payment is not interchangeable with standard Cashu: our value is Solana USDC, the lock is a required 1-of-N, and settlement is a redeem rather than a swap. Do not depend on that package (hackathon rule: no building on pre-existing projects).
 
 Use the SDKs rather than hand-rolling headers: `@x402/hono` `paymentMiddleware` + `x402ResourceServer` on the provider, `@x402/fetch` `wrapFetchWithPayment` + `x402Client` in the wallet.
 
@@ -413,7 +413,7 @@ On failure: `{ "success": false, "errorReason": "<reason>", "transaction": "", "
 
 | Piece | Rule |
 |---|---|
-| Scheme registration | `new x402Client().register(<devnet CAIP-2>, cashuClientScheme)`. The wallet registers only `cashu`, so it never pays with any other scheme |
+| Scheme registration | `new x402Client().register(<devnet CAIP-2>, cashuClientScheme)`. The wallet registers only `blindfold`, so it never pays with any other scheme |
 | Spend controls | `setSpendControls({ allowedAssets: [{ network, asset: USDC_MINT, maxAmountPerPayment: String(MAX_PER_CALL_CENTS * 10_000) }] })`. Required: x402 rejects non-default assets for custom schemes otherwise. This is also the first per-call cap |
 | `createPaymentPayload` | Runs the Blindfold refusals (allowlist, signer set, exact sum, mint, unit, cap) and throws `PaymentRefused` before any proof leaves. Then, for a price above `APPROVAL_OVER_CENTS`, asks the owner's approver and refuses with `approval_denied` or `approval_timeout` unless it approves in time ([04](04-wallet-sdk.md#owner-approval)). Moves chosen proofs to `pending` |
 | `schemeHooks.onPaymentResponse` | Success: drop the pending proofs. Failure or no `SettleResponse`: `POST /v1/checkstate` (NUT-07) for them; `UNSPENT` go back, `SPENT` are dropped. This also covers a lost `200` |
@@ -437,7 +437,7 @@ The mock provider is a token data feed in the style of the Solana DeFi feeds tha
 
 Fake, deterministic per topic. `GET /health` is free.
 
-**`exact` memos.** With the `exact` baseline, a provider may set x402's `extra.memo` on a route's `exact` entry; the payer's transaction then carries that text in an SPL Memo instruction, onchain. Sellers use memos to reconcile payments. The demo provider tags its listed tokens' routes `whale-flow/<TOKEN>`, `depth/<TOKEN>` and `signals/<TOKEN>` (`ExactOptions.memoTopics`); other `exact` payments carry the payer's random nonce memo. `cashu` entries never carry a memo.
+**`exact` memos.** With the `exact` baseline, a provider may set x402's `extra.memo` on a route's `exact` entry; the payer's transaction then carries that text in an SPL Memo instruction, onchain. Sellers use memos to reconcile payments. The demo provider tags its listed tokens' routes `whale-flow/<TOKEN>`, `depth/<TOKEN>` and `signals/<TOKEN>` (`ExactOptions.memoTopics`); other `exact` payments carry the payer's random nonce memo. `blindfold` entries never carry a memo.
 
 ### 7.6 Agent reserve check [BF]
 
@@ -528,7 +528,7 @@ docker-compose.yml     Postgres
 `scripts/e2e.ts` on devnet:
 
 1. Owner CLI: quote $1.00 (100 cents), deposit, wait until `amount_paid == 100`, mint tokens locked to the mock API's key, write the token file.
-2. Agent: reserve check passes (§7.6), then one paid call to the mock API through the wallet SDK. Gets `402` with `PAYMENT-REQUIRED` offering scheme `cashu`, retries with `PAYMENT-SIGNATURE`, gets `200` with data and a `PAYMENT-RESPONSE` whose `transaction` is a redemption id. Token file balance drops by `PRICE_CENTS`.
+2. Agent: reserve check passes (§7.6), then one paid call to the mock API through the wallet SDK. Gets `402` with `PAYMENT-REQUIRED` offering scheme `blindfold`, retries with `PAYMENT-SIGNATURE`, gets `200` with data and a `PAYMENT-RESPONSE` whose `transaction` is a redemption id. Token file balance drops by `PRICE_CENTS`.
 3. Replay: resend the same `PAYMENT-SIGNATURE` header. Gets `402`; the provider's settle logged `redeem_failed_11001`; its mint balance is unchanged.
 4. `POST /v1/blindfold/admin/settle`. The provider's payout account receives `PRICE_CENTS * 10_000` base units of USDC on devnet.
 5. `GET /v1/blindfold/admin/reconcile`: `vault_balance == deposited - settled`.

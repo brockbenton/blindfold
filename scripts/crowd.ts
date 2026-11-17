@@ -406,7 +406,7 @@ async function main() {
     kv(`Agent ${name(i)}`, `${short(s.payer)}  ${s.calls} calls, ${usd(s.totalBase)}, ${s.token ?? "?"}: ${s.action}`);
   }
   blank();
-  say(bold(green("Blindfold (cashu), equal deposits")));
+  say(bold(green("Blindfold x402 (blindfold), equal deposits")));
   for (const d of reading.depositors) kv("Agent ?", `${short(d.wallet)}  deposited ${usd(d.totalBase)}; bought: unknown; token: unknown`);
   kv("Payout", `${usd(reading.payoutBase)} from the vault to ${FEED} in one batch`);
   kv("Verdict", bold(green(reading.action)));
@@ -414,7 +414,7 @@ async function main() {
   const alone = attributeVault(watcher.observations.filter((o) => o.slot < round2Slot && (o.kind === "vault_payout" || o.signature === deposits[0])));
   say(dim(`With a crowd of one, the same payout would read: ${alone.action}. ${alone.reason}`));
   blank();
-  say(bold(yellow("Blindfold (cashu), odd amounts")));
+  say(bold(yellow("Blindfold x402 (blindfold), odd amounts")));
   kv("Verdict", `${bold(red(reading2.action))}: ${short(reading2.forced[0])} bought from ${FEED}; token: unknown`);
   blank();
   say(bold("What still leaks"));

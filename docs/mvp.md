@@ -10,7 +10,7 @@ The target is a paid API call backed by a real Solana vault: owner deposit, toke
 |---|---|
 | Vault | `initialize`, `deposit`, `register_provider`, `deactivate_provider`, `settle_batch` |
 | Mint | Blind signing, DLEQ, spent set, provider balances, deposit polling and settlement recovery |
-| Mock paid API | x402 v2 `cashu` challenge, online redemption before serving data |
+| Mock paid API | x402 v2 `blindfold` challenge, online redemption before serving data |
 | Wallet and owner CLI | Provider-locked funding, exact-sum payments, per-call cap, owner approval above a threshold and pending-payment recovery |
 | Scripted agent | Provider discovery, topic selection, reserve gate and result reporting |
 
@@ -29,7 +29,7 @@ Acceptance requires:
 
 Planned, in priority order. Existing hooks and tests are not complete demos.
 
-1. **Copycat and baseline comparison.** Implemented: the mock API accepts standard x402 `exact` alongside `cashu` when configured, Copycat (`scripts/bot.ts`) reports what a chain observer sees and infers trading signals, and `pnpm demo` compares both with a live dashboard; `pnpm crowd` shows that several equal depositors and one payout cannot be attributed ([demo](DEMO.md)). Copycat reads a QuickNode Stream, with token account polling as the fallback.
+1. **Copycat and baseline comparison.** Implemented: the mock API accepts standard x402 `exact` alongside `blindfold` when configured, Copycat (`scripts/bot.ts`) reports what a chain observer sees and infers trading signals, and `pnpm demo` compares both with a live dashboard; `pnpm crowd` shows that several equal depositors and one payout cannot be attributed ([demo](DEMO.md)). Copycat reads a QuickNode Stream, with token account polling as the fallback.
 2. **LLM agent and prompt-injection demo.** Implemented: `agent --llm` runs a model-driven decision loop with code-enforced limits ([agent](design/05-agent.md#llm-decision-loop)), and `pnpm demo` Act 6 poisons a feed response with an injection pointing at an attacker; payment to the unregistered attacker is refused. Not yet shown: an allowed provider consuming the whole budget.
 3. **QuickNode Stream.** Implemented for Copycat: a `solana-devnet` block Stream with a checked-in filter and a webhook into `pnpm demo` and `pnpm bot`, created by `pnpm streams:setup` ([README](../README.md#quicknode-streams-configuration)). Not done: triggering the mint's deposit poll from the Stream's `DepositMade` events.
 4. **Owner approval.** Implemented in the wallet: a price above `APPROVAL_OVER_CENTS` waits for the owner (terminal prompt, the demo dashboard, denial on timeout), and `pnpm demo` Act 6 shows it ([agent](design/05-agent.md#owner-approval)). Not yet: a protocol-level co-signed reserve pocket that a compromised agent process could not bypass; current 1-of-N locks and redemption validation do not support it.
