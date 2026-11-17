@@ -1,0 +1,93 @@
+/* Dashboard styles, shared by the live page (index.html) and the replay (replay.html). */
+:root {
+  --page: #111112;
+  --panel: #18181a;
+  --raised: #212123;
+  --line: rgba(237, 237, 237, 0.08);
+  --text: #ededed;
+  --text-2: #a1a1a6;
+  --muted: #85858b;
+  --red: #e5484d;
+  --green: #4cc38a;
+  --amber: #d9a23f;
+  --sans: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--page); color: var(--text); font: 400 14px/20px var(--mono);
+  font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+.dashboard { height: 100%; }
+.app { display: grid; grid-template-rows: auto 1fr auto; gap: 24px; height: 100%; max-width: 1600px; margin: 0 auto; padding: 32px; }
+
+/* Header */
+.app header { display: flex; align-items: baseline; justify-content: space-between; gap: 24px; }
+.app h1 { margin: 0; font: 500 24px/32px var(--sans); }
+.act { color: var(--text-2); }
+
+/* Sides */
+.app main { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; min-height: 0; }
+.side { display: grid; grid-template-rows: auto auto 1fr auto; min-height: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; }
+.side > * { padding: 0 24px; }
+.head { display: flex; justify-content: space-between; align-items: baseline; padding-top: 20px; color: var(--text-2); }
+.head .name { font: 500 16px/24px var(--sans); color: var(--text); }
+.head .scheme { color: var(--muted); }
+
+.verdict { padding-top: 24px; padding-bottom: 24px; border-bottom: 1px solid var(--line); }
+.verdict .who { color: var(--muted); }
+.verdict .action { font: 500 48px/56px var(--sans); letter-spacing: -0.02em; color: var(--muted); margin-top: 4px; transition: color 300ms var(--ease); }
+.verdict .detail { color: var(--text-2); margin-top: 4px; min-height: 20px; }
+.exact .verdict.on .action { color: var(--red); }
+.blind .verdict.on .action { color: var(--green); }
+
+.log { display: flex; flex-direction: column; min-height: 0; padding-top: 20px; }
+.section { display: flex; justify-content: space-between; color: var(--muted); padding-bottom: 8px; }
+.rows { flex: 1; min-height: 0; overflow: hidden; }
+.row { display: grid; grid-template-columns: 72px 1fr auto 64px; gap: 16px; align-items: center; height: 40px; border-top: 1px solid var(--line); animation: enter 400ms var(--ease) both; transition: background-color 150ms var(--ease); }
+.row:hover { background: var(--raised); }
+.row time { color: var(--muted); }
+.row .memo { color: var(--text-2); }
+.row .amt { text-align: right; }
+.addr { color: var(--text); }
+.exact .addr { color: var(--red); }
+.row .unknown { color: var(--muted); }
+.empty { color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
+
+.buys { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 16px; padding-bottom: 20px; border-top: 1px solid var(--line); }
+.buys .label { color: var(--muted); }
+.ticks { display: flex; flex-wrap: wrap; gap: 4px; flex: 1; }
+.tick { width: 12px; height: 12px; border-radius: 3px; background: transparent; border: 1px solid var(--text-2); animation: enter 300ms var(--ease) both; }
+.exact .tick { background: var(--red); border-color: var(--red); }
+.buys .where { color: var(--text-2); }
+.notes { padding: 12px 0 16px; display: flex; flex-direction: column; gap: 4px; }
+.notes:empty { display: none; }
+.note { color: var(--text-2); animation: enter 300ms var(--ease) both; }
+.note::before { content: "\2713"; color: var(--green); margin-right: 12px; }
+.note.other::before { content: "\00b7"; color: var(--muted); }
+
+/* Status bar */
+.app footer { display: flex; gap: 40px; color: var(--muted); }
+.app footer b { color: var(--text); font-weight: 400; margin-left: 8px; }
+
+/* Replay: controls that act on a live demo do nothing. */
+.dashboard[data-replay] :is(button, input, select, textarea, [data-live-control]) { pointer-events: none; opacity: 0.5; }
+
+@keyframes enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+@media (max-width: 960px) {
+  .app { height: auto; padding: 16px; gap: 16px; }
+  .app header { flex-direction: column; gap: 8px; }
+  .app main { grid-template-columns: 1fr; gap: 16px; }
+  .side > * { padding-left: 16px; padding-right: 16px; }
+  .verdict .action { font-size: 36px; line-height: 44px; }
+  .row { grid-template-columns: 64px 1fr 56px; gap: 12px; }
+  .row .memo, .row .unknown { display: none; }
+  .rows { max-height: 280px; }
+  .app footer { flex-wrap: wrap; gap: 8px 24px; }
+}

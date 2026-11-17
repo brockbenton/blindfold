@@ -9,7 +9,9 @@
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "demo": "pnpm --filter @blindfold/scripts demo",
-    "bot": "pnpm --filter @blindfold/scripts bot"
+    "bot": "pnpm --filter @blindfold/scripts bot",
+    "replay": "pnpm --filter @blindfold/scripts replay",
+    "replay:publish": "pnpm --filter @blindfold/scripts replay:publish"
   },
   "devDependencies": {
     "@types/node": "26.6.6",

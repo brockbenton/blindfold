@@ -9,7 +9,9 @@
     "e2e": "tsx e2e.ts",
     "e2e:localnet": "tsx e2e.ts --localnet",
     "demo": "tsx demo.ts",
-    "bot": "tsx bot.ts"
+    "bot": "tsx bot.ts",
+    "replay": "tsx replay.ts",
+    "replay:publish": "tsx replay.ts publish"
   },
   "dependencies": {
     "@blindfold/protocol": "workspace:*",
