@@ -75,7 +75,7 @@ We found no other project combining USDC-backed ecash in a Solana vault, agent-v
 ## Honest limits
 
 - **The mint is custodial.** It cannot see who buys what, and the agent verifies the vault's reserves before paying, but it holds the funds and could under-report issuance.
-- **Privacy grows with users.** With few users, or distinctive amounts and timing, deposits and payouts can still be correlated.
+- **Privacy needs a crowd.** With one depositor, a batch payout is linked to that owner (not to the token or the calls). With several owners depositing equal amounts, one payout cannot be attributed to any of them (`pnpm crowd` shows this). It still leaks if the owners are funded from one wallet, if amounts are distinctive (the demo's second round shows one odd deposit giving its owner away), or if timing repeats across many deposits and payouts.
 - **It hides purchases, not trades.** Onchain trades stay public; the research behind them and the link between data and decisions do not.
 - **Agent commerce is early.** This is a problem that grows as agents scale; the evidence above shows it has started.
 

@@ -40,7 +40,9 @@ Owner ───────────────▶ Agent ─ Wallet SDK ─x
 | `MAX_DEPOSIT_CENTS` | `5000` ($50) | Default per-deposit cap; vault uses configured `max_deposit`, quotes enforce 5000 cents |
 | `QUOTE_EXPIRY_S` | `3600` | Payment deadline only (NUT-04) |
 | `DEPOSIT_POLL_MS` | `2000` | |
-| `SETTLE_INTERVAL_S` | `60` | |
+| `SETTLE_INTERVAL_S` | `600` | Settlement window; runs fire at UTC multiples of it |
+| `SETTLE_HOLD_S` | `SETTLE_INTERVAL_S` | Cents redeemed more recently are not paid in a run |
+| `SETTLE_UNIT_CENTS` | `10` | Payouts round down to a multiple; the remainder carries over |
 | `MAX_PAYOUTS_PER_BATCH` | `8` | Keeps `settle_batch` under the tx size limit |
 | Solana commitment | `confirmed` | Demo only; real deployment would use `finalized` |
 | Devnet USDC mint | `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` | Circle devnet USDC, classic SPL Token program. Configurable via `USDC_MINT` |
@@ -158,7 +160,7 @@ Two deposits built against the same `deposit_count` collide on the `DepositRecor
 
 ### 4.4 Events
 
-Emitted with `emit!`. The MVP mint does **not** rely on events; they exist for the QuickNode Stream add-on. Copycat, the demo's competitor bot, reads token account history instead.
+Emitted with `emit!`. The mint does **not** rely on events (section 6). Copycat's QuickNode Stream filter (`scripts/streams/copycat-filter.js`) decodes `DepositMade` from the `Program data:` log line (8-byte discriminator `sha256("event:DepositMade")[0..8]`, then the Borsh fields) and reports it; Copycat's signals come from USDC balance changes, not events.
 
 | Event | Fields |
 |---|---|
@@ -312,7 +314,7 @@ Header `Authorization: Bearer <MINT_ADMIN_TOKEN>`. `401 {"detail":"unauthorized"
 | Endpoint | Response |
 |---|---|
 | `GET /v1/blindfold/admin/balances` | `[{ "provider_id": 0, "balance": 15 }]` (cents, unsettled; positive balances only) |
-| `POST /v1/blindfold/admin/settle` | Runs one settlement now (at most 8 providers, largest balances first; the rest wait for the next run). `{ "batch_id": 1, "payouts": [{ "provider_id": 0, "amount": 15 }], "tx": "<signature>" }` or `{ "batch_id": null }` if no balances |
+| `POST /v1/blindfold/admin/settle` | Runs one settlement now under the same hold and unit policy as the timer (at most 8 providers, largest payable amounts first; the rest wait for the next run). `{ "batch_id": 1, "payouts": [{ "provider_id": 0, "amount": 15 }], "tx": "<signature>" }` or `{ "batch_id": null }` if nothing is payable yet |
 | `GET /v1/blindfold/admin/reconcile` | `{ "vault_balance": c, "deposited": c, "issued": c, "redeemed": c, "settled": c }` (all cents). Lets tests check `vault_balance == deposited - settled` |
 
 Settlement can also return HTTP 409 (`70010`: another run holds the lock; `70011`: a batch is still in flight) or HTTP 502 (`70012`: a batch failed and balances were restored). Retry according to batch state, not as a new payment. Reconciliation is a diagnostic read, not an atomic snapshot across chain and database.
@@ -328,7 +330,7 @@ Every `DEPOSIT_POLL_MS`, at `confirmed` commitment:
 3. In one DB transaction per record: insert the deposit (unique on `index`), find the quote whose `request == deposit_ref`, add `amount / 10_000` to its `amount_paid`, bump `updated_at`, advance the cursor.
 4. A deposit with no matching quote is stored as unmatched. (Refunds are deferred.)
 
-Later, the QuickNode Stream add-on posts to an internal webhook that triggers the same poll immediately. No other code changes.
+The QuickNode Stream feeds Copycat only. A Stream event could later trigger this same poll immediately; it would never credit a deposit by itself, because the mint credits only from vault-owned account state.
 
 ## 7. Payment handshake: x402 v2, scheme `cashu`
 
@@ -413,7 +415,7 @@ On failure: `{ "success": false, "errorReason": "<reason>", "transaction": "", "
 |---|---|
 | Scheme registration | `new x402Client().register(<devnet CAIP-2>, cashuClientScheme)`. The wallet registers only `cashu`, so it never pays with any other scheme |
 | Spend controls | `setSpendControls({ allowedAssets: [{ network, asset: USDC_MINT, maxAmountPerPayment: String(MAX_PER_CALL_CENTS * 10_000) }] })`. Required: x402 rejects non-default assets for custom schemes otherwise. This is also the first per-call cap |
-| `createPaymentPayload` | Runs the Blindfold refusals (allowlist, signer set, exact sum, mint, unit, cap) and throws `PaymentRefused` before any proof leaves. Moves chosen proofs to `pending` |
+| `createPaymentPayload` | Runs the Blindfold refusals (allowlist, signer set, exact sum, mint, unit, cap) and throws `PaymentRefused` before any proof leaves. Then, for a price above `APPROVAL_OVER_CENTS`, asks the owner's approver and refuses with `approval_denied` or `approval_timeout` unless it approves in time ([04](04-wallet-sdk.md#owner-approval)). Moves chosen proofs to `pending` |
 | `schemeHooks.onPaymentResponse` | Success: drop the pending proofs. Failure or no `SettleResponse`: `POST /v1/checkstate` (NUT-07) for them; `UNSPENT` go back, `SPENT` are dropped. This also covers a lost `200` |
 
 ### 7.5 Mock API paid endpoint
@@ -431,9 +433,11 @@ The mock provider is a token data feed in the style of the Solana DeFi feeds tha
 
 `GET /v1/data/:topic/depth` (order-book depth), default 10 cents: `{ topic, feed: "depth", bids: [{price, size}] x5, asks: [{price, size}] x5, spread_bps, as_of }`.
 
+`GET /v1/data/:topic/signals` (premium trade signal), default 25 cents, above the default approval threshold: `{ topic, feed: "signals", signal: "BUY" | "SELL" | "HOLD", confidence, horizon: "1h", as_of }`. The signal follows `whale_netflow` (above +20,000 BUY, below -20,000 SELL).
+
 Fake, deterministic per topic. `GET /health` is free.
 
-**`exact` memos.** With the `exact` baseline, a provider may set x402's `extra.memo` on a route's `exact` entry; the payer's transaction then carries that text in an SPL Memo instruction, onchain. Sellers use memos to reconcile payments. The demo provider tags its listed tokens' routes `whale-flow/<TOKEN>` and `depth/<TOKEN>` (`ExactOptions.memoTopics`); other `exact` payments carry the payer's random nonce memo. `cashu` entries never carry a memo.
+**`exact` memos.** With the `exact` baseline, a provider may set x402's `extra.memo` on a route's `exact` entry; the payer's transaction then carries that text in an SPL Memo instruction, onchain. Sellers use memos to reconcile payments. The demo provider tags its listed tokens' routes `whale-flow/<TOKEN>`, `depth/<TOKEN>` and `signals/<TOKEN>` (`ExactOptions.memoTopics`); other `exact` payments carry the payer's random nonce memo. `cashu` entries never carry a memo.
 
 ### 7.6 Agent reserve check [BF]
 
@@ -468,7 +472,10 @@ What the agent and other callers may rely on. Details in `04-wallet-sdk.md`.
 
 ```ts
 class AgentWallet {
-  static open(opts?: { tokenFile?: string; maxPerCallCents?: number; allowlist?: string[]; fetch?: typeof fetch }): Promise<AgentWallet>;
+  static open(opts?: {
+    tokenFile?: string; maxPerCallCents?: number; allowlist?: string[]; fetch?: typeof fetch;
+    approvalOverCents?: number; approve?: Approver; approvalTimeoutMs?: number; // owner approval (04)
+  }): Promise<AgentWallet>;
   balance(): number;          // spendable cents (excludes pending)
   payFetch(url: string | URL, init?: RequestInit): Promise<Response>; // fetch-compatible
 }
@@ -476,7 +483,7 @@ class PaymentRefused extends Error { reason: RefusalReason }  // thrown before a
 class PaymentFailed extends Error { status: number; errorReason?: string } // paid retry not settled (after checkstate recovery). status is 402 for any settle failure (§7.3); errorReason only if the SDK surfaced it
 ```
 
-`payFetch` wraps `@x402/fetch` (§7.4). It returns non-402 responses unchanged and never throws for them. x402 wraps errors thrown inside a scheme ("Failed to create payment payload: ..."), and its spend controls refuse over-cap requests before our scheme runs; `payFetch` unwraps both into `PaymentRefused` (the latter as `over_cap`). `RefusalReason` includes `provider_not_allowed`, `provider_not_in_signer_set`, `over_cap`, `insufficient_balance`, `insufficient_exact`, `unit`, `mint`, `bad_request`. Call `wallet.close()` when finished to release the file lock. If a payment was attempted, a non-2xx final response raises `PaymentFailed`; an unpaid non-402 response is returned unchanged.
+`payFetch` wraps `@x402/fetch` (§7.4). It returns non-402 responses unchanged and never throws for them. x402 wraps errors thrown inside a scheme ("Failed to create payment payload: ..."), and its spend controls refuse over-cap requests before our scheme runs; `payFetch` unwraps both into `PaymentRefused` (the latter as `over_cap`). `RefusalReason` includes `provider_not_allowed`, `provider_not_in_signer_set`, `over_cap`, `insufficient_balance`, `insufficient_exact`, `unit`, `mint`, `bad_request`, `approval_denied`, `approval_timeout`. `Approver` is `(req, signal) => Promise<boolean>`; see [04](04-wallet-sdk.md#owner-approval). Call `wallet.close()` when finished to release the file lock. If a payment was attempted, a non-2xx final response raises `PaymentFailed`; an unpaid non-402 response is returned unchanged.
 
 ## 9. Repo layout and configuration
 
@@ -492,7 +499,7 @@ packages/testkit/      shared test helpers (fake keyset, locked token issuance)
 packages/wallet/       04: wallet SDK + owner CLI
 agents/simple/         05: simple agent
 config/providers.json  provider_id → name, url
-scripts/               devnet setup (initialize, register provider), e2e test
+scripts/               devnet setup, e2e test, demo, Copycat (bot.ts), streams/ (QuickNode Stream filter)
 spikes/x402-cashu/     feasibility spike (reference only, not production code)
 docker-compose.yml     Postgres
 .env.example
@@ -509,8 +516,10 @@ docker-compose.yml     Postgres
 | `OWNER_KEYPAIR` (path) | owner CLI |
 | `RESERVE_CHECK_EVERY` (10) | agent; checks before calls 1, 11, 21, … by default |
 | `LLM_API_KEY`, `LLM_BASE_URL` (Gemini's OpenAI-compatible endpoint), `LLM_MODEL` (`gemini-3.5-flash-lite,gemini-flash-latest`) | agent `--llm` mode ([05](05-agent.md#llm-decision-loop)); `pnpm demo` also reads `.keys/llm.key` |
-| `MINT_DEV_FAKE_CHAIN` (`1` to enable), `PROVIDERS_FILE`, `DEPOSIT_POLL_MS`, `SETTLE_INTERVAL_S` | mint; fake-chain mode is local development only |
+| `MINT_DEV_FAKE_CHAIN` (`1` to enable), `PROVIDERS_FILE`, `DEPOSIT_POLL_MS`, `SETTLE_INTERVAL_S`, `SETTLE_HOLD_S`, `SETTLE_UNIT_CENTS` | mint; fake-chain mode is local development only |
+| `QUICKNODE_API_KEY` (or `.keys/quicknode.json`), `CLOUDFLARED`, `STREAMS_WEBHOOK_URL`, `STREAMS_PORT` | Copycat's QuickNode Stream in `pnpm demo`, `pnpm bot` and `pnpm streams:setup` |
 | `TOKEN_FILE`, `MAX_PER_CALL_CENTS` (10), `WALLET_ALLOWLIST` (comma list of provider pubkeys; default: union of the proofs' signer sets) | wallet SDK, agent |
+| `APPROVAL_OVER_CENTS` (20; higher prices need the owner's approval), `APPROVAL_TIMEOUT_S` (60, agent only) | wallet SDK, agent ([05](05-agent.md#owner-approval)) |
 
 **Test layers:** TypeScript tests use fakes; mint and application integration tests require PostgreSQL. Rust vault tests use LiteSVM and a built `target/deploy/vault.so`. The separate `e2e:localnet` script uses `solana-test-validator` and a six-decimal test mint; `e2e` uses a deployed devnet vault and funded keys. See [the runbook](../RUNNING.md).
 

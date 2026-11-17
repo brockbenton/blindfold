@@ -13,15 +13,18 @@ export type DashboardEvent =
   | { type: "chain"; side: "exact" | "blindfold"; kind: string; text: string; amountBase: string; from: string; memo?: string; time: string | null; url: string; signature: string }
   | { type: "copycat"; side: "exact" | "blindfold"; action: string; reason: string; tone: "alarm" | "calm" }
   | { type: "balances"; agentTokensCents: number; exactWalletBase: string; providerDirectBase: string; providerSettledBase: string; providerOwedCents: number; vaultBase: string }
+  | { type: "source"; text: string }
   | { type: "note"; side: "exact" | "blindfold"; tone: "ok" | "warn"; text: string }
+  | { type: "approval"; id: string; cents: number; thresholdCents: number; label: string; timeoutS: number }
+  | { type: "approval_done"; id: string; outcome: "approved" | "denied" | "timeout" }
   | { type: "done"; ok: boolean };
 // New event types are fine: the page ignores types it has no handler for (see scripts/dashboard/dashboard.js).
 
-export interface Dashboard {
+export interface Dashboard<E extends { type: string } = DashboardEvent> {
   url: string;
-  emit(e: DashboardEvent): void;
+  emit(e: E): void;
   /** Events so far (for tests). */
-  readonly history: (DashboardEvent & { seq: number })[];
+  readonly history: (E & { seq: number })[];
   close(): Promise<void>;
 }
 
@@ -36,17 +39,32 @@ export function serveAsset(app: Hono, path: string, file: string | URL) {
   app.get(path, (c) => c.body(readFileSync(typeof file === "string" ? new URL(file, DASHBOARD_DIR) : file), 200, { "content-type": type, "cache-control": "no-store" }));
 }
 
-export async function startDashboard(o: { port: number; hostname?: string; onEmit?: (e: DashboardEvent & { seq: number }) => void }): Promise<Dashboard> {
-  const history: (DashboardEvent & { seq: number })[] = [];
-  const listeners = new Set<(e: DashboardEvent & { seq: number }) => void>();
+/**
+ * `page` is a file in scripts/dashboard (default index.html, the main demo's page); `pnpm crowd` serves crowd.html.
+ * `onApproval` receives the owner's Approve/Deny clicks; it returns false when the request is no longer pending.
+ * `onEmit` sees every event as it is emitted (the demo's recorder for the replay page).
+ */
+export async function startDashboard<E extends { type: string } = DashboardEvent>(o: {
+  port: number; hostname?: string; page?: string; onApproval?: (id: string, approve: boolean) => boolean;
+  onEmit?: (e: E & { seq: number }) => void;
+}): Promise<Dashboard<E>> {
+  const history: (E & { seq: number })[] = [];
+  const listeners = new Set<(e: E & { seq: number }) => void>();
   const app = new Hono();
-  serveAsset(app, "/", "index.html");
+  serveAsset(app, "/", o.page ?? "index.html");
   for (const f of SHARED_ASSETS) serveAsset(app, `/${f}`, f);
+  // JSON only: a cross-site form cannot send it without a CORS preflight, which this server never answers.
+  app.post("/approval/:id", async (c) => {
+    if (!c.req.header("content-type")?.startsWith("application/json")) return c.json({ error: "json only" }, 415);
+    const body = (await c.req.json().catch(() => null)) as { approve?: unknown } | null;
+    if (typeof body?.approve !== "boolean") return c.json({ error: "approve must be a boolean" }, 400);
+    return o.onApproval?.(c.req.param("id"), body.approve) ? c.json({ ok: true }) : c.json({ error: "not pending" }, 404);
+  });
   app.get("/events", (c) =>
     streamSSE(c, async (stream) => {
-      const queue: (DashboardEvent & { seq: number })[] = [...history];
+      const queue: (E & { seq: number })[] = [...history];
       let wake: (() => void) | null = null;
-      const push = (e: DashboardEvent & { seq: number }) => { queue.push(e); wake?.(); };
+      const push = (e: E & { seq: number }) => { queue.push(e); wake?.(); };
       listeners.add(push);
       stream.onAbort(() => { listeners.delete(push); wake?.(); });
       while (!stream.aborted) {

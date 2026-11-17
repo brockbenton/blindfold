@@ -22,6 +22,8 @@ export interface Observation {
   amountBase: bigint;
   /** Text of a memo instruction in the same transaction (x402 `exact` adds one per payment). */
   memo?: string;
+  /** Where Copycat read it: a QuickNode Stream delivery or an RPC poll. */
+  via?: "streams" | "rpc";
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

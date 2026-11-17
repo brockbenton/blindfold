@@ -9,6 +9,11 @@ const MARKUP = `
 <div class="app">
   <header>
     <h1>Blindfold</h1>
+    <div class="approval" data-ref="approval" hidden>
+      <span>owner approval: <b data-ref="ap-what"></b></span>
+      <button class="yes" data-ref="ap-yes">Approve</button><button data-ref="ap-no">Deny</button>
+      <span class="left" data-ref="ap-left"></span>
+    </div>
     <span class="act" data-ref="act">Waiting for the demo</span>
   </header>
   <main>
@@ -18,8 +23,9 @@ const MARKUP = `
   <footer>
     <span>agent wallet<b data-ref="b-exact">-</b></span>
     <span>agent tokens<b data-ref="b-tokens">-</b></span>
-    <span>feed earned<b data-ref="b-provider">-</b></span>
+    <span>feeds earned<b data-ref="b-provider">-</b></span>
     <span>vault<b data-ref="b-vault">-</b></span>
+    <span>watcher reads<b data-ref="b-source">RPC polling</b></span>
   </footer>
 </div>`;
 
@@ -66,11 +72,23 @@ export function mountDashboard(root, { interactive = true } = {}) {
   const sideEl = (s) => root.querySelector(s === "exact" ? ".exact" : ".blind");
   const ctx = { interactive };
   let state;
+  /* Owner approval requests (live demo Act 6). The bar's buttons post the answer back; in a replay they are inert. */
+  let approvals = {}, approvalId = null, approvalTimer;
+  const hideApproval = () => { ref("approval").hidden = true; clearInterval(approvalTimer); approvalId = null; };
+  const answer = (approve) => {
+    if (!ctx.interactive || !approvalId) return;
+    fetch("approval/" + encodeURIComponent(approvalId), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ approve }) });
+  };
+  ref("ap-yes").onclick = () => answer(true);
+  ref("ap-no").onclick = () => answer(false);
 
   function reset() {
     state = { exact: { txs: [], buys: 0 }, blindfold: { txs: [], buys: 0 } };
+    approvals = {};
+    hideApproval();
     ref("act").textContent = "Waiting for the demo";
     for (const id of ["b-exact", "b-tokens", "b-provider", "b-vault"]) ref(id).textContent = "-";
+    ref("b-source").textContent = "RPC polling";
     for (const s of ["exact", "blindfold"]) {
       const el = sideEl(s);
       el.querySelector(".verdict").classList.remove("on");
@@ -144,7 +162,26 @@ export function mountDashboard(root, { interactive = true } = {}) {
       ref("b-provider").textContent = usd(BigInt(e.providerDirectBase) + BigInt(e.providerSettledBase) + BigInt(e.providerOwedCents) * 10000n);
       ref("b-vault").textContent = usd(e.vaultBase);
     },
+    source(e) { ref("b-source").textContent = e.text; },
     note(e) { note(e.side, e.text); },
+    approval(e) {
+      approvals[e.id] = e;
+      approvalId = e.id;
+      ref("ap-what").textContent = e.label + " for $" + (e.cents / 100).toFixed(2) + " (limit $" + (e.thresholdCents / 100).toFixed(2) + ")";
+      const until = Date.now() + e.timeoutS * 1000;
+      clearInterval(approvalTimer);
+      const tick = () => { ref("ap-left").textContent = Math.max(0, Math.ceil((until - Date.now()) / 1000)) + " s"; };
+      tick();
+      approvalTimer = setInterval(tick, 500);
+      ref("approval").hidden = false;
+    },
+    approval_done(e) {
+      const a = approvals[e.id];
+      if (approvalId === e.id) hideApproval();
+      const what = a ? a.label + " ($" + (a.cents / 100).toFixed(2) + ")" : "purchase";
+      note("blindfold", e.outcome === "approved" ? "Owner approved " + what
+        : e.outcome === "denied" ? "Owner denied " + what + ", nothing paid" : "No owner answer: " + what + " denied, nothing paid");
+    },
     done(e) { ref("act").textContent = e.ok ? "Done" : "Stopped"; },
   };
 

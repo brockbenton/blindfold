@@ -29,6 +29,15 @@ a { color: inherit; text-decoration: none; }
 .app header { display: flex; align-items: baseline; justify-content: space-between; gap: 24px; }
 .app h1 { margin: 0; font: 500 24px/32px var(--sans); }
 .act { color: var(--text-2); }
+.approval { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 8px 8px 8px 16px; background: var(--raised); border: 1px solid var(--line); border-radius: 12px; animation: enter 300ms var(--ease) both; }
+.approval[hidden] { display: none; }
+.approval b { color: var(--text); font-weight: 500; }
+.approval .left { color: var(--muted); min-width: 40px; text-align: right; }
+.approval button { font: inherit; color: var(--text); background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 6px 14px; cursor: pointer; }
+.approval button:hover { background: var(--panel); }
+.approval button.yes { border-color: var(--green); color: var(--green); }
+.dashboard[data-replay] .approval button { cursor: default; opacity: 0.6; }
+.dashboard[data-replay] .approval button:hover { background: transparent; }
 
 /* Sides */
 .app main { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; min-height: 0; }
