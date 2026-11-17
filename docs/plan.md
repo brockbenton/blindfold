@@ -31,4 +31,4 @@ The original component build is present. The [vault notes](design/01-vault.md#10
 
 ## Open design question
 
-Hiding provider revenue would require changing the fixed onchain payout registry or the withdrawal protocol. Decide that trust tradeoff before implementing fresh payout addresses.
+Settlement now runs in fixed windows with a hold and rounded payouts, so timing and amounts no longer track calls. Hiding which provider earned would still require changing the fixed onchain payout registry. Decide that trust tradeoff before implementing fresh payout addresses.

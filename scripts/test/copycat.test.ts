@@ -1,8 +1,9 @@
 // Copycat's inference and the dashboard's event stream. No chain access: observations are built by hand.
 import { afterEach, describe, expect, it } from "vitest";
 import type { Observation } from "../lib/bot.js";
-import { describe as describeTx, infer, parseMemo } from "../lib/copycat.js";
+import { attributeVault, describe as describeTx, infer, parseMemo } from "../lib/copycat.js";
 import { startDashboard, type Dashboard } from "../lib/dashboard.js";
+import { approvalBroker, askApproval } from "@blindfold/wallet";
 
 const AGENT = "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU";
 const OTHER = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
@@ -51,6 +52,50 @@ describe("infer", () => {
   it("describes each transaction the way Copycat reads it", () => {
     expect(describeTx(pay(AGENT, "whale-flow/SOL", 0))).toBe("7xKX...gAsU paid the feed $0.05 for whale-flow on SOL");
     expect(describeTx({ kind: "vault_payout", signature: "p", slot: 2, time: null, from: "v", to: "f", amountBase: 150_000n })).toContain("Payer: unknown");
+    expect(describeTx({ kind: "vault_payout", signature: "p", slot: 2, time: null, from: "v", to: "f", amountBase: 100_000n }, { f: "NewsWire" }))
+      .toBe("Blindfold vault paid NewsWire $0.10 in a batch. Payer: unknown");
+  });
+});
+
+describe("attributeVault", () => {
+  const THIRD = "Hq1UVvYt4dBq3ZBfN7ZtFvr8a2YWzN7GbmJ1cCh5r6Rv";
+  const dep = (from: string, amountBase = 1_000_000n): Observation => ({ kind: "vault_deposit", signature: `d${slot}`, slot: slot++, time: null, from, to: "vault", amountBase });
+  const out = (amountBase: bigint): Observation => ({ kind: "vault_payout", signature: `p${slot}`, slot: slot++, time: null, from: "vault", to: "feed", amountBase });
+
+  it("links a lone depositor to the payout but never names a token", () => {
+    const r = attributeVault([dep(AGENT), out(150_000n)]);
+    expect(r).toMatchObject({ action: "LINKED", payouts: 1, payoutBase: 150_000n, forced: [] });
+    expect(r.reason).toContain("Only 7xKX...gAsU deposited");
+    expect(r.reason).toContain("Which token it researched: unknown");
+  });
+
+  it("cannot attribute one payout to any of several equal depositors", () => {
+    const r = attributeVault([dep(AGENT), dep(OTHER), dep(THIRD), out(600_000n)]);
+    expect(r).toMatchObject({ action: "CANNOT ATTRIBUTE", equalDeposits: true, forced: [] });
+    expect(r.depositors).toHaveLength(3);
+    expect(r.reason).toBe("3 wallets deposited the same $1.00 each, and 1 payout ($0.60) could be any mix of their purchases. Who bought what, and which token anyone researched: unknown.");
+  });
+
+  it("counts repeat deposits per wallet", () => {
+    const r = attributeVault([dep(AGENT, 500_000n), dep(AGENT, 500_000n), dep(OTHER), out(100_000n)]);
+    expect(r.depositors.find((d) => d.wallet === AGENT)).toMatchObject({ deposits: 2, totalBase: 1_000_000n });
+    expect(r).toMatchObject({ action: "CANNOT ATTRIBUTE", equalDeposits: true });
+  });
+
+  it("gives away a depositor when amounts leave no other explanation", () => {
+    // The two small deposits together hold $0.20, so a $0.50 payout must include the big depositor's money.
+    const r = attributeVault([dep(AGENT, 5_000_000n), dep(OTHER, 100_000n), dep(THIRD, 100_000n), out(500_000n)]);
+    expect(r).toMatchObject({ action: "PARTIAL", equalDeposits: false, forced: [AGENT] });
+    expect(r.reason).toContain("Amounts give it away");
+  });
+
+  it("does not link a payout to anyone when no deposit is in view", () => {
+    expect(attributeVault([out(100_000n)])).toMatchObject({ action: "NO SIGNAL", depositors: [], forced: [] });
+  });
+
+  it("reports nothing before a payout and ignores direct payments", () => {
+    expect(attributeVault([dep(AGENT), dep(OTHER)]).action).toBe("NO SIGNAL");
+    expect(attributeVault([pay(AGENT, "whale-flow/SOL", 0)])).toMatchObject({ action: "NO SIGNAL", depositors: [] });
   });
 });
 
@@ -77,6 +122,11 @@ describe("dashboard", () => {
     return events;
   }
 
+  it("serves the crowd page when asked", async () => {
+    d = await startDashboard({ port: 0, page: "crowd.html" });
+    expect(await (await fetch(d.url)).text()).toContain("<title>Blindfold crowd</title>");
+  });
+
   it("serves the page and replays every event to a late subscriber, then streams new ones", async () => {
     d = await startDashboard({ port: 0 });
     expect(await (await fetch(d.url)).text()).toContain("<title>Blindfold</title>");
@@ -86,5 +136,19 @@ describe("dashboard", () => {
     setTimeout(() => d!.emit({ type: "done", ok: true }), 100);
     const got = await pending;
     expect(got.map((e) => [e.seq, e.type])).toEqual([[1, "act"], [2, "copycat"], [3, "done"]]);
+  });
+
+  it("passes the owner's Approve click to the wallet's approval broker; only JSON, only pending ids", async () => {
+    const b = approvalBroker();
+    d = await startDashboard({ port: 0, onApproval: (id, ok) => b.resolve(id, ok) });
+    const answer = askApproval(b.approver, { id: "a1", cents: 25, url: "u", provider: "p", thresholdCents: 20, timeoutMs: 5000 });
+    const post = (id: string, body: string, type = "application/json") =>
+      fetch(`${d!.url}/approval/${id}`, { method: "POST", headers: { "content-type": type }, body }).then((r) => r.status);
+    expect(await post("a1", "approve=true", "application/x-www-form-urlencoded")).toBe(415);
+    expect(await post("a1", JSON.stringify({ approve: "yes" }))).toBe(400);
+    expect(await post("nope", JSON.stringify({ approve: true }))).toBe(404);
+    expect(await post("a1", JSON.stringify({ approve: true }))).toBe(200);
+    expect(await answer).toBe("approved");
+    expect(await post("a1", JSON.stringify({ approve: false }))).toBe(404);
   });
 });

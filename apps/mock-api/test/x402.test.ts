@@ -29,8 +29,10 @@ describe("402 challenge", () => {
     p = await startProvider();
     const a = await challenge(`${p.url}/v1/data/sol`);
     const b = await challenge(`${p.url}/v1/data/sol/depth`);
+    const c = await challenge(`${p.url}/v1/data/sol/signals`);
     expect(a.pr.accepts[0].amount).toBe("50000");
     expect(b.pr.accepts[0].amount).toBe("100000");
+    expect(c.pr.accepts[0].amount).toBe("250000");
   });
   it("health is free and pubkey is 66 lowercase hex", async () => {
     p = await startProvider();

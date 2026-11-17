@@ -64,6 +64,7 @@ export function loadWalletEnv(env: Env = process.env) {
     USDC_MINT: solana.USDC_MINT,
     TOKEN_FILE: nonEmpty.default("./tokens.json"),
     MAX_PER_CALL_CENTS: int(10, 1),
+    APPROVAL_OVER_CENTS: int(20, 0),
     WALLET_ALLOWLIST: pubkeyList,
   }, env);
 }
