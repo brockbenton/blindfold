@@ -1,5 +1,7 @@
 # Blindfold
 
+**[Watch a recorded devnet run](https://brockbenton.github.io/blindfold/)** in your browser: the demo's dashboard and narration, nothing to install.
+
 **Every time your agent pays for data with standard x402, it publishes what it's researching onchain.** Blindfold lets it pay per call without a public record.
 
 Data vendors such as CoinGecko, CoinMarketCap, Birdeye and Messari already sell market data per request over x402. With the standard `exact` scheme, each call is a USDC transfer from the agent's wallet to the provider. Anyone reading Solana sees which wallet bought which feed, how often and when. A burst of purchases about one token is a trading signal that copy-trading bots can act on before the agent does. Finance already pays to hide intent: dark pools exist so large orders don't move the price. [Why Blindfold](docs/why-blindfold.md) has the evidence, use cases and landscape.
@@ -29,7 +31,7 @@ The real-vault path additionally needs Rust 1.89.0, Anchor 1.2.2 and Solana tool
 
 ## What works
 
-`pnpm demo` runs "Copycat vs. your trading agent" on Solana devnet with real transactions. Your agent researches SOL with standard x402 `exact` and Copycat, a bot reading only public Solana data, turns its payments into "BUY SOL". The same research paid with Blindfold gives Copycat no signal. Then an AI agent reads a poisoned feed whose prompt injection points it at an attacker, and its tokens cannot pay the attacker; a 25-cent purchase waits for the owner to approve it on the dashboard. A local dashboard shows both sides live. See [Run the demo](docs/DEMO.md).
+`pnpm demo` runs "Copycat vs. your trading agent" on Solana devnet with real transactions. Your agent researches SOL with standard x402 `exact` and Copycat, a bot reading only public Solana data, turns its payments into "BUY SOL". The same research paid with Blindfold gives Copycat no signal. Then an AI agent reads a poisoned feed whose prompt injection points it at an attacker, and its tokens cannot pay the attacker; a 25-cent purchase waits for the owner to approve it on the dashboard. A local dashboard shows both sides live, and a [recorded run](https://brockbenton.github.io/blindfold/) replays it on the web. See [Run the demo](docs/DEMO.md).
 
 | Component | Current behavior |
 |---|---|
@@ -104,7 +106,7 @@ Setup steps are in [Run the demo](docs/DEMO.md#quicknode-streams-optional).
 | Document | Contents |
 |---|---|
 | [Run it locally](docs/RUNNING.md) | Installation, PostgreSQL, services, CLI and tests |
-| [Run the demo](docs/DEMO.md) | One-command devnet demo, `exact` comparison, Copycat, dashboard |
+| [Run the demo](docs/DEMO.md) | One-command devnet demo, `exact` comparison, Copycat, dashboard, recorded replay |
 | [Why Blindfold](docs/why-blindfold.md) | The problem, evidence, use cases, landscape and pitch lines |
 | [MVP and add-ons](docs/mvp.md) | Implemented scope and planned work |
 | [Design](docs/design.md) | Flow, trust, privacy and future options |

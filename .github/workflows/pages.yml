@@ -1,0 +1,40 @@
+# Publishes the replay page (scripts/dashboard/replay.html and the committed recording) to GitHub Pages.
+name: pages
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/dashboard/**
+      - scripts/lib/replaySite.ts
+      - scripts/lib/dashboard.ts
+      - scripts/replay.ts
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter @blindfold/scripts...
+      - run: pnpm replay --site "$GITHUB_WORKSPACE/site"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

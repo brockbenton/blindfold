@@ -73,6 +73,7 @@ The demo pauses before each act; press Enter to continue. It ends with Solana Ex
 | `--calls N` | Paid calls per payment method (default 3) |
 | `--window S` | Settlement window and hold in seconds (10 to 600, default 30). Act 4 waits for the first window at least one hold after the last call, so up to two windows |
 | `--localnet` | Rehearsal on a throwaway local validator with fresh keys; needs `anchor build` and the Solana tools, spends no devnet funds. `LOCALNET_PORT` runs it beside another validator |
+| `--record FILE` | Also save the dashboard events and terminal narration, with timestamps, for the [replay page](#recorded-replay) |
 
 A run takes a few minutes, longer on the public RPC. Each run deposits $1.00 of devnet USDC (most of it stays in the vault backing the agent's unspent tokens), pays $0.15 through `exact` and spends about 0.01 SOL in fees. Before the run it tops up the facilitator's SOL from the deployer and the `exact` agent's USDC from the owner when they run low.
 
@@ -132,12 +133,33 @@ What it does not hide, and says so at the end: transfers that fund the owners fr
 
 **For the video:** keep `pnpm demo` as the main story and record `pnpm crowd` as a short separate clip after Act 5, answering "but there is only one user", with the crowd dashboard on screen. A flag on the main demo would add five acts to an already long run.
 
+## Recorded replay
+
+The replay page plays a recorded run through the same dashboard, with the terminal narration for each act beside it, so judges can watch a real run without installing anything: **https://brockbenton.github.io/blindfold/**
+
+**Publish a new devnet recording** with one command, once the demo passes:
+
+```sh
+npx -y pnpm@10.33.0 replay:publish
+```
+
+It runs the devnet demo without pauses (same keys, costs and one-at-a-time rule as `pnpm demo`; extra options such as `--calls 3` pass through), checks that the run finished on devnet, commits it as `scripts/dashboard/recording.json` and pushes the current branch. The `pages` workflow redeploys the page when that commit reaches `main`. A failed run publishes nothing.
+
+| Command | Effect |
+|---|---|
+| `pnpm demo --record FILE` | Record without publishing; add `--localnet` for a rehearsal |
+| `pnpm replay [FILE]` | Preview FILE (default: the published recording) at http://localhost:5174 |
+| `pnpm replay --site DIR` | Write the static site that the workflow deploys |
+
+On the page: Space plays and pauses, the arrow keys jump between acts, and the bar under the dashboard has one segment per act. `?act=3`, `?speed=2` and `?autoplay=0` set the start. Waits longer than 2.5 seconds, such as chain confirmations and Copycat's polling, are shortened in playback, and an act too short to read its narration holds for a few seconds at its end; everything else plays as recorded. The Explorer links open the real transactions (in a localnet recording they point at a local validator). Controls that act on a live run are inert.
+
 ## Recording tips
 
 - Use a terminal at least 100 columns wide with a large font, and the dashboard in a browser window beside it.
 - Do one run before recording, so dependencies are warm and balances are topped up.
 - Keep the Explorer tabs from the final summary open for the walkthrough.
 - Record a backup run as soon as one passes.
+- To film the replay instead, open it with `?autoplay=0` in a 1600x900 window and press Space.
 
 ## Troubleshooting
 
