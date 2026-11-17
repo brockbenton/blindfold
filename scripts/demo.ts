@@ -59,6 +59,7 @@ import { startDashboard, type Dashboard, type DashboardEvent } from "./lib/dashb
 import { exactPayFetch, paymentResponse } from "./lib/exactClient.js";
 import { explorerAddress, explorerTx } from "./lib/explorer.js";
 import { startRecorder } from "./lib/recorder.js";
+import { acquireSettleLock } from "./lib/settleLock.js";
 import { act, blank, bold, cyan, dim, green, kv, link, magenta, ok, pause, red, say, short, step, usd, warn, yellow } from "./lib/narrate.js";
 
 // ---------------------------------------------------------------------------------------------------- options
@@ -326,6 +327,8 @@ async function main() {
   if (!localnet && !process.env.SOLANA_RPC_URL) say(yellow("Using the public devnet RPC, which rate-limits heavily. For a smooth recording set SOLANA_RPC_URL to a free Helius or QuickNode devnet URL (docs/DEMO.md)."));
   blank();
   step("setting up");
+  // One settlement writer per vault: refuse to start while `pnpm serve` (or another demo) settles for it.
+  if (!localnet) { try { cleanups.push(acquireSettleLock(KEYS, "pnpm demo")); } catch (e) { fail((e as Error).message); } }
   const cast = localnet ? await localCast() : await devnetCast();
   const { rpc, connection, programId, usdcMint } = cast;
   const vaultToken = vaultAta(usdcMint, programId);
