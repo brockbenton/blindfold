@@ -115,6 +115,11 @@ describe("dashboard", () => {
     return events;
   }
 
+  it("serves the crowd page when asked", async () => {
+    d = await startDashboard({ port: 0, page: "crowd.html" });
+    expect(await (await fetch(d.url)).text()).toContain("<title>Blindfold crowd</title>");
+  });
+
   it("serves the page and replays every event to a late subscriber, then streams new ones", async () => {
     d = await startDashboard({ port: 0 });
     expect(await (await fetch(d.url)).text()).toContain("<title>Blindfold</title>");
