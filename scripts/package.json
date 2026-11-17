@@ -11,7 +11,9 @@
     "demo": "tsx demo.ts",
     "bot": "tsx bot.ts",
     "crowd": "tsx crowd.ts",
-    "streams:setup": "tsx streams-setup.ts"
+    "streams:setup": "tsx streams-setup.ts",
+    "replay": "tsx replay.ts",
+    "replay:publish": "tsx replay.ts publish"
   },
   "dependencies": {
     "@blindfold/protocol": "workspace:*",

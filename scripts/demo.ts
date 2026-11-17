@@ -9,6 +9,7 @@
 //   pnpm demo --calls 3        paid calls per payment method (1-10, default 3)
 //   pnpm demo --window 30      settlement window and hold in seconds (10-600, default 30)
 //   pnpm demo --no-dashboard   skip the live dashboard (default http://localhost:5173)
+//   pnpm demo --record FILE    also save the dashboard events and narration for the replay page (pnpm replay FILE)
 //   pnpm demo --no-streams     Copycat polls RPC instead of reading the QuickNode Stream
 //
 // Act 6 uses an LLM agent when LLM_API_KEY or .keys/llm.key is set (LLM_BASE_URL and LLM_MODEL override Gemini).
@@ -22,7 +23,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
@@ -57,6 +58,7 @@ import { loadApiKey } from "./lib/streams.js";
 import { startDashboard, type Dashboard, type DashboardEvent } from "./lib/dashboard.js";
 import { exactPayFetch, paymentResponse } from "./lib/exactClient.js";
 import { explorerAddress, explorerTx } from "./lib/explorer.js";
+import { startRecorder } from "./lib/recorder.js";
 import { act, blank, bold, cyan, dim, green, kv, link, magenta, ok, pause, red, say, short, step, usd, warn, yellow } from "./lib/narrate.js";
 
 // ---------------------------------------------------------------------------------------------------- options
@@ -64,7 +66,10 @@ import { act, blank, bold, cyan, dim, green, kv, link, magenta, ok, pause, red, 
 const argv = process.argv.slice(2);
 const localnet = argv.includes("--localnet");
 const pausing = !argv.includes("--no-pause");
-const withDashboard = !argv.includes("--no-dashboard");
+const recordArg = argv.indexOf("--record");
+if (recordArg >= 0 && !/^[^-]/.test(argv[recordArg + 1] ?? "")) throw new Error("--record needs a file name");
+const recorder = recordArg >= 0 ? startRecorder({ file: resolve(process.env.INIT_CWD ?? process.cwd(), argv[recordArg + 1]) }) : null;
+const withDashboard = !argv.includes("--no-dashboard") || recorder !== null;
 const withStreams = !argv.includes("--no-streams");
 const callsArg = argv.indexOf("--calls");
 const CALLS = callsArg >= 0 ? Number(argv[callsArg + 1]) : 3;
@@ -419,7 +424,7 @@ async function main() {
     onDone: (r, outcome) => emit({ type: "approval_done", id: r.id, outcome }),
   });
   if (withDashboard) {
-    dash = dashboard = await startDashboard({ port: await pickPort(5173), onApproval: (id, yes) => approvals.resolve(id, yes) });
+    dash = dashboard = await startDashboard({ port: await pickPort(5173), onApproval: (id, yes) => approvals.resolve(id, yes), onEmit: recorder?.event });
     cleanups.push(() => dash!.close());
   }
   const emit = (e: DashboardEvent) => dash?.emit(e);
@@ -853,4 +858,5 @@ try {
   dashboard?.emit({ type: "done", ok: false });
 }
 await cleanup();
+if (recorder) { recorder.stop(); recorder.save(); console.log(dim(`Recording saved to ${argv[recordArg + 1]}; preview it with: pnpm replay ${argv[recordArg + 1]}`)); }
 process.exit(failed ? 1 : 0);

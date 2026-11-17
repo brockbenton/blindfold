@@ -1,5 +1,6 @@
 // Live dashboard for the demo: serves one static page and streams demo events to it over Server-Sent Events.
-// Every event is kept, so a browser opened (or reloaded) mid-run replays the story so far.
+// Every event is kept, so a browser opened (or reloaded) mid-run replays the story so far. The page's renderer is
+// shared with the replay page (scripts/dashboard/replay.html), which plays a recording of these events.
 import { readFileSync } from "node:fs";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
@@ -17,6 +18,7 @@ export type DashboardEvent =
   | { type: "approval"; id: string; cents: number; thresholdCents: number; label: string; timeoutS: number }
   | { type: "approval_done"; id: string; outcome: "approved" | "denied" | "timeout" }
   | { type: "done"; ok: boolean };
+// New event types are fine: the page ignores types it has no handler for (see scripts/dashboard/dashboard.js).
 
 export interface Dashboard<E extends { type: string } = DashboardEvent> {
   url: string;
@@ -26,19 +28,31 @@ export interface Dashboard<E extends { type: string } = DashboardEvent> {
   close(): Promise<void>;
 }
 
-const read = (file: string) => readFileSync(new URL(`../dashboard/${file}`, import.meta.url), "utf8");
+export const DASHBOARD_DIR = new URL("../dashboard/", import.meta.url);
+const TYPES: Record<string, string> = { html: "text/html; charset=utf-8", js: "text/javascript; charset=utf-8", css: "text/css; charset=utf-8", json: "application/json" };
+/** Files shared by the live dashboard and the replay page. */
+export const SHARED_ASSETS = ["dashboard.css", "dashboard.js"];
+
+/** Serves a file from scripts/dashboard/ (read per request, so edits show on reload). */
+export function serveAsset(app: Hono, path: string, file: string | URL) {
+  const type = TYPES[String(file).split(".").pop()!] ?? "application/octet-stream";
+  app.get(path, (c) => c.body(readFileSync(typeof file === "string" ? new URL(file, DASHBOARD_DIR) : file), 200, { "content-type": type, "cache-control": "no-store" }));
+}
 
 /**
  * `page` is a file in scripts/dashboard (default index.html, the main demo's page); `pnpm crowd` serves crowd.html.
  * `onApproval` receives the owner's Approve/Deny clicks; it returns false when the request is no longer pending.
+ * `onEmit` sees every event as it is emitted (the demo's recorder for the replay page).
  */
 export async function startDashboard<E extends { type: string } = DashboardEvent>(o: {
   port: number; hostname?: string; page?: string; onApproval?: (id: string, approve: boolean) => boolean;
+  onEmit?: (e: E & { seq: number }) => void;
 }): Promise<Dashboard<E>> {
   const history: (E & { seq: number })[] = [];
   const listeners = new Set<(e: E & { seq: number }) => void>();
   const app = new Hono();
-  app.get("/", (c) => c.html(read(o.page ?? "index.html")));
+  serveAsset(app, "/", o.page ?? "index.html");
+  for (const f of SHARED_ASSETS) serveAsset(app, `/${f}`, f);
   // JSON only: a cross-site form cannot send it without a CORS preflight, which this server never answers.
   app.post("/approval/:id", async (c) => {
     if (!c.req.header("content-type")?.startsWith("application/json")) return c.json({ error: "json only" }, 415);
@@ -71,6 +85,7 @@ export async function startDashboard<E extends { type: string } = DashboardEvent
     emit(e) {
       const ev = { ...e, seq: history.length + 1 };
       history.push(ev);
+      o.onEmit?.(ev);
       for (const l of listeners) l(ev);
     },
     close: () => new Promise<void>((r) => { (server as unknown as { closeAllConnections?: () => void }).closeAllConnections?.(); server.close(() => r()); }),
