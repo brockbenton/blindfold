@@ -1,6 +1,6 @@
 // The demo feed's data: deterministic per token and internally consistent.
 import { describe, expect, it } from "vitest";
-import { depthData, marketData } from "../src/data/marketData.js";
+import { depthData, marketData, signalsData } from "../src/data/marketData.js";
 
 describe("token data feed", () => {
   it("is deterministic and keeps the 00 section 7.5 fields", () => {
@@ -23,5 +23,16 @@ describe("token data feed", () => {
     expect(d.bids[0].price).toBeLessThan(marketData("sol").price);
     expect(d.asks[0].price).toBeGreaterThan(marketData("sol").price);
     expect(d.spread_bps).toBeGreaterThan(0);
+  });
+
+  it("derives the premium signal from whale flow, deterministically", () => {
+    for (const t of ["sol", "btc", "eth", "bonk"]) {
+      const s = signalsData(t);
+      const flow = marketData(t).whale_netflow;
+      expect(s.signal).toBe(flow > 20_000 ? "BUY" : flow < -20_000 ? "SELL" : "HOLD");
+      expect(s.confidence).toBeGreaterThanOrEqual(0.55);
+      expect(s.confidence).toBeLessThanOrEqual(0.9);
+      expect(signalsData(t)).toEqual(s);
+    }
   });
 });

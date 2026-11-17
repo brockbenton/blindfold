@@ -1,5 +1,6 @@
 // LLM decision loop (05-agent.md, LLM mode). The model chooses which data to buy and decides; code enforces the
-// limits around every paid call: the reserve gate (fail closed), a session budget and a step limit. Payment refusals
+// limits around every paid call: the reserve gate (fail closed), a session budget and a step limit. The wallet adds
+// owner approval for purchases above its threshold; the model cannot skip it because it is not a tool. Payment refusals
 // go back to the model as tool results, so a refused hijack attempt costs nothing and the run continues.
 //
 // Any OpenAI-compatible chat completions endpoint works (Gemini's, Groq's, OpenAI's...), called with plain fetch.
@@ -65,6 +66,7 @@ export const SYSTEM_PROMPT = [
   "You are a crypto trading research agent. Your owner gives you a goal and a budget of prepaid tokens.",
   "Use list_providers to find data providers, then buy_data to buy the data you need. Each purchase costs a few cents.",
   "Buy only what you need: usually the whale flow first, then order-book depth if it helps.",
+  "Premium trade signals cost more; a purchase above your owner's approval limit waits for the owner, who may refuse it.",
   "When you have enough information, call final_answer with BUY, SELL or HOLD and a short rationale (one or two sentences).",
 ].join(" ");
 
@@ -75,7 +77,7 @@ const TOOLS: ToolSpec[] = [
     type: "function",
     function: {
       name: "buy_data",
-      description: "Buy one data response with a paid HTTP GET. Whale flow: <provider url>/v1/data/<token>. Order-book depth: <provider url>/v1/data/<token>/depth.",
+      description: "Buy one data response with a paid HTTP GET. Whale flow: <provider url>/v1/data/<token>. Order-book depth: <provider url>/v1/data/<token>/depth. Premium trade signals: <provider url>/v1/data/<token>/signals.",
       parameters: { type: "object", properties: { url: { type: "string", description: "Full URL to GET" } }, required: ["url"] },
     },
   },
@@ -206,7 +208,8 @@ export async function runLlm(tools: Tools, o: LlmOptions): Promise<LlmRunResult>
         } catch (e) {
           if (e instanceof PaymentRefused) {
             record({ tool: "buy_data", args, outcome: "refused", paidCents: 0, reason: e.reason });
-            return { refused: e.reason, detail: "the wallet refused to pay; nothing was spent" };
+            const owner = e.reason === "approval_denied" || e.reason === "approval_timeout";
+            return { refused: e.reason, detail: owner ? "your owner did not approve this purchase; nothing was spent. Do not retry it." : "the wallet refused to pay; nothing was spent" };
           }
           if (e instanceof HttpError) {
             record({ tool: "buy_data", args, outcome: "error", paidCents: 0, reason: `http_${e.status}` });

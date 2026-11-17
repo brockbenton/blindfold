@@ -70,3 +70,21 @@ export function depthData(topic: string): DepthData {
   const spread_bps = Math.round(((asks[0].price - bids[0].price) / base) * 10_000 * 10) / 10;
   return { topic, feed: "depth", bids, asks, spread_bps, as_of: AS_OF };
 }
+
+export interface SignalsData {
+  topic: string;
+  feed: "signals";
+  signal: "BUY" | "SELL" | "HOLD";
+  /** 0 to 1. */
+  confidence: number;
+  horizon: "1h";
+  as_of: number;
+}
+
+/** The premium route: a trade signal derived from whale flow. Priced above the demo wallet's approval threshold. */
+export function signalsData(topic: string): SignalsData {
+  const m = marketData(topic);
+  const r = seed(`${topic}/signals`);
+  const signal = m.whale_netflow > 20_000 ? "BUY" : m.whale_netflow < -20_000 ? "SELL" : "HOLD";
+  return { topic, feed: "signals", signal, confidence: Math.round((0.55 + r() * 0.35) * 100) / 100, horizon: "1h", as_of: AS_OF };
+}
