@@ -18,4 +18,4 @@ These references provide background on x402 and Cashu. They are not a security a
 - The provider redeems before serving data. This prevents an unspent-looking token from buying data twice, but a lost response can leave a paid customer without data.
 - The agent's reserve check fails closed on errors. It relies on mint-reported issuance, so a dishonest mint can defeat it by understating liabilities.
 
-These controls have tests; none justifies claims that funds cannot be drained, activity cannot be watched, or a leaked token is useless. The mint is custodial, signing helpers are non-constant-time, and deployment authorities remain trusted. See [limits and trust](../README.md#limits-and-trust).
+These controls have tests; none justifies claims that funds cannot be drained, activity cannot be watched, or a leaked token is useless. The mint is custodial, signing helpers are non-constant-time, and deployment authorities remain trusted. See [security model and limitations](../README.md#security-model-and-limitations).
