@@ -106,6 +106,7 @@ export function withPublicUrl(app: Hono, publicUrl: string): (req: Request) => R
     const u = new URL(req.url);
     u.protocol = base.protocol;
     u.host = base.host;
+    u.port = base.port; // the host setter keeps the old port when the new host has none
     return app.fetch(new Request(u, req));
   };
 }
