@@ -1,5 +1,6 @@
 // Live dashboard for the demo: serves one static page and streams demo events to it over Server-Sent Events.
-// Every event is kept, so a browser opened (or reloaded) mid-run replays the story so far.
+// Every event is kept, so a browser opened (or reloaded) mid-run replays the story so far. The page's renderer is
+// shared with the replay page (scripts/dashboard/replay.html), which plays a recording of these events.
 import { readFileSync } from "node:fs";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
@@ -14,6 +15,7 @@ export type DashboardEvent =
   | { type: "balances"; agentTokensCents: number; exactWalletBase: string; providerDirectBase: string; providerSettledBase: string; providerOwedCents: number; vaultBase: string }
   | { type: "note"; side: "exact" | "blindfold"; tone: "ok" | "warn"; text: string }
   | { type: "done"; ok: boolean };
+// New event types are fine: the page ignores types it has no handler for (see scripts/dashboard/dashboard.js).
 
 export interface Dashboard {
   url: string;
@@ -23,13 +25,23 @@ export interface Dashboard {
   close(): Promise<void>;
 }
 
-const page = () => readFileSync(new URL("../dashboard/index.html", import.meta.url), "utf8");
+export const DASHBOARD_DIR = new URL("../dashboard/", import.meta.url);
+const TYPES: Record<string, string> = { html: "text/html; charset=utf-8", js: "text/javascript; charset=utf-8", css: "text/css; charset=utf-8", json: "application/json" };
+/** Files shared by the live dashboard and the replay page. */
+export const SHARED_ASSETS = ["dashboard.css", "dashboard.js"];
 
-export async function startDashboard(o: { port: number; hostname?: string }): Promise<Dashboard> {
+/** Serves a file from scripts/dashboard/ (read per request, so edits show on reload). */
+export function serveAsset(app: Hono, path: string, file: string | URL) {
+  const type = TYPES[String(file).split(".").pop()!] ?? "application/octet-stream";
+  app.get(path, (c) => c.body(readFileSync(typeof file === "string" ? new URL(file, DASHBOARD_DIR) : file), 200, { "content-type": type, "cache-control": "no-store" }));
+}
+
+export async function startDashboard(o: { port: number; hostname?: string; onEmit?: (e: DashboardEvent & { seq: number }) => void }): Promise<Dashboard> {
   const history: (DashboardEvent & { seq: number })[] = [];
   const listeners = new Set<(e: DashboardEvent & { seq: number }) => void>();
   const app = new Hono();
-  app.get("/", (c) => c.html(page()));
+  serveAsset(app, "/", "index.html");
+  for (const f of SHARED_ASSETS) serveAsset(app, `/${f}`, f);
   app.get("/events", (c) =>
     streamSSE(c, async (stream) => {
       const queue: (DashboardEvent & { seq: number })[] = [...history];
@@ -55,6 +67,7 @@ export async function startDashboard(o: { port: number; hostname?: string }): Pr
     emit(e) {
       const ev = { ...e, seq: history.length + 1 };
       history.push(ev);
+      o.onEmit?.(ev);
       for (const l of listeners) l(ev);
     },
     close: () => new Promise<void>((r) => { (server as unknown as { closeAllConnections?: () => void }).closeAllConnections?.(); server.close(() => r()); }),
