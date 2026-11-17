@@ -338,7 +338,7 @@ async function main() {
     const direct = profiles(obs);
     check("bot sees the exact payer's wallet and both calls", direct.length === 1 && direct[0].payer === payer.address && direct[0].calls === 2, direct);
     const payouts = obs.filter((o) => o.kind === "vault_payout");
-    check("bot sees the cashu flow only as one vault payout, no payer", payouts.length === 1 && payouts[0].signature === s.json.tx, payouts);
+    check("bot sees the blindfold flow only as one vault payout, no payer", payouts.length === 1 && payouts[0].signature === s.json.tx, payouts);
   }
 
   log("\nE2E PASSED");

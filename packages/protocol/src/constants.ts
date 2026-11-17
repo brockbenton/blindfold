@@ -30,7 +30,7 @@ export const USDC_DEVNET_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
 export const DEFAULT_MINT_URL = "http://localhost:3338";
 
 export const X402_VERSION = 2;
-export const CASHU_SCHEME = "cashu";
+export const BLINDFOLD_SCHEME = "blindfold";
 /** CAIP-2 id for Solana devnet. */
 export const SOLANA_DEVNET_CAIP2 = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
 

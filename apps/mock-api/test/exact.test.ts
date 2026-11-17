@@ -33,7 +33,7 @@ afterEach(async () => { await p?.stop(); });
 describe("exact baseline routes", () => {
   it("are offered only when enabled", async () => {
     p = await startProvider();
-    expect((await challenge(`${p.url}/v1/data/sol`)).pr.accepts.map((a: any) => a.scheme)).toEqual(["cashu"]);
+    expect((await challenge(`${p.url}/v1/data/sol`)).pr.accepts.map((a: any) => a.scheme)).toEqual(["blindfold"]);
   });
 
   it("add a standard exact entry after cashu, paid to the provider wallet, fee payer from the facilitator", async () => {
@@ -41,7 +41,7 @@ describe("exact baseline routes", () => {
     for (const [path, amount] of [["/v1/data/sol", "50000"], ["/v1/data/sol/depth", "100000"]]) {
       const { res, pr } = await challenge(p.url + path);
       expect(res.status).toBe(402);
-      expect(pr.accepts.map((a: any) => a.scheme)).toEqual(["cashu", "exact"]);
+      expect(pr.accepts.map((a: any) => a.scheme)).toEqual(["blindfold", "exact"]);
       expect(pr.accepts[1]).toMatchObject({ scheme: "exact", network: SOLANA_DEVNET_CAIP2, asset: USDC_DEVNET_MINT, amount, payTo: PAY_TO, extra: { feePayer: FEE_PAYER } });
     }
   });

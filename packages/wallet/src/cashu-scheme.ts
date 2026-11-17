@@ -1,7 +1,7 @@
 import { getEncodedToken } from "@cashu/cashu-ts";
 import type { PaymentPayloadResult, PaymentRequirements, SchemeClientHooks, SchemeNetworkClient } from "@x402/core/types";
 import {
-  CASHU_SCHEME, CashuRequirementsError, fromWireProof, parseCashuRequirements, type WireProof,
+  BLINDFOLD_SCHEME, CashuRequirementsError, fromWireProof, parseCashuRequirements, type WireProof,
 } from "@blindfold/protocol";
 import type { ApprovalOutcome } from "./approval.js";
 import { PaymentRefused, type RefusalReason } from "./errors.js";
@@ -42,7 +42,7 @@ const normalizeMint = (u: string) => {
 const PARSE_REASON: Record<string, RefusalReason> = { wrong_unit: "unit" };
 
 export class CashuClientScheme implements SchemeNetworkClient {
-  readonly scheme = CASHU_SCHEME;
+  readonly scheme = BLINDFOLD_SCHEME;
   readonly schemeHooks: SchemeClientHooks;
 
   constructor(private host: SpendHost) {

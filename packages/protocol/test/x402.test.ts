@@ -6,7 +6,7 @@ import {
 const PK = "02" + "ab".repeat(32);
 const MINT = "http://localhost:3338";
 const req = (over: Record<string, unknown> = {}) => ({
-  scheme: "cashu", network: SOLANA_DEVNET_CAIP2, asset: USDC_DEVNET_MINT, amount: "50000", payTo: PK,
+  scheme: "blindfold", network: SOLANA_DEVNET_CAIP2, asset: USDC_DEVNET_MINT, amount: "50000", payTo: PK,
   extra: { ...cashuExtra({ mintUrl: MINT, providerPubkey: PK }), paymentFlow: "upfront" },
   ...over,
 });

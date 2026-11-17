@@ -50,8 +50,8 @@ export function createApp(o: AppOptions) {
   if (o.exact) resourceServer.register(SOLANA_DEVNET_CAIP2, new ExactSvmScheme());
   const route = (cents: number, description: string, memo?: string) => ({
     accepts: [
-      { scheme: "cashu", network: SOLANA_DEVNET_CAIP2, payTo: pubkey, price: { amount: String(centsToBaseUnits(cents)), asset } },
-      // Clients pick the scheme they have registered: the Blindfold wallet pays cashu, a standard x402 client exact.
+      { scheme: "blindfold", network: SOLANA_DEVNET_CAIP2, payTo: pubkey, price: { amount: String(centsToBaseUnits(cents)), asset } },
+      // Clients pick the scheme they have registered: the Blindfold wallet pays blindfold, a standard x402 client exact.
       ...(o.exact ? [{
         scheme: "exact", network: SOLANA_DEVNET_CAIP2, payTo: o.exact.payTo, price: { amount: String(centsToBaseUnits(cents)), asset },
         ...(memo ? { extra: { memo } } : {}),

@@ -10,7 +10,7 @@ describe("constants", () => {
     expect(p.MAX_DEPOSIT_CENTS).toBe(5000);
     expect(p.MAX_PAYOUTS_PER_BATCH).toBe(8);
     expect(p.X402_VERSION).toBe(2);
-    expect(p.CASHU_SCHEME).toBe("cashu");
+    expect(p.BLINDFOLD_SCHEME).toBe("blindfold");
     expect(p.SOLANA_DEVNET_CAIP2).toBe("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1");
     expect(p.SOLANA_COMMITMENT).toBe("confirmed");
   });

@@ -1,9 +1,9 @@
 import type { AssetAmount, Network, PaymentRequirements, Price, SchemeNetworkServer } from "@x402/core/types";
-import { CASHU_SCHEME, cashuExtra } from "@blindfold/protocol";
+import { BLINDFOLD_SCHEME, cashuExtra } from "@blindfold/protocol";
 
-/** x402 server scheme `cashu` (00 section 7.1). Prices are AssetAmounts in USDC base units. */
+/** x402 server scheme `blindfold` (00 section 7.1). Prices are AssetAmounts in USDC base units. */
 export class CashuServerScheme implements SchemeNetworkServer {
-  readonly scheme = CASHU_SCHEME;
+  readonly scheme = BLINDFOLD_SCHEME;
   readonly defaultAssetTransferMethod = "default";
   readonly paymentFlows = { default: { supported: ["upfront"], default: "upfront" } } as const;
 

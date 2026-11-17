@@ -31,7 +31,7 @@ Blindfold replaces the per-call transfer with **blind-signed ecash**. An owner d
 ### Key features
 
 - **No per-call onchain footprint.** Payments are HTTP headers, not transactions. The agent has no wallet and no onchain identity.
-- **Drop-in x402.** A custom x402 v2 scheme, `cashu`, served alongside or instead of `exact` on the same routes.
+- **Drop-in x402.** A custom x402 v2 scheme, `blindfold`, built on [Cashu](https://cashu.space) ecash and served alongside or instead of `exact` on the same routes.
 - **Spend controls the model can't bypass.** Tokens only pay registered providers. A per-call cap, a session budget, and owner approval for large purchases are all enforced in code, not in the prompt.
 - **Verifiable reserves.** Before paying, the agent reads the vault's USDC balance on Solana and refuses a mint that reports more liabilities than the vault holds.
 - **Onchain custody.** An Anchor program holds the funds and only pays registered provider accounts, in strictly sequential batches.
@@ -100,9 +100,9 @@ flowchart LR
 |---|---|---|
 | **Vault program** | [`programs/vault`](programs/vault) | Anchor program that holds deposited USDC, keeps the provider registry and pays sequential, capped batches to registered payout accounts. |
 | **Mint** | [`services/mint`](services/mint) | Cashu-style mint (HTTP + PostgreSQL). Confirms deposits, issues blind signatures, verifies provider signatures, rejects double spends, tracks balances and settles batches. |
-| **Wallet SDK + owner CLI** | [`packages/wallet`](packages/wallet) | x402 `cashu` client scheme. Funds provider-locked tokens, pays exact amounts, enforces caps and allowlists, runs the owner-approval hook and reconciles pending payments. |
+| **Wallet SDK + owner CLI** | [`packages/wallet`](packages/wallet) | x402 `blindfold` client scheme. Funds provider-locked tokens, pays exact amounts, enforces caps and allowlists, runs the owner-approval hook and reconciles pending payments. |
 | **Protocol** | [`packages/protocol`](packages/protocol) | Shared constants, environment loading, vault IDL and wire types. |
-| **Provider** | [`apps/mock-api`](apps/mock-api) | Example data feed (whale flow, order-book depth, premium signals). Serves x402 `cashu`, and optionally standard `exact` as a baseline. |
+| **Provider** | [`apps/mock-api`](apps/mock-api) | Example data feed (whale flow, order-book depth, premium signals). Serves x402 `blindfold`, and optionally standard `exact` as a baseline. |
 | **Agent** | [`agents/simple`](agents/simple) | Scripted or LLM-driven trading-research agent. See [Agent decision loop](#agent-decision-loop-and-safety-limits). |
 | **Copycat, demo and dashboard** | [`scripts`](scripts) | Adversary bot that reads only public Solana data, plus the narrated devnet demo, a live dashboard and the multi-owner crowd simulation. |
 | **Tests** | [`tests/integration`](tests/integration), `*/test` | Unit tests, a PostgreSQL integration suite and the LiteSVM program tests. |
@@ -150,7 +150,7 @@ PDAs: `Config` (`["config"]`), `DepositRecord` (`["deposit", u64]`), `ProviderRe
 
 ### What a watcher sees
 
-| | Standard x402 `exact` | Blindfold `cashu` |
+| | Standard x402 `exact` | Blindfold `blindfold` |
 |---|---|---|
 | Per data call | One USDC transfer: agent wallet → provider, with a memo naming the feed and token | No transaction |
 | Funding | — | One deposit into the shared vault |

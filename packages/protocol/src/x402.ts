@@ -1,4 +1,4 @@
-import { CASHU_SCHEME, CASHU_UNIT, SOLANA_DEVNET_CAIP2 } from "./constants.js";
+import { BLINDFOLD_SCHEME, CASHU_UNIT, SOLANA_DEVNET_CAIP2 } from "./constants.js";
 import { baseUnitsToCents } from "./units.js";
 import { isCompressedPubkeyHex } from "./lock.js";
 
@@ -56,7 +56,7 @@ export interface ParsedCashuRequirements {
 }
 
 export function parseCashuRequirements(req: PaymentRequirementsLike): ParsedCashuRequirements {
-  if (req.scheme !== CASHU_SCHEME) throw new CashuRequirementsError("wrong_scheme", `scheme is ${req.scheme}`);
+  if (req.scheme !== BLINDFOLD_SCHEME) throw new CashuRequirementsError("wrong_scheme", `scheme is ${req.scheme}`);
   if (req.network !== SOLANA_DEVNET_CAIP2) throw new CashuRequirementsError("wrong_network", `network is ${req.network}`);
   let cents: number;
   try {

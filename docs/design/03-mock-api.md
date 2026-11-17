@@ -1,6 +1,6 @@
 # 03: Mock paid API
 
-`apps/mock-api/` is a provider using the [x402 `cashu` handshake](00-interfaces.md#7-payment-handshake-x402-v2-scheme-cashu). It redeems payments online before serving deterministic token data: whale flow, order-book depth and premium trade signals, in the style of the Solana DeFi feeds that sell per call over x402. The demo calls it TokenFeed. [Runbook](../RUNNING.md#4-mock-api-and-owner-cli).
+`apps/mock-api/` is a provider using the [x402 `blindfold` handshake](00-interfaces.md#7-payment-handshake-x402-v2-scheme-blindfold). It redeems payments online before serving deterministic token data: whale flow, order-book depth and premium trade signals, in the style of the Solana DeFi feeds that sell per call over x402. The demo calls it TokenFeed. [Runbook](../RUNNING.md#4-mock-api-and-owner-cli).
 
 ## Configuration and routes
 
@@ -19,7 +19,7 @@ One Node 22+ process represents one provider. Required: `PROVIDER_SECRET_KEY` (3
 
 ## `exact` baseline
 
-For comparison only, the paid routes can also accept the standard x402 `exact` scheme (00 §7.1, add-on 1). With `exact` set, each challenge lists `cashu` first and an `exact` entry second, at the same price and asset; clients pay the scheme they registered. `exact` pays `EXACT_PAY_TO`, the provider's Solana wallet, through an in-process `@x402/svm` facilitator whose key (`EXACT_FACILITATOR_KEYPAIR`) pays fees and co-signs. The payer's transfer is public and names its wallet. The facilitator uses `SOLANA_RPC_URL` and retries RPC calls refused with HTTP 429. The CLI enables it only when both variables are set.
+For comparison only, the paid routes can also accept the standard x402 `exact` scheme (00 §7.1, add-on 1). With `exact` set, each challenge lists `blindfold` first and an `exact` entry second, at the same price and asset; clients pay the scheme they registered. `exact` pays `EXACT_PAY_TO`, the provider's Solana wallet, through an in-process `@x402/svm` facilitator whose key (`EXACT_FACILITATOR_KEYPAIR`) pays fees and co-signs. The payer's transfer is public and names its wallet. The facilitator uses `SOLANA_RPC_URL` and retries RPC calls refused with HTTP 429. The CLI enables it only when both variables are set.
 
 `ExactOptions.memoTopics` (for example `["sol"]`) adds one route per feed per listed token, ahead of the `:topic` routes, whose `exact` entry sets `extra.memo` to `whale-flow/SOL`, `depth/SOL` or `signals/SOL`. The payer's transaction then carries that memo onchain, as a seller's reconciliation tag would. Topics must be 1 to 16 lowercase letters or digits. The CLI does not set it; `pnpm demo` does.
 
@@ -27,7 +27,7 @@ For comparison only, the paid routes can also accept the standard x402 `exact` s
 
 ## Request flow
 
-1. `@x402/hono` returns 402 and `PAYMENT-REQUIRED` for an unpaid route. Requirements advertise `cashu`, the Solana devnet CAIP-2 identifier, the configured asset and base-unit price, provider Cashu pubkey, mint URL and `upfront` flow.
+1. `@x402/hono` returns 402 and `PAYMENT-REQUIRED` for an unpaid route. Requirements advertise `blindfold`, the Solana devnet CAIP-2 identifier, the configured asset and base-unit price, provider Cashu pubkey, mint URL and `upfront` flow.
 2. On the paid retry, the SDK matches requirements and calls the in-process `BlindfoldFacilitator.settle`. The `upfront` flow does not call `verify`; that method is only a structural decoder, not payment authorization.
 3. The facilitator validates the token, adds its provider signature and calls `POST /v1/blindfold/redeem`.
 4. Only successful redemption permits the route handler to run. The success response includes `PAYMENT-RESPONSE`; its `transaction` is a redemption ID, not a Solana payout signature.

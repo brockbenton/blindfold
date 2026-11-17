@@ -18,7 +18,7 @@ describe("402 challenge", () => {
     expect(pr.x402Version).toBe(2);
     expect(pr.accepts).toHaveLength(1);
     expect(pr.accepts[0]).toMatchObject({
-      scheme: "cashu", network: SOLANA_DEVNET_CAIP2, asset: USDC_DEVNET_MINT, amount: "50000", payTo: provider.pubkey,
+      scheme: "blindfold", network: SOLANA_DEVNET_CAIP2, asset: USDC_DEVNET_MINT, amount: "50000", payTo: provider.pubkey,
       extra: { mints: [MINT_URL], unit: "usd", nut10: { k: "P2PK", d: provider.pubkey }, paymentFlow: "upfront" },
     });
     expect(provider.pubkey).toBe(Buffer.from(getPubKeyFromPrivKey(Buffer.from(provider.sk, "hex"))).toString("hex"));
@@ -45,7 +45,7 @@ describe("402 challenge", () => {
   });
   it("getSupported lists exactly cashu on the devnet network", async () => {
     p = await startProvider();
-    expect(await p.app.facilitator.getSupported()).toEqual({ kinds: [{ x402Version: 2, scheme: "cashu", network: SOLANA_DEVNET_CAIP2 }], extensions: [], signers: {} });
+    expect(await p.app.facilitator.getSupported()).toEqual({ kinds: [{ x402Version: 2, scheme: "blindfold", network: SOLANA_DEVNET_CAIP2 }], extensions: [], signers: {} });
   });
   it("constructor rejects a bad key", () => {
     expect(() => new BlindfoldFacilitator({ mintUrl: MINT_URL, providerSecretKey: "abcd" })).toThrow();

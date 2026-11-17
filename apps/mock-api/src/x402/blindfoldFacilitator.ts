@@ -1,7 +1,7 @@
 import { getDecodedToken, getPubKeyFromPrivKey, signP2PKProofs } from "@cashu/cashu-ts";
 import type { FacilitatorClient } from "@x402/core/http";
 import type { PaymentPayload, PaymentRequirements, SettleResponse, SupportedResponse, VerifyResponse } from "@x402/core/types";
-import { CASHU_SCHEME, SOLANA_DEVNET_CAIP2, SettleErrorReason as R, redeemFailedReason, toWireProof } from "@blindfold/protocol";
+import { BLINDFOLD_SCHEME, SOLANA_DEVNET_CAIP2, SettleErrorReason as R, redeemFailedReason, toWireProof } from "@blindfold/protocol";
 import { HttpKeysetSource, type KeysetSource } from "./keysets.js";
 import { HttpRedeemClient, MintUnavailableError, RedeemError, type RedeemClient } from "./redeemClient.js";
 import { verifyToken } from "./verifyToken.js";
@@ -41,7 +41,7 @@ export class BlindfoldFacilitator implements FacilitatorClient {
   }
 
   async getSupported(): Promise<SupportedResponse> {
-    return { kinds: [{ x402Version: 2, scheme: CASHU_SCHEME, network: NET }], extensions: [], signers: {} };
+    return { kinds: [{ x402Version: 2, scheme: BLINDFOLD_SCHEME, network: NET }], extensions: [], signers: {} };
   }
 
   /** Not called in the upfront flow. Structural check only: the token decodes. */

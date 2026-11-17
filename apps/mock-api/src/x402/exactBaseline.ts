@@ -1,5 +1,5 @@
 // Baseline for comparison: the standard x402 `exact` scheme on Solana (@x402/svm). Every paid call is its own public
-// USDC transfer from the payer's wallet to the provider. Blindfold's `cashu` routes are unaffected.
+// USDC transfer from the payer's wallet to the provider. Blindfold's `blindfold` routes are unaffected.
 import { readFileSync } from "node:fs";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { x402Facilitator } from "@x402/core/facilitator";
