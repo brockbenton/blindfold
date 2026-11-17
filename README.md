@@ -103,12 +103,17 @@ flowchart LR
 | **Wallet SDK + owner CLI** | [`packages/wallet`](packages/wallet) | x402 `blindfold` client scheme. Funds provider-locked tokens, pays exact amounts, enforces caps and allowlists, runs the owner-approval hook and reconciles pending payments. |
 | **Protocol** | [`packages/protocol`](packages/protocol) | Shared constants, environment loading, vault IDL and wire types. |
 | **Provider** | [`apps/mock-api`](apps/mock-api) | Example data feed (whale flow, order-book depth, premium signals) built from live Coinbase market data, with a deterministic fallback. Serves x402 `blindfold`, and optionally standard `exact` as a baseline. |
+| **Gateway** | [`apps/gateway`](apps/gateway) | Blindfold provider that resells existing x402 `exact` vendors, buying from them with one shared wallet. See [Gateway](docs/design/06-gateway.md). |
 | **Agent** | [`agents/simple`](agents/simple) | Scripted or LLM-driven trading-research agent. See [Agent decision loop](#agent-decision-loop-and-safety-limits). |
 | **MCP server** | [`agents/mcp`](agents/mcp) | The same tools and limits for Claude Desktop and other MCP clients, with owner approval through elicitation. |
 | **Copycat, demo and dashboard** | [`scripts`](scripts) | Adversary bot that reads only public Solana data, plus the narrated devnet demo, a live dashboard and the multi-owner crowd simulation. |
 | **Tests** | [`tests/integration`](tests/integration), `*/test` | Unit tests, a PostgreSQL integration suite and the LiteSVM program tests. |
 
 Wire formats, account layouts, HTTP APIs and configuration are specified in [Interfaces](docs/design/00-interfaces.md).
+
+### Working with existing x402 vendors
+
+Vendors don't have to adopt Blindfold. The [gateway](docs/design/06-gateway.md) is a registered Blindfold provider that resells existing x402 `exact` endpoints: an agent pays the gateway privately with tokens, and the gateway buys the same call from the vendor with one wallet shared by all its agents. It checks the vendor's price before taking payment, never forwards the agent's headers, IP or query, and is paid out by the vault into the same wallet it buys with. Onchain, the vendor's payments come from the gateway, so a watcher can't tell which agent asked; the purchase itself and any vendor memo stay visible. On devnet it resells the mock feed as a stand-in vendor (`pnpm gateway:setup`, then `pnpm gateway`), since real vendors sell for mainnet USDC.
 
 ---
 
@@ -354,6 +359,6 @@ The vault deployment and a full devnet acceptance run on November 16, 2026 are r
 | [Why Blindfold](docs/why-blindfold.md) | Problem, evidence, use cases and landscape |
 | [Design](docs/design.md) | End-to-end flow, trust, privacy and future options |
 | [Interfaces](docs/design/00-interfaces.md) | Wire formats, accounts, HTTP APIs and configuration |
-| Component designs | [Vault](docs/design/01-vault.md) · [Mint](docs/design/02-mint.md) · [Provider](docs/design/03-mock-api.md) · [Wallet](docs/design/04-wallet-sdk.md) · [Agent](docs/design/05-agent.md) |
+| Component designs | [Vault](docs/design/01-vault.md) · [Mint](docs/design/02-mint.md) · [Provider](docs/design/03-mock-api.md) · [Wallet](docs/design/04-wallet-sdk.md) · [Agent](docs/design/05-agent.md) · [Gateway](docs/design/06-gateway.md) |
 | [MVP and add-ons](docs/mvp.md) · [Plan](docs/plan.md) | Implemented scope, roadmap and remaining work |
 | [Security sources](docs/security-sources.md) | External references and their relevance |

@@ -77,6 +77,43 @@ importers:
         specifier: 4.13.18
         version: 4.13.18
 
+  apps/gateway:
+    dependencies:
+      '@blindfold/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@hono/node-server':
+        specifier: 2.1.8
+        version: 2.1.8(hono@4.13.18)
+      '@solana/kit':
+        specifier: 8.6.0
+        version: 8.6.0(bufferutil@4.2.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@7.0.2)(utf-8-validate@6.0.6)
+      '@x402/core':
+        specifier: 2.31.0
+        version: 2.31.0
+      '@x402/fetch':
+        specifier: 2.31.0
+        version: 2.31.0
+      '@x402/hono':
+        specifier: 2.31.0
+        version: 2.31.0(bufferutil@4.2.0)(hono@4.13.18)(typescript@7.0.2)(utf-8-validate@6.0.6)
+      '@x402/svm':
+        specifier: 2.31.0
+        version: 2.31.0(@solana/kit@8.6.0(bufferutil@4.2.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@7.0.2))(@solana/sysvars@8.6.0(fastestsmallesttextencoderdecoder@1.0.22)(typescript@7.0.2))(fastestsmallesttextencoderdecoder@1.0.22)(typescript@7.0.2)
+      hono:
+        specifier: 4.13.18
+        version: 4.13.18
+      mock-api:
+        specifier: workspace:*
+        version: link:../mock-api
+    devDependencies:
+      '@blindfold/testkit':
+        specifier: workspace:*
+        version: link:../../packages/testkit
+      '@cashu/cashu-ts':
+        specifier: 4.13.1
+        version: 4.13.1
+
   apps/mock-api:
     dependencies:
       '@blindfold/protocol':
@@ -2341,7 +2378,7 @@ snapshots:
 
   '@adraffy/ens-normalize@1.11.1': {}
 
-  '@anchor-lang/borsh@1.2.2(@solana/web3.js@1.99.0(bufferutil@4.2.0)(typescript@7.0.2)(utf-8-validate@6.0.6))':
+  '@anchor-lang/borsh@1.2.2(@solana/web3.js@1.99.0(bufferutil@4.2.0)(typescript@7.0.2))':
     dependencies:
       '@solana/web3.js': 1.99.0(bufferutil@4.2.0)(typescript@7.0.2)(utf-8-validate@6.0.6)
       bn.js: 5.2.5
@@ -2349,7 +2386,7 @@ snapshots:
 
   '@anchor-lang/core@1.2.2(bufferutil@4.2.0)(typescript@7.0.2)(utf-8-validate@6.0.6)':
     dependencies:
-      '@anchor-lang/borsh': 1.2.2(@solana/web3.js@1.99.0(bufferutil@4.2.0)(typescript@7.0.2)(utf-8-validate@6.0.6))
+      '@anchor-lang/borsh': 1.2.2(@solana/web3.js@1.99.0(bufferutil@4.2.0)(typescript@7.0.2))
       '@anchor-lang/errors': 1.2.2
       '@noble/hashes': 1.8.0
       '@solana/web3.js': 1.99.0(bufferutil@4.2.0)(typescript@7.0.2)(utf-8-validate@6.0.6)
@@ -3805,7 +3842,7 @@ snapshots:
 
   isexe@2.0.0: {}
 
-  isomorphic-ws@4.0.1(ws@7.5.14(bufferutil@4.2.0)(utf-8-validate@6.0.6)):
+  isomorphic-ws@4.0.1(ws@7.5.14(bufferutil@4.2.0)):
     dependencies:
       ws: 7.5.14(bufferutil@4.2.0)(utf-8-validate@6.0.6)
 
@@ -3822,7 +3859,7 @@ snapshots:
       delay: 5.0.0
       es6-promisify: 5.0.0
       eyes: 0.1.8
-      isomorphic-ws: 4.0.1(ws@7.5.14(bufferutil@4.2.0)(utf-8-validate@6.0.6))
+      isomorphic-ws: 4.0.1(ws@7.5.14(bufferutil@4.2.0))
       json-stringify-safe: 5.0.1
       stream-json: 1.9.1
       uuid: 8.3.2
