@@ -4,41 +4,31 @@
 
 ## Implemented MVP
 
-The target is a paid API call backed by a real Solana vault: owner deposit, token issuance, agent payment, replay rejection, provider settlement and a fail-closed reserve check.
+An owner deposits USDC into the vault and funds a token file. The agent checks reserves and pays for data. The mint rejects replays, tracks provider balances and pays them in sequential Solana batches.
 
 | Component | Implemented behavior |
 |---|---|
-| Vault | `initialize`, `deposit`, `register_provider`, `deactivate_provider`, `settle_batch` |
-| Mint | Blind signing, DLEQ, spent set, provider balances, deposit polling and settlement recovery |
-| Mock paid API | x402 v2 `blindfold` challenge, online redemption before serving data |
-| Wallet and owner CLI | Provider-locked funding, exact-sum payments, per-call cap, owner approval above a threshold and pending-payment recovery |
-| Scripted agent | Provider discovery, topic selection, reserve gate and result reporting |
+| Vault | USDC custody, deposit records, provider registration and deactivation, batch settlement, cumulative issuance log. |
+| Mint | Blind signing with DLEQ, online redemption, spent-proof tracking, provider balances, settlement recovery and periodic issuance logging. Vault-owned records are the source of deposit credit. |
+| Provider | x402 v2 `blindfold` on three paid routes. TokenFeed uses live Coinbase data by default in the standalone API, demo and live stack, with a deterministic fallback. Optional `exact` payments provide the comparison. |
+| Wallet and owner CLI | Provider-locked funding, exact-sum selection, payment and recovery checkpoints, per-call cap and owner approval above a configurable threshold. |
+| Agent | Scripted and LLM research loops with automatic reserve checks. The LLM loop also limits turns and blocks further purchases once the session spend threshold is reached. |
 
-The [vault notes](design/01-vault.md#10-implementation-notes-and-decisions) record localnet and devnet acceptance on November 16, 2026. The reproducible acceptance command is `pnpm --filter @blindfold/scripts e2e` with a deployed vault, funded devnet keys and PostgreSQL. Local tests exercise the same application components with a fake chain; they do not prove current devnet availability.
+The [vault deployment notes](design/01-vault.md#10-implementation-notes-and-decisions) record the November 16 devnet acceptance run and the November 17 issuance-log upgrade. The real-vault acceptance procedure covers funding, paid access, replay rejection, settlement, reconciliation and an underfunded reserve report. See [real-vault checks](RUNNING.md#7-real-vault-checks).
 
-Acceptance requires:
+## Implemented add-ons
 
-1. The owner deposits USDC and receives tokens.
-2. The agent buys data after checking onchain reserves.
-3. A replay is rejected without a second provider credit.
-4. `settle_batch` pays the provider in USDC.
-5. Reconciliation matches the isolated test's deposits and payouts.
-6. The agent refuses payment when reported liabilities exceed the vault balance.
+- `pnpm demo` compares `exact` with Blindfold and shows owner approval, a hostile feed response, replay rejection and a failed reserve check. `pnpm crowd` demonstrates the effect of equal and uneven deposit amounts on inference.
+- QuickNode Streams feeds Copycat and can trigger an immediate deposit poll. The mint also polls during funding. See [Stream configuration](../README.md#quicknode-streams-configuration).
+- `pnpm serve` runs the persistent devnet mint and feeds. The [public replay](https://brockbenton.github.io/blindfold/) and [vault history page](https://brockbenton.github.io/blindfold/vault/) are hosted on GitHub Pages.
+- The [gateway](design/06-gateway.md) resells TokenFeed's `exact` routes on devnet using a shared wallet. The [MCP server](../agents/mcp/README.md) exposes provider discovery, quotes, purchases and reserve reports, with owner approval through elicitation when supported.
 
-## Add-ons
+## Planned or deferred
 
-Planned, in priority order. Existing hooks and tests are not complete demos.
+- Protocol-level owner co-signing. Current approval runs inside the wallet process.
+- Durable top-ups through Temporal. Current funding uses persisted checkpoints.
+- Independent public reconciliation of the mint's full books. Vault history shows public transactions and issuance totals. Mint-side reconciliation requires admin access.
+- Provider revenue privacy. The mint already batches and rounds payouts, and registered payout destinations remain public.
+- Refunds, swap/change, key rotation, transport anonymity and mainnet deployment.
 
-1. **Copycat and baseline comparison.** Implemented: the mock API accepts standard x402 `exact` alongside `blindfold` when configured, Copycat (`scripts/bot.ts`) reports what a chain observer sees and infers trading signals, and `pnpm demo` compares both with a live dashboard; `pnpm crowd` shows that several equal depositors and one payout cannot be attributed ([demo](DEMO.md)). Copycat reads a QuickNode Stream, with token account polling as the fallback.
-2. **LLM agent and prompt-injection demo.** Implemented: `agent --llm` runs a model-driven decision loop with code-enforced limits ([agent](design/05-agent.md#llm-decision-loop)), and `pnpm demo` Act 6 poisons a feed response with an injection pointing at an attacker; payment to the unregistered attacker is refused. Not yet shown: an allowed provider consuming the whole budget.
-3. **QuickNode Stream.** Implemented for Copycat: a `solana-devnet` block Stream with a checked-in filter and a webhook into `pnpm demo` and `pnpm bot`, created by `pnpm streams:setup` ([README](../README.md#quicknode-streams-configuration)). A Stream `DepositMade` also triggers an immediate mint deposit poll (never a credit).
-4. **Owner approval.** Implemented in the wallet: a price above `APPROVAL_OVER_CENTS` waits for the owner (terminal prompt, the demo dashboard, denial on timeout), and `pnpm demo` Act 6 shows it ([agent](design/05-agent.md#owner-approval)). Not yet: a protocol-level co-signed reserve pocket that a compromised agent process could not bypass; current 1-of-N locks and redemption validation do not support it.
-5. **Temporal top-up.** Recover multi-step funding through a durable workflow; do not equate the current checkpoint files with exactly-once execution.
-6. **Onchain issuance log and reconciliation view.** Implemented: the vault's `IssuanceLog` PDA holds the mint's cumulative issued total (only grows) and a settled total advanced by `settle_batch`; the agent's reserve check uses it. Built and tested on localnet; the devnet program still needs the upgrade. Not done: a public reconciliation view.
-7. **Hidden provider revenue.** Partly implemented: fixed settlement windows, a hold and rounded payouts ([settlement privacy](design/02-mint.md#46-settlement-privacy)). Not done: hiding which provider earned, which needs fresh payout accounts and a new registry trust model.
-
-Cut lower-priority add-ons first. Refunds, key rotation, Tor/OHTTP and standard Cashu-wallet support are deferred. Mainnet, multiple mint operators and an onchain escape hatch are outside the current scope.
-
-## Submission checklist
-
-Document the decision loop, spending limits, program ID, deployment evidence and threat model. The README's [QuickNode Streams](../README.md#quicknode-streams-configuration) section covers the Stream's network, dataset, filter and destination, and states that the mint still polls.
+The [delivery plan](plan.md#remaining-work) covers the submission checks.

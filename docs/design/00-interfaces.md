@@ -14,8 +14,8 @@ Owner CLI ──deposit(amount, deposit_ref)──▶ Vault program (Solana devn
     │ NUT-04/20 quote + mint (blinded)           │   ▼ (polled)
     └──────────────────────────────▶ Mint ◀──────┘  settle_batch
                                       ▲  ▲
-         cashuB token file            │  │ POST /v1/blindfold/redeem
-Owner ───────────────▶ Agent ─ Wallet SDK ─x402 v2, scheme cashu─▶ Mock API
+         JSON token file            │  │ POST /v1/blindfold/redeem
+Owner ───────────────▶ Agent ─ Wallet SDK ─x402 v2, scheme blindfold─▶ Mock API
 ```
 
 | Step | From → To | Interface |
@@ -24,10 +24,11 @@ Owner ───────────────▶ Agent ─ Wallet SDK ─x
 | 2. Deposit | Owner → Vault | `deposit` instruction (§4.3) |
 | 3. Detect | Mint → Vault | Poll `Config.deposit_count` + `DepositRecord` (§6) |
 | 4. Issue | Owner → Mint | `POST /v1/mint/solana-usdc` with locked blinded outputs (§5.4, §3.3) |
-| 5. Hand over | Owner → Agent | `cashuB` token file (§3.4) |
+| 5. Hand over | Owner → Agent | JSON token file (§3.4) |
 | 6. Pay | Agent (wallet SDK) → Mock API | x402 v2 `PAYMENT-REQUIRED` / `PAYMENT-SIGNATURE`, scheme `blindfold` (§7) |
 | 7. Redeem | Mock API (x402 settle) → Mint | `POST /v1/blindfold/redeem` (§5.6) |
-| 8. Settle | Mint → Vault | `settle_batch` instruction (§4.3) |
+| 8. Log | Mint → Vault | `init_issuance_log` and `log_issuance` publish cumulative issuance (§4.3) |
+| 9. Settle | Mint → Vault | `settle_batch` instruction (§4.3) |
 
 ## 2. Constants and conventions
 
@@ -39,7 +40,8 @@ Owner ───────────────▶ Agent ─ Wallet SDK ─x
 | Keyset amounts | `1, 2, 4, ... 4096` (2^0 to 2^12) | One active keyset, `input_fee_ppk = 0` |
 | `MAX_DEPOSIT_CENTS` | `5000` ($50) | Default per-deposit cap; vault uses configured `max_deposit`, quotes enforce 5000 cents |
 | `QUOTE_EXPIRY_S` | `3600` | Payment deadline only (NUT-04) |
-| `DEPOSIT_POLL_MS` | `2000` | |
+| `DEPOSIT_POLL_MS` | `2000` | Mint polling interval |
+| `ISSUANCE_LOG_MS` | `5000` | Mint issuance publishing interval. Zero disables the timer |
 | `SETTLE_INTERVAL_S` | `600` | Settlement window; runs fire at UTC multiples of it |
 | `SETTLE_HOLD_S` | `SETTLE_INTERVAL_S` | Cents redeemed more recently are not paid in a run |
 | `SETTLE_UNIT_CENTS` | `10` | Payouts round down to a multiple; the remainder carries over |
@@ -49,15 +51,15 @@ Owner ───────────────▶ Agent ─ Wallet SDK ─x
 | Mint URL | `http://localhost:3338` | Configurable via `MINT_URL` |
 | x402 version | `2` | |
 | x402 scheme | `blindfold` | **[BF]** custom scheme |
-| x402 network | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | CAIP-2 id for Solana devnet (`SOLANA_DEVNET_CAIP2` in `@x402/svm`) |
-| x402 packages | `@x402/core`, `@x402/hono`, `@x402/fetch` `2.31.x` | Versions the spike used |
+| x402 network | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | CAIP-2 ID for Solana devnet (`SOLANA_DEVNET_CAIP2` in `@blindfold/protocol`) |
+| x402 packages | `@x402/core`, `@x402/hono`, `@x402/fetch`, `@x402/svm` `2.31.0` | Versions pinned by the workspace |
 
 Keys:
 
 | Key | Curve | Held by | Used for |
 |---|---|---|---|
-| Admin keypair | ed25519 | Team | `initialize`, `register_provider` |
-| Mint authority keypair | ed25519 | Mint server | Signing `settle_batch` |
+| Admin keypair | ed25519 | Team | `initialize`, `register_provider`, `deactivate_provider` |
+| Mint authority keypair | ed25519 | Mint server | Signing `settle_batch`, `init_issuance_log` and `log_issuance` |
 | Mint keyset private keys | secp256k1 | Mint server | Blind signatures, derived from `MINT_SEED` |
 | Owner keypair | ed25519 | Owner | Paying the deposit |
 | Quote key (per quote) | secp256k1 | Owner | NUT-20 quote lock. Fresh per quote |
@@ -99,7 +101,7 @@ Every token the owner issues is locked with a [NUT-11](https://cashubtc.github.i
 | Signer set | `data` plus every `pubkeys` entry |
 | `n_sigs` | Always `1` (omit `pubkeys` and `n_sigs` when N = 1) |
 | `sigflag` | Always `SIG_INPUTS`. The mint rejects `SIG_ALL` in the MVP |
-| `locktime`, `refund` | Not used in the MVP. Reserved for the expiry add-on |
+| `locktime`, `refund` | Rejected by the mint |
 | Allowlist | **One global list for all owners** (all active providers), sorted ascending by hex. Every owner's tokens then share one lock shape, to avoid owner-specific signer sets; timing and amounts can still correlate redemptions. An owner who wants to pay fewer providers restricts the agent in code (`WALLET_ALLOWLIST`, §9), not in the lock |
 | Provider set changes | New tokens use the current list. Old tokens stay valid for any key in their own lock that is still active |
 
@@ -109,7 +111,7 @@ The mint cannot see the lock at issuance (outputs are blinded). Locking is the o
 
 ### 3.4 Encoded tokens
 
-`cashuB` V4 tokens per [NUT-00](https://cashubtc.github.io/nuts/00), via `getEncodedToken` / `getDecodedToken`. Used in the x402 payment payload (`payload.token`, §7.2) and in the agent's token file.
+`cashuB` V4 tokens per [NUT-00](https://cashubtc.github.io/nuts/00), via `getEncodedToken` / `getDecodedToken`. Used in the x402 payment payload (`payload.token`, §7.2). The local token file stores proof objects.
 
 **Agent token file [BF]:** a JSON file the owner CLI writes and the agent's wallet SDK reads and rewrites:
 
@@ -135,7 +137,7 @@ Anchor 1.x. **Configured classic SPL mint; the intended deployment uses six-deci
 | `ProviderRecord` | `["provider", provider_id.to_le_bytes()]` (u32) | `provider_id: u32`, `cashu_pubkey: [u8; 33]`, `payout_token: Pubkey`, `active: bool`, `bump: u8` |
 | `IssuanceLog` | `["issuance"]` | `issued: u64`, `settled: u64` (cumulative base units), `seq: u64`, `updated_slot: u64`, `updated_at: i64`, `bump: u8`. Added after the first devnet deployment as a separate account, so `Config` and existing accounts keep their layout |
 
-No reserved padding: on devnet we redeploy instead of migrating. `deposit_count`, `provider_count` and `last_batch_id` start at 0. The first deposit has index 0, the first provider id 0, the first batch id 1.
+Account layouts have no reserved padding. The issuance log uses a separate PDA. `deposit_count`, `provider_count` and `last_batch_id` start at 0. The first deposit has index 0, the first provider id 0, the first batch id 1.
 
 ### 4.2 Types
 
@@ -150,7 +152,7 @@ pub struct Payout { pub provider_id: u32, pub amount: u64 } // amount in base un
 | `initialize` | `mint_authority: Pubkey, max_deposit: u64` | admin | `admin` (signer, mut), `config` (init), `usdc_mint`, `vault_token` (init ATA), `token_program`, `associated_token_program`, `system_program` | Creates `Config` and the vault ATA |
 | `deposit` | `amount: u64, deposit_ref: [u8; 32]` | depositor | `depositor` (signer, mut), `config` (mut), `deposit_record` (init, seed = current `deposit_count`), `depositor_token` (mut), `vault_token` (mut), `usdc_mint`, `token_program`, `system_program` | `amount > 0`, `amount % 10_000 == 0`, `amount <= max_deposit`. Transfers USDC to the vault, writes `DepositRecord`, increments `deposit_count`, emits `DepositMade` |
 | `register_provider` | `cashu_pubkey: [u8; 33], payout_token: Pubkey` | admin | `admin` (signer, mut), `config` (mut), `provider_record` (init, seed = current `provider_count`), `payout_token_account` (must equal `payout_token`, mint = `config.usdc_mint`), `system_program` | `cashu_pubkey[0]` is `0x02` or `0x03`. Writes `ProviderRecord` with `active = true`, increments `provider_count`, emits `ProviderRegistered` |
-| `deactivate_provider` | `provider_id: u32` | admin | `admin` (signer), `config`, `provider_record` (mut, PDA for `provider_id`) | Sets `active = false`, emits `ProviderDeactivated`. One way: no reactivation in the MVP (register a new record instead, after deactivation; the old balance is not migrated) |
+| `deactivate_provider` | `provider_id: u32` | admin | `admin` (signer), `config`, `provider_record` (mut, PDA for `provider_id`) | Sets `active = false` and emits `ProviderDeactivated` on the first call. Later calls are no-ops. Re-registering uses a new record and leaves the old balance attached to the old ID |
 | `settle_batch` | `batch_id: u64, payouts: Vec<Payout>` | mint authority | `mint_authority` (signer), `config` (mut), `vault_token` (mut), `usdc_mint`, `token_program`; then `remaining_accounts` as pairs `[provider_record, payout_token (mut)]`, one pair per payout, same order, optionally followed by `issuance_log` (mut) | `vault_token == config.vault_token`; `batch_id == last_batch_id + 1`; `1 <= payouts.len() <= 8`; no `provider_id` twice; each `amount > 0` and `amount % 10_000 == 0`; each `provider_record` is the PDA for `provider_id`, is active, and its `payout_token` equals the passed account. Transfers each amount, sets `last_batch_id = batch_id`, emits `BatchSettled`. With the trailing `issuance_log` (must be the `["issuance"]` PDA, program-owned, writable, else `IssuanceLogMismatch`), adds the batch total to its `settled` |
 | `init_issuance_log` | `issued: u64, settled: u64` | mint authority | `mint_authority` (signer, mut, pays rent), `config` (`has_one = mint_authority`), `issuance_log` (init, `["issuance"]`), `system_program` | Both whole cents, `issued >= settled` (`IssuanceBelowSettled`). Creates the log with `seq = 0`, emits `IssuanceLogged`. One time only. `settled` is a baseline for batches paid before the log existed, checkable against past `BatchSettled` events |
 | `log_issuance` | `add: u64` | mint authority | `mint_authority` (signer), `config` (`has_one = mint_authority`), `issuance_log` (mut) | Whole cents. `issued += add` (an atomic add: mints sharing the vault cannot overwrite each other; `MathOverflow` on overflow); the result must be `>= settled` (`IssuanceBelowSettled`). Increments `seq`, records slot and time, emits `IssuanceLogged` |
@@ -163,7 +165,7 @@ Two deposits built against the same `deposit_count` collide on the `DepositRecor
 
 ### 4.4 Events
 
-Emitted with `emit!`. The mint does **not** rely on events (section 6). Copycat's QuickNode Stream filter (`scripts/streams/copycat-filter.js`) decodes `DepositMade` from the `Program data:` log line (8-byte discriminator `sha256("event:DepositMade")[0..8]`, then the Borsh fields) and reports it; Copycat's signals come from USDC balance changes, not events.
+Emitted with `emit!`. The mint credits deposits from accounts (§6). Events can trigger a poll. Copycat's QuickNode Stream filter (`scripts/streams/copycat-filter.js`) decodes `DepositMade` from the `Program data:` log line (8-byte discriminator `sha256("event:DepositMade")[0..8]`, then the Borsh fields) and reports it; Copycat's signals come from USDC balance changes, not events.
 
 | Event | Fields |
 |---|---|
@@ -190,7 +192,7 @@ Base URL `MINT_URL`. JSON bodies. Errors use the Cashu shape `{"detail": string,
 | `GET /v1/info` | [NUT-06](https://cashubtc.github.io/nuts/06) | `nuts`: `4` with method `solana-usdc`, unit `usd`, `min_amount: 1`, `max_amount: 5000`; `5` disabled; `7`, `10`, `11`, `12`, `20` `{"supported": true}` |
 | `GET /v1/keys`, `GET /v1/keys/{keyset_id}` | NUT-01 | |
 | `GET /v1/keysets` | NUT-02 | Lists **all** keysets, including inactive ones. The mint signs only with the active keyset; redemption also requires available private keys; this implementation loads only the seed-derived active keyset. Rotation is not supported |
-| `POST /v1/checkstate` | NUT-07 | `{"Ys": [hex]}` → `{"states": [{"Y", "state": "UNSPENT"|"SPENT", "witness": null}]}` |
+| `POST /v1/checkstate` | NUT-07 | `{"Ys": [hex]}` (up to 1,000 strings) → `{"states": [{"Y", "state": "UNSPENT"\"|"SPENT", "witness": null}]}` |
 
 **[BF] Not offered in the MVP:** `POST /v1/swap` (NUT-03) and melt (NUT-05). Without swap, locked tokens can only leave the system through `/v1/blindfold/redeem`.
 
@@ -318,7 +320,7 @@ Header `Authorization: Bearer <MINT_ADMIN_TOKEN>`. `401 {"detail":"unauthorized"
 | Endpoint | Response |
 |---|---|
 | `GET /v1/blindfold/admin/balances` | `[{ "provider_id": 0, "balance": 15 }]` (cents, unsettled; positive balances only) |
-| `POST /v1/blindfold/admin/settle` | Runs one settlement now under the same hold and unit policy as the timer (at most 8 providers, largest payable amounts first; the rest wait for the next run). `{ "batch_id": 1, "payouts": [{ "provider_id": 0, "amount": 15 }], "tx": "<signature>" }` or `{ "batch_id": null }` if nothing is payable yet |
+| `POST /v1/blindfold/admin/settle` | Runs one settlement now under the same hold and unit policy as the timer (at most 8 providers, largest payable amounts first; the rest wait for the next run). `{ "batch_id": 1, "payouts": [{ "provider_id": 0, "amount": 10 }], "tx": "<signature>" }` or `{ "batch_id": null }` if nothing is payable yet |
 | `POST /v1/blindfold/admin/poll-deposits` | Polls deposits now (§6) and returns `{ "processed": n }`. A hint, e.g. from a QuickNode Stream `DepositMade`; joins a poll already in flight. Credits only from `DepositRecord` accounts |
 | `POST /v1/blindfold/admin/log-issuance` | Publishes cumulative issuance to the `IssuanceLog` now. `{ "result": "initialized" \| "logged" \| "unchanged" \| "deferred" \| "pending" \| "unsupported" }` (`deferred`: a batch is in flight, so the log is not created or joined yet; `pending`: a sent transaction is not confirmed yet; `unsupported`: the program predates the log) |
 | `GET /v1/blindfold/admin/reconcile` | `{ "vault_balance": c, "deposited": c, "issued": c, "redeemed": c, "settled": c }` (all cents). Lets tests check `vault_balance == deposited - settled` |
@@ -336,13 +338,13 @@ Every `DEPOSIT_POLL_MS`, at `confirmed` commitment:
 3. In one DB transaction per record: insert the deposit (unique on `index`), find the quote whose `request == deposit_ref`, add `amount / 10_000` to its `amount_paid`, bump `updated_at`, advance the cursor.
 4. A deposit with no matching quote is stored as unmatched. (Refunds are deferred.)
 
-A QuickNode Stream `DepositMade` event triggers this same poll immediately through `POST /v1/blindfold/admin/poll-deposits` (§5.7). It never credits a deposit by itself, because the mint credits only from vault-owned account state; a forged event causes at most an extra poll.
+When configured, the demo and standalone bot use a QuickNode Stream `DepositMade` event to trigger this same poll through `POST /v1/blindfold/admin/poll-deposits` (§5.7). It never credits a deposit by itself, because the mint credits only from vault-owned account state; a forged event causes at most an extra poll.
 
 ## 7. Payment handshake: x402 v2, scheme `blindfold`
 
 Headers, encodings and types are exactly [x402 v2 HTTP transport](https://github.com/x402-foundation/x402/blob/main/specs/transports-v2/http.md): `PAYMENT-REQUIRED` (server to client), `PAYMENT-SIGNATURE` (client to server) and `PAYMENT-RESPONSE` (server to client), each a base64-encoded JSON object. Only the scheme is ours.
 
-Prior art: [`x402-cashu`](https://github.com/orangerabbit-io/x402-cashu) carries sat-denominated Cashu over x402 as scheme `exact` on network `cashu:mainnet`. We share its payload shape (`payload.token`, `extra.mints`, `extra.unit`) but use our own scheme name, `blindfold`, rather than a generic `cashu`, because the payment is not interchangeable with standard Cashu: our value is Solana USDC, the lock is a required 1-of-N, and settlement is a redeem rather than a swap. Do not depend on that package (hackathon rule: no building on pre-existing projects).
+Prior art: [`x402-cashu`](https://github.com/orangerabbit-io/x402-cashu) carries sat-denominated Cashu over x402 as scheme `exact` on network `cashu:mainnet`. We share its payload shape (`payload.token`, `extra.mints`, `extra.unit`) but use our own scheme name, `blindfold`, rather than a generic `cashu`, because the payment is not interchangeable with standard Cashu: our value is Solana USDC, the lock is a required 1-of-N, and settlement is a redeem rather than a swap. Blindfold uses the x402 SDK directly.
 
 Use the SDKs rather than hand-rolling headers: `@x402/hono` `paymentMiddleware` + `x402ResourceServer` on the provider, `@x402/fetch` `wrapFetchWithPayment` + `x402Client` in the wallet.
 
@@ -355,7 +357,7 @@ An unpaid request gets `402` with `PAYMENT-REQUIRED` decoding to an x402 `Paymen
   "x402Version": 2,
   "resource": { "url": "http://localhost:4000/v1/data/sol", "description": "market data", "mimeType": "application/json" },
   "accepts": [{
-    "scheme": "cashu",
+    "scheme": "blindfold",
     "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
     "asset": "<USDC_MINT>",
     "amount": "50000",
@@ -392,7 +394,7 @@ The `cashuB` token (§3.4) holds proofs that:
 | Rule | Note |
 |---|---|
 | Come from a mint in `extra.mints`, unit `extra.unit` | |
-| Sum to **exactly** `amount / 10_000` cents | **[BF]** There is no change, so overpayment would be lost |
+| Sum to **exactly** `amount / 10_000` cents | **[BF]** The provider refuses underpayment and overpayment |
 | Each have `extra.nut10.d` in their signer set (§3.3) | A 1-of-N lock that includes the provider's key counts as a match |
 | Carry no witness | The provider adds its signature at settle |
 
@@ -402,7 +404,7 @@ The provider passes `x402ResourceServer` a **Blindfold facilitator**: an in-proc
 
 | Method | Behaviour |
 |---|---|
-| `getSupported()` | `{ kinds: [{ x402Version: 2, scheme: "cashu", network: <devnet CAIP-2> }], extensions: [], signers: {} }` |
+| `getSupported()` | `{ kinds: [{ x402Version: 2, scheme: "blindfold", network: <devnet CAIP-2> }], extensions: [], signers: {} }` |
 | `verify(payload, req)` | Structural checks only. Not called in the `upfront` flow; return `{ isValid: true }` if the token decodes |
 | `settle(payload, req)` | Decode token, run the §7.2 checks, sign every proof with the provider key (`signP2PKProofs`), call `POST /v1/blindfold/redeem` (§5.6). Return an x402 `SettleResponse` |
 
@@ -432,31 +434,32 @@ The mock provider is a token data feed in the style of the Solana DeFi feeds tha
 
 ```json
 { "topic": "sol", "feed": "whale-flow", "price": 114.1, "change_24h_pct": 0.9, "volume_24h": 33370933,
-  "whale_netflow": 14151, "window": "1h", "whale_buys": 7, "whale_sells": 3, "largest_trade_usd": 123456, "as_of": 1763166400 }
+  "whale_netflow": 14151, "window": "recent", "whale_buys": 7, "whale_sells": 3, "largest_trade_usd": 123456,
+  "as_of": 1763166400, "source": "live", "venue": "coinbase", "trades_window_s": 60 }
 ```
 
-`whale_netflow` is net USD bought by whale wallets over `window` (negative: net selling).
+`whale_netflow` is estimated net USD bought in the largest recent trades. A negative value indicates net selling.
 
 `GET /v1/data/:topic/depth` (order-book depth), default 10 cents: `{ topic, feed: "depth", bids: [{price, size}] x5, asks: [{price, size}] x5, spread_bps, as_of }`.
 
-`GET /v1/data/:topic/signals` (premium trade signal), default 25 cents, above the default approval threshold: `{ topic, feed: "signals", signal: "BUY" | "SELL" | "HOLD", confidence, horizon: "1h", as_of }`. The signal follows `whale_netflow` (above +20,000 BUY, below -20,000 SELL).
+`GET /v1/data/:topic/signals` (premium trade signal), default 25 cents, above the default approval threshold: `{ topic, feed: "signals", signal: "BUY" | "SELL" | "HOLD", confidence, horizon: "1h", as_of }`. Live signals use trade-count imbalance and the 24-hour trend.
 
-Fake, deterministic per topic. `GET /health` is free.
+The standalone feed, demo and live stack default to live data with a deterministic fallback. Responses identify the source. See [market data](03-mock-api.md#market-data) for the fields and fallback behavior. `GET /health` is free.
 
 **`exact` memos.** With the `exact` baseline, a provider may set x402's `extra.memo` on a route's `exact` entry; the payer's transaction then carries that text in an SPL Memo instruction, onchain. Sellers use memos to reconcile payments. The demo provider tags its listed tokens' routes `whale-flow/<TOKEN>`, `depth/<TOKEN>` and `signals/<TOKEN>` (`ExactOptions.memoTopics`); other `exact` payments carry the payer's random nonce memo. `blindfold` entries never carry a memo.
 
 ### 7.6 Agent reserve check [BF]
 
-Before its first paid call in a session, and again every `RESERVE_CHECK_EVERY` paid calls (default 10), the agent:
+The scripted CLI checks before call 1 and every `RESERVE_CHECK_EVERY` requests thereafter. The LLM loop and MCP count paid calls instead. The default interval is 10. Each check:
 
-1. Reads the vault token account (`vaultAta`, §4.1) balance from Solana RPC itself (`getTokenAccountBalance`, `confirmed`), and the `Config` account to confirm it is owned by the vault program and `usdc_mint` matches `USDC_MINT`.
+1. Validates the vault-owned `Config` account, its configured USDC mint and expected token account. Reads the vault balance over Solana RPC at `confirmed` commitment.
 2. Reads the `IssuanceLog` PDA if it exists (owner must be the vault program; `settled > issued` fails). Onchain liabilities = `floor((issued - settled) / 10_000)` cents.
 3. Fetches `GET /v1/blindfold/reserves` (§5.5a).
 4. Uses `outstanding = max(onchain, reported)`: a mint may have issued tokens it has not logged yet. Proceeds only if `floor(vault_balance / 10_000) >= outstanding` (count only whole cents; direct transfers may add sub-cent dust).
 
 The result carries `verified: true` when the log was read. Failure modes are **fail closed**: an RPC error, a bad or foreign log, or, when there is no log, a mint error. With a log, a mint error is reported in `note` and the check proceeds on the onchain number alone. Without a log, `note` says the liabilities are unverified.
 
-What the log proves: the mint's liability claim is public, timestamped and can only grow, so the mint cannot show the agent a smaller number than it published. What it doesn't prove: a mint can still issue tokens it never logs. That claim is now auditable, not impossible.
+The issuance total is cumulative. The reserve check uses at least the current onchain outstanding amount. The mint can still issue tokens without publishing them.
 
 ## 8. Shared TypeScript package: `packages/protocol`
 
@@ -467,10 +470,10 @@ Build this package before components that import its `dist/` output. The recursi
 | `constants` | Everything in §2 |
 | `types` | Re-exports `Proof`, `BlindedMessage`, etc. from `cashu-ts`; `TokenFile`, `ProviderInfo`, `RedeemRequest/Response`, `MintQuoteSolanaUsdcRequest/Response`, error code enum (§5) |
 | `lock` | `buildLockOptions(allowlist: string[]): P2PKOptions` (sorted, §3.3); `signerSet(secret: string): string[]` |
-| `x402` | `CASHU_SCHEME`, `SOLANA_DEVNET_CAIP2`; types `CashuExtra`, `CashuPayload` (`{ token }`); `parseCashuRequirements(req): { cents, mints, unit, providerPubkey }` (throws if `amount` is not whole cents or `payTo != nut10.d`); `cashuExtra({ mintUrl, providerPubkey })` |
+| `x402` | `BLINDFOLD_SCHEME`, `SOLANA_DEVNET_CAIP2`; types `CashuExtra`, `CashuPayload` (`{ token }`); `parseCashuRequirements(req): { cents, mints, unit, providerPubkey }` (throws if `amount` is not whole cents or `payTo != nut10.d`); `cashuExtra({ mintUrl, providerPubkey })` |
 | `units` | `centsToBaseUnits`, `baseUnitsToCents` (throws if not whole cents) |
-| `reserves` | `checkReserves({ connection, programId, usdcMint, mintUrl }): Promise<{ ok: boolean; vaultCents: number; outstandingCents: number; reason?: string }>` (§7.6) |
-| `vault` | PDA helpers (`configPda`, `depositPda(index)`, `providerPda(id)`, `vaultAta`), account decoders and instruction builders from the Anchor IDL (`@anchor-lang/core`) |
+| `reserves` | `checkReserves({ connection, programId, usdcMint, mintUrl }): Promise<ReserveCheckResult>`. Includes the vault balance, outstanding amount and verification status (§7.6) |
+| `vault` | PDA helpers (`configPda`, `depositPda(index)`, `providerPda(id)`, `issuancePda`, `vaultAta`), account decoders and instruction builders from the Anchor IDL (`@anchor-lang/core`) |
 | `env` | Zod-validated loader for §9 |
 
 The checked-in IDL is `packages/protocol/src/idl.ts`. After changing the vault, compare it with `target/idl/vault.json` from `anchor build`, including account order and signer/writable flags. The generated build output does not automatically update this TypeScript file.
@@ -492,7 +495,7 @@ class PaymentRefused extends Error { reason: RefusalReason }  // thrown before a
 class PaymentFailed extends Error { status: number; errorReason?: string } // paid retry not settled (after checkstate recovery). status is 402 for any settle failure (§7.3); errorReason only if the SDK surfaced it
 ```
 
-`payFetch` wraps `@x402/fetch` (§7.4). It returns non-402 responses unchanged and never throws for them. x402 wraps errors thrown inside a scheme ("Failed to create payment payload: ..."), and its spend controls refuse over-cap requests before our scheme runs; `payFetch` unwraps both into `PaymentRefused` (the latter as `over_cap`). `RefusalReason` includes `provider_not_allowed`, `provider_not_in_signer_set`, `over_cap`, `insufficient_balance`, `insufficient_exact`, `unit`, `mint`, `bad_request`, `approval_denied`, `approval_timeout`. `Approver` is `(req, signal) => Promise<boolean>`; see [04](04-wallet-sdk.md#owner-approval). Call `wallet.close()` when finished to release the file lock. If a payment was attempted, a non-2xx final response raises `PaymentFailed`; an unpaid non-402 response is returned unchanged.
+`payFetch` wraps `@x402/fetch` (§7.4). x402 wraps errors thrown inside a scheme ("Failed to create payment payload: ..."), and its spend controls refuse over-cap requests before our scheme runs; `payFetch` unwraps both into `PaymentRefused` (the latter as `over_cap`). `RefusalReason` includes `provider_not_allowed`, `provider_not_in_signer_set`, `over_cap`, `insufficient_balance`, `insufficient_exact`, `unit`, `mint`, `bad_request`, `approval_denied`, `approval_timeout`. `Approver` is `(req, signal) => Promise<boolean>`; see [04](04-wallet-sdk.md#owner-approval). Call `wallet.close()` when finished to release the file lock. If a payment was attempted, a non-2xx final response raises `PaymentFailed`; an unpaid non-402 response is returned unchanged.
 
 ## 9. Repo layout and configuration
 
@@ -502,11 +505,13 @@ pnpm workspace, TypeScript (ESM, Node 22+), Anchor workspace at the repo root.
 Anchor.toml
 programs/vault/        01: Anchor program
 services/mint/         02: mint server
-apps/mock-api/         03: mock paid API
+apps/mock-api/         03: paid data feed
+apps/gateway/          06: x402 gateway
 packages/protocol/     00: shared TS contract code
 packages/testkit/      shared test helpers (fake keyset, locked token issuance)
 packages/wallet/       04: wallet SDK + owner CLI
-agents/simple/         05: simple agent
+agents/simple/         05: CLI agent
+agents/mcp/            MCP stdio server
 config/providers.json  provider_id → name, url
 scripts/               devnet setup, e2e test, demo, Copycat (bot.ts), streams/ (QuickNode Stream filter)
 spikes/x402-cashu/     feasibility spike (reference only, not production code)
@@ -517,18 +522,25 @@ docker-compose.yml     Postgres
 | Env var | Used by |
 |---|---|
 | `SOLANA_RPC_URL` | all Solana clients |
-| `VAULT_PROGRAM_ID`, `USDC_MINT` | all Solana clients |
+| `VAULT_PROGRAM_ID`, `USDC_MINT` | Solana reserve, custody and settlement clients. Provider and gateway only need the asset |
 | `ADMIN_KEYPAIR` (path) | scripts |
-| `MINT_URL` | wallet, mock API, agent |
+| `MINT_URL` | Mint, owner CLI, mock API, gateway and CLI agent. Optional MCP override for discovery, keyset and reserve reads |
 | `DATABASE_URL`, `MINT_SEED` (32-byte hex), `MINT_AUTHORITY_KEYPAIR` (path), `MINT_ADMIN_TOKEN`, `PORT` (3338) | mint |
 | `PROVIDER_SECRET_KEY` (secp256k1 hex), `PROVIDER_ID`, `PRICE_CENTS` (5), `PORT` (4000), `PUBLIC_URL` (for x402 `resource.url`) | mock API |
 | `OWNER_KEYPAIR` (path) | owner CLI |
 | `RESERVE_CHECK_EVERY` (10) | agent; checks before calls 1, 11, 21, … by default |
 | `LLM_API_KEY`, `LLM_BASE_URL` (Gemini's OpenAI-compatible endpoint), `LLM_MODEL` (`gemini-3.5-flash-lite,gemini-flash-latest`) | agent `--llm` mode ([05](05-agent.md#llm-decision-loop)); `pnpm demo` also reads `.keys/llm.key` |
-| `MINT_DEV_FAKE_CHAIN` (`1` to enable), `PROVIDERS_FILE`, `DEPOSIT_POLL_MS`, `SETTLE_INTERVAL_S`, `SETTLE_HOLD_S`, `SETTLE_UNIT_CENTS` | mint; fake-chain mode is local development only |
-| `QUICKNODE_API_KEY` (or `.keys/quicknode.json`), `CLOUDFLARED`, `STREAMS_WEBHOOK_URL`, `STREAMS_PORT` | Copycat's QuickNode Stream in `pnpm demo`, `pnpm bot` and `pnpm streams:setup` |
+| `MINT_DEV_FAKE_CHAIN` (`1` to enable), `PROVIDERS_FILE`, `DEPOSIT_POLL_MS`, `SETTLE_INTERVAL_S`, `SETTLE_HOLD_S`, `SETTLE_UNIT_CENTS`, `ISSUANCE_LOG_MS` | mint; fake-chain mode is local development only |
+| `QUICKNODE_API_KEY` (or `.keys/quicknode.json`) | `pnpm demo`, `pnpm bot`, `pnpm streams:setup` |
+| `CLOUDFLARED` | Tunnel binary for demo, bot and live stack |
+| `STREAMS_WEBHOOK_URL`, `STREAMS_PORT` | Standalone bot with a custom webhook tunnel (local port defaults to 8787) |
+| `MARKET_DATA=mock` | Deterministic data for the standalone provider, demo and live stack |
 | `TOKEN_FILE`, `MAX_PER_CALL_CENTS` (10), `WALLET_ALLOWLIST` (comma list of provider pubkeys; default: union of the proofs' signer sets) | wallet SDK, agent |
-| `APPROVAL_OVER_CENTS` (20; higher prices need the owner's approval), `APPROVAL_TIMEOUT_S` (60, agent only) | wallet SDK, agent ([05](05-agent.md#owner-approval)) |
+| `APPROVAL_OVER_CENTS` (20) | Wallet, CLI agent and MCP. Higher prices need owner approval |
+| `APPROVAL_TIMEOUT_S` | CLI agent (60), MCP (120) |
+| `BUDGET_CENTS` | MCP session spend threshold (50) |
+
+See [gateway settings](06-gateway.md#configuration), [MCP limits](../../agents/mcp/README.md#limits) and [live-stack settings](../RUNNING.md#9-live-stack-pnpm-serve) for component-specific overrides.
 
 **Test layers:** TypeScript tests use fakes; mint and application integration tests require PostgreSQL. Rust vault tests use LiteSVM and a built `target/deploy/vault.so`. The separate `e2e:localnet` script uses `solana-test-validator` and a six-decimal test mint; `e2e` uses a deployed devnet vault and funded keys. See [the runbook](../RUNNING.md).
 
@@ -536,9 +548,9 @@ docker-compose.yml     Postgres
 
 `scripts/e2e.ts` on devnet:
 
-1. Owner CLI: quote $1.00 (100 cents), deposit, wait until `amount_paid == 100`, mint tokens locked to the mock API's key, write the token file.
+1. Fund $1.00 (100 cents) through the owner SDK. Write a token file locked to the active providers. Publish issuance and check the log if the program supports it.
 2. Agent: reserve check passes (§7.6), then one paid call to the mock API through the wallet SDK. Gets `402` with `PAYMENT-REQUIRED` offering scheme `blindfold`, retries with `PAYMENT-SIGNATURE`, gets `200` with data and a `PAYMENT-RESPONSE` whose `transaction` is a redemption id. Token file balance drops by `PRICE_CENTS`.
-3. Replay: resend the same `PAYMENT-SIGNATURE` header. Gets `402`; the provider's settle logged `redeem_failed_11001`; its mint balance is unchanged.
-4. `POST /v1/blindfold/admin/settle`. The provider's payout account receives `PRICE_CENTS * 10_000` base units of USDC on devnet.
-5. `GET /v1/blindfold/admin/reconcile`: `vault_balance == deposited - settled`.
+3. Make a second paid call and replay its `PAYMENT-SIGNATURE`. The replay receives `402` and leaves the provider balance unchanged.
+4. Settle both paid calls. The provider receives twice the per-call price in USDC. Check the log's settled increment when available.
+5. Check that the vault balance change equals the current run's deposit minus its payout.
 6. Reserve check fails closed: with a stub reserves endpoint reporting `outstanding` above the vault balance, the agent refuses to pay and exits non-zero.

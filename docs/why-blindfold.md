@@ -4,7 +4,7 @@
 
 ## The problem in one line
 
-Every time an AI agent pays for data with standard x402, it publishes what it is researching on a public blockchain.
+A standard x402 `exact` payment on Solana exposes the payer, recipient, amount and timing. A seller memo can also identify the feed or token.
 
 ## Agents already buy financial data this way
 
@@ -12,25 +12,25 @@ Data vendors now sell pay-per-request access over x402: USDC per call, no accoun
 
 | Provider | What it sells over x402 | Price per request |
 |---|---|---|
-| [CoinGecko](https://www.coinbase.com/developer-platform/discover/launches/coingecko-x402) | Prices, liquidity, trending pools (Base and Solana); pitched at trading bots and monitoring agents | about $0.01 |
-| [CoinMarketCap](https://coinmarketcap.com/api/documentation/ai-agent-hub/x402) | Pro API endpoints, DEX pair quotes | $0.01 |
+| [CoinGecko](https://www.coinbase.com/developer-platform/discover/launches/coingecko-x402) | Prices, liquidity and trending pools on Base and Solana | $0.01 |
+| [CoinMarketCap](https://coinmarketcap.com/api/documentation/ai-agent-hub/x402) | Supported Pro API endpoints and DEX pair quotes on Base | $0.01 |
 | [Birdeye](https://docs.birdeye.so/reference/x402.md) | Solana DeFi data: price history, token and trade data; each request paid onchain in USDC on Solana | varies |
-| [Messari](https://docs.messari.io/api-reference/x402-payments) | Market timeseries, news | $0.35 to $0.75 |
+| [Messari](https://docs.messari.io/api-reference/x402-payments) | Selected legacy market endpoints | $0.35 for market details and $0.75 for daily market time series |
 
 Prices come from vendor documentation and change over time.
 
-x402 gives agents something valuable: pay any API instantly without accounts. It also removes something subscriptions always had. A fund's Bloomberg searches and data subscriptions are private. An x402 agent's purchases are public transfers from its wallet, one per call.
+Pay-per-request access lets an agent buy from a participating API without a subscription. On Solana, a paid `exact` call produces a public transfer. A subscription lookup generally does not produce a public transaction.
 
 ## What a watcher learns
 
-With standard x402 `exact`, each paid call is a USDC transfer from the agent's wallet to the provider. A competitor reading the chain sees:
+With standard x402 `exact` on Solana, each paid call is a USDC transfer from the agent's wallet to the provider. A competitor reading the chain sees:
 
 - **Who:** the agent's wallet, often the same wallet it trades from.
 - **What:** which provider, and so which kind of data. If the seller tags payments with a memo (x402's `extra.memo`, used to reconcile payments), the memo is onchain too, and can name the token.
 - **When and how often:** a burst of purchases about one token signals that something is about to happen.
 - **The link to decisions:** data purchases followed by trades from the same wallet expose the strategy, not just the trades.
 
-Copy-trading bots already follow profitable wallets onchain. Per-call payments hand them the research behind the trades.
+Per-call payments can give a wallet observer an additional signal before a trade.
 
 ## Finance already pays to hide intent
 
@@ -48,9 +48,9 @@ The analogy has a limit: dark pools hide orders, Blindfold hides the data purcha
 |---|---|---|---|
 | Account or API key needed | Yes | No | No |
 | Public record per call | No | Yes, a transfer from the agent's wallet | No |
-| Provider knows who is buying | Yes | Yes, the paying wallet | No |
-| Agent holds a spendable key | API key | Wallet key with USDC | Tokens only, locked to registered providers |
-| Hijacked agent can pay anyone | No | Up to the wallet balance | No |
+| Provider can identify a payer | By account or API key | By paying wallet | From request and network metadata |
+| Agent holds | API key | Wallet key with USDC | Tokens locked to registered providers |
+| Payment destination | Subscription provider | Subject to client wallet policy | Registered signers in the token lock |
 
 The provider still sees the request and network metadata such as the IP address; Blindfold does not include a relay.
 
@@ -60,28 +60,19 @@ The provider still sees the request and network metadata such as the IP address;
 2. **Research agents for companies.** Buy patent, supplier or market-sizing data without revealing product plans through public purchases.
 3. **Personal agents.** Buy medical, legal or financial lookups without a public record linked to the user's wallet.
 4. **Procurement agents.** Check prices repeatedly without signalling demand that sellers can use to raise prices.
-5. **Agents handling untrusted content.** Any agent that reads web pages or API responses can be manipulated. Its tokens can only be redeemed by registered providers, so a hijacked agent cannot redirect funds to an attacker.
+5. **Agents handling untrusted content.** Any agent that reads web pages or API responses can be manipulated. Its tokens can only be redeemed by registered providers, so an unregistered recipient cannot redeem them.
 
 ## Landscape
 
 | Approach | Examples | How Blindfold differs |
 |---|---|---|
 | Payment guardrails | [AWS AgentCore Payments](https://builder.aws.com/content/3IUuxZQYy22L9sTIc4sBzeTbBut/an-ai-agent-with-a-wallet-and-a-spending-limit) (vendor description), [Handshake](https://github.com/George-WM/handshake), [GateKeep402](https://github.com/al1-nasir/gatekeep402) | These limit spending; payments remain public. Blindfold keeps limits and removes the public record |
-| Private x402 | [TACEO Confidential x402](https://taceo.io/agents/), [Shielded x402](https://news.ycombinator.com/item?id=47036522), [Fhenix](https://www.fhenix.io/blog/the-elephant-in-room-x402-privacy), [Private-Escrow x402](https://ethglobal.com/showcase/private-escrow-x402-fj0v1), [PrivateX402](https://ethresear.ch/t/privatex402-privacy-preserving-payment-channels-for-multi-agent-ai-systems/24151) | Mostly zero-knowledge or encryption based, mostly on EVM chains. Blindfold needs no per-call proofs and puts no per-call transaction onchain |
+| Private x402 | [TACEO Confidential x402](https://taceo.io/agents/), [Shielded x402](https://news.ycombinator.com/item?id=47036522), [Fhenix](https://www.fhenix.io/blog/the-elephant-in-room-x402-privacy), [Private-Escrow x402](https://ethglobal.com/showcase/private-escrow-x402-fj0v1), [PrivateX402](https://ethresear.ch/t/privatex402-privacy-preserving-payment-channels-for-multi-agent-ai-systems/24151) | Mostly zero-knowledge or encryption based, mostly on EVM chains. Blindfold sends ecash proofs over HTTP and batches Solana payouts |
 | Cashu over HTTP 402 | [NUT-24](https://x.com/CashuBTC/status/1938200979024810045), [x402-cashu](https://github.com/orangerabbit-io/x402-cashu), [402-mcp](https://github.com/forgesworn/402-mcp), [cashu-agent](https://github.com/bachua2407-collab/cashu-agent) | Bitcoin and Lightning backed. Blindfold is backed by USDC in a Solana vault that the agent checks itself |
-
-We found no other project combining USDC-backed ecash in a Solana vault, agent-verified reserves and standard x402 SDK compatibility. The search was not exhaustive.
 
 ## Honest limits
 
-- **The mint is custodial.** It cannot see who buys what, and the agent verifies the vault's reserves before paying, but it holds the funds and could under-report issuance.
-- **Privacy needs a crowd.** With one depositor, a batch payout is linked to that owner (not to the token or the calls). With several owners depositing equal amounts, one payout cannot be attributed to any of them (`pnpm crowd` shows this). It still leaks if the owners are funded from one wallet, if amounts are distinctive (the demo's second round shows one odd deposit giving its owner away), or if timing repeats across many deposits and payouts.
-- **It hides purchases, not trades.** Onchain trades stay public; the research behind them and the link between data and decisions do not.
+- **The mint is custodial.** Blinding hides the direct link between issuance and later redemption. The mint chooses settlement amounts and could issue tokens without logging them.
+- **Privacy needs a crowd.** If one deposit funds a batch, the payout can be linked to that owner. In the crowd demo, equal deposits leave multiple plausible contributors. Shared funding, distinctive amounts and repeated timing can weaken privacy.
+- **Onchain trades stay public.** Direct Blindfold purchases leave no transaction to correlate with a later trade.
 - **Agent commerce is early.** This is a problem that grows as agents scale; the evidence above shows it has started.
-
-## Pitch lines
-
-- "Every time your agent pays for data with standard x402, it publishes what it's thinking about. Blindfold lets it pay without telling the world."
-- "Wall Street routes over half its stock volume away from public exchanges because revealing intent costs money. x402 makes every AI agent publish its intent onchain, one transaction per call."
-- "CoinGecko and Birdeye already sell this data per call over x402. Here is what a competitor learns when your agent buys it, and here is what it learns with Blindfold."
-- "Privacy without giving up safety: the agent holds tokens, not keys, and a hijacked agent cannot pay an attacker."
