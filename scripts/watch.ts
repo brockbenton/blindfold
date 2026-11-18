@@ -30,9 +30,12 @@ import { defaultWatch, feedWallets, loadApiKey } from "./lib/streams.js";
 export type WatchEvent =
   | { type: "setup"; network: string; vault: string; vaultUrl: string; feeds: { name: string; account: string; url: string }[]; labels: Record<string, string> }
   | { type: "source"; state: string; text: string }
-  | { type: "tx"; kind: Observation["kind"]; signature: string; time: string | null; from: string; to: string; amountBase: string; memo?: string; text: string; url: string; via?: string }
-  | { type: "signal"; payer: string; action: string; reason: string }
-  | { type: "vault"; action: string; reason: string };
+  | {
+    type: "tx"; kind: Observation["kind"]; signature: string; time: string | null; from: string; to: string; toName: string; amountBase: string;
+    memo?: string; text: string; url: string; via?: string;
+  }
+  | { type: "signal"; payer: string; action: string; reason: string; calls: number; token: string | null; tokenCalls: number; spanSeconds: number | null }
+  | { type: "vault"; action: string; reason: string; depositors: number; payouts: number; payoutBase: string };
 
 const argv = process.argv.slice(2);
 const flag = (name: string) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
@@ -58,8 +61,7 @@ const pubkey = (file: string) => {
 };
 const labels: Record<string, string> = {};
 for (const [file, label] of [
-  ["exact-agent.json", "rival agent (standard x402)"], ["owner.json", "you, the Blindfold owner"],
-  ["gateway-wallet.json", "Blindfold gateway's shared wallet, buying upstream with exact"],
+  ["exact-agent.json", "rival"], ["owner.json", "owner"], ["gateway-wallet.json", "gateway"],
 ] as const) {
   const k = pubkey(file);
   if (k) labels[k] = label;
@@ -75,6 +77,7 @@ dashboard.emit({
   labels,
 });
 
+const short = (a: string) => `${a.slice(0, 4)}...${a.slice(-4)}`;
 const time = (o: Observation) => (o.time ? o.time.toISOString().slice(11, 19) : "--:--:--");
 const lastSignal = new Map<string, string>();
 let lastVault = "";
@@ -82,6 +85,7 @@ let lastVault = "";
 function report(o: Observation, all: Observation[]) {
   dashboard.emit({
     type: "tx", kind: o.kind, signature: o.signature, time: o.time ? o.time.toISOString() : null, from: o.from, to: o.to,
+    toName: o.kind === "vault_deposit" ? "Vault" : feedNames[o.to] ?? short(o.to),
     amountBase: String(o.amountBase), ...(o.memo ? { memo: o.memo } : {}), text: describe(o, feedNames), url: explorerTx(o.signature, rpc), via: o.via,
   });
   console.log(`${time(o)}  ${o.kind.padEnd(14)} ${describe(o, feedNames)}  ${dim(o.via === "streams" ? "via QuickNode Streams" : "via RPC")}`);
@@ -89,7 +93,9 @@ function report(o: Observation, all: Observation[]) {
     const s = infer(all).find((x) => x.payer === o.from);
     if (s && lastSignal.get(s.payer) !== s.reason) {
       lastSignal.set(s.payer, s.reason);
-      dashboard.emit({ type: "signal", payer: s.payer, action: s.action, reason: s.reason });
+      dashboard.emit({
+        type: "signal", payer: s.payer, action: s.action, reason: s.reason, calls: s.calls, token: s.token, tokenCalls: s.tokenCalls, spanSeconds: s.spanSeconds,
+      });
       console.log(`          ${bold("Copycat")}  ${s.action}  ${dim(s.reason)}`);
     }
     return;
@@ -97,7 +103,7 @@ function report(o: Observation, all: Observation[]) {
   const r = attributeVault(all);
   if (r.reason !== lastVault) {
     lastVault = r.reason;
-    dashboard.emit({ type: "vault", action: r.action, reason: r.reason });
+    dashboard.emit({ type: "vault", action: r.action, reason: r.reason, depositors: r.depositors.length, payouts: r.payouts, payoutBase: String(r.payoutBase) });
     console.log(`          ${bold("Copycat")}  ${r.action}  ${dim(r.reason)}`);
   }
 }

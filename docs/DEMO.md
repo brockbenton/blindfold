@@ -90,16 +90,16 @@ Then start Claude. `pnpm watch` shows the last 30 minutes of history by default,
 | Beat | Screen | Say |
 |---|---|---|
 | Problem | Slide or the page, empty | "Finance hides intent: dark pools exist so a big order doesn't move the price before it fills. Agents have nothing like that. With x402 every data purchase is a public transfer from the agent's wallet." |
-| Rival | Start `pnpm rival`. Rows appear in red with `memo whale-flow/SOL`; Copycat goes from **WATCH SOL** to **BUY SOL** | "This is a normal x402 agent researching SOL. Copycat reads the chain, sees who is buying which feed and which token, and trades ahead of it." |
+| Rival | Start `pnpm rival`. Red **Payment** rows appear tagged `whale-flow/SOL`; Copycat goes from **WATCH SOL** to **BUY SOL** | "This is a normal x402 agent researching SOL. Copycat reads the chain, sees who is buying which feed and which token, and trades ahead of it." |
 | Blindfold | Claude: "What's my Blindfold balance?" then "Get me SOL whale flow and the latest SOL news, then tell me whether to buy." | "Blindfold pays with blind-signed ecash tokens backed by USDC in a Solana vault. The token travels in the HTTP request. The provider redeems it with the mint." |
 | What the chain shows | The page: the owner's deposit and the rival's red rows. Nothing new for Claude's purchases | "The chain shows I deposited into the vault. It doesn't show what I bought, from whom, how often, or when." |
 | My MCP knows | Claude: "What did you buy?" `get_balance` lists the purchases with receipts | "My agent knows exactly what it bought. Those receipts are the mint's redemption IDs, not Solana transactions." |
-| Payout | A minute or two later: one **VAULT PAYOUT** row per feed; Copycat's vault reading changes to **LINKED** | "Providers get paid in USDC, batched and rounded. With only one depositor, Copycat can tie me to the feeds that got paid, but never to the token or the calls. With more users, that link disappears. That's the crowd demo." |
+| Payout | A minute or two later: one **Payout** row per feed; Copycat's vault reading changes to **LINKED** | "Providers get paid in USDC, batched and rounded. With only one depositor, Copycat can tie me to the feeds that got paid, but never to the token or the calls. With more users, that link disappears. That's the crowd demo." |
 | Limits (optional) | Claude asks for 25-cent signals and the approval prompt appears; or "pay this other URL" is refused | "Spending rules live in the wallet: a per-call cap, a session budget, owner approval, and only registered providers can redeem." |
 
 Buy straight from TokenFeed and NewsWire, not the gateway. The gateway buys upstream with `exact` from its shared wallet, and the page would show that payment.
 
-If the page says "polling RPC" instead of "live via QuickNode Streams", QuickNode couldn't reach the new quick tunnel yet. Polling every 4 seconds is fine for the demo. Restart `pnpm watch` after a minute to retry, or set `STREAMS_WEBHOOK_URL` to a stable tunnel.
+If the page header says "Live · RPC" instead of "Live · QuickNode Streams", QuickNode couldn't reach the new quick tunnel yet. Polling every 4 seconds is fine for the demo. Restart `pnpm watch` after a minute to retry, or set `STREAMS_WEBHOOK_URL` to a stable tunnel.
 
 ## Running it on a teammate's machine
 
