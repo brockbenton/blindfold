@@ -97,6 +97,12 @@ describe("recorder", () => {
 });
 
 describe("replay timeline", () => {
+  it("only accepts integer act numbers from an external recording", () => {
+    const rec = fakeRun().r.snapshot();
+    rec.events.push({ t: rec.durationMs, event: { type: "act", n: "invalid", title: "invalid", seq: 999 } });
+    expect(buildTimeline(rec).acts.map((a: { n: number }) => a.n)).toEqual([0, 1, 2]);
+  });
+
   const timeline = () => buildTimeline(parseRecording(fakeRun().r.snapshot()), { maxGapMs: 2000, reading: false });
 
   it("rejects files that are not recordings", () => {
