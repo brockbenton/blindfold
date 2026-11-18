@@ -144,9 +144,10 @@ export function mountDashboard(root, { interactive = true } = {}) {
       } else {
         who = 'deposit <span class="unknown">· ' + esc(shortAddr(e.from)) + "</span>";
       }
-      rows.insertAdjacentHTML("afterbegin",
-        '<a class="row" href="' + esc(e.url) + '" target="_blank" rel="noopener"><time>' + hhmmss(e.time) + "</time><span>" + who +
-        '</span><span class="memo">' + memo + '</span><span class="amt">' + usd(e.amountBase) + "</span></a>");
+      const inner = "<time>" + hhmmss(e.time) + "</time><span>" + who + '</span><span class="memo">' + memo + '</span><span class="amt">' + usd(e.amountBase) + "</span>";
+      rows.insertAdjacentHTML("afterbegin", e.url
+        ? '<a class="row" href="' + esc(e.url) + '" target="_blank" rel="noopener">' + inner + "</a>"
+        : '<div class="row">' + inner + "</div>");
       el.querySelector(".count").textContent = s.txs.length + (s.txs.length === 1 ? " tx" : " txs");
       if (e.side === "exact") el.querySelector(".detail").textContent = exactDetail();
     },

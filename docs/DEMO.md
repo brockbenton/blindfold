@@ -118,7 +118,7 @@ State the limit honestly: payouts still show which registered feeds earned. In t
 ## Crowd demo: privacy needs other people
 
 ```sh
-npx -y pnpm@10.33.0 crowd            # 3 agents; --agents 2..5, --no-pause, --no-dashboard
+npx -y pnpm@10.33.0 crowd            # 3 agents; --agents 2..5, --no-pause, --no-dashboard, --record FILE
 ```
 
 Three agents, each with its own owner wallet, research different tokens (SOL, BTC, ETH) at TokenFeed with interleaved calls. With `exact`, Copycat still sorts the payments by wallet and reports `BUY SOL`, `BUY BTC` and `BUY ETH`, one per wallet. With Blindfold, each owner deposits the same $1.00, the agents make the same purchases with tokens, and one settlement batch pays the feed for all of them. Copycat sees three deposits and one payout and reports **CANNOT ATTRIBUTE**: who bought what, and which token anyone researched, is unknown. For contrast it prints what the same payout would show with a single depositor (`LINKED`).
@@ -135,7 +135,7 @@ What it does not hide, and says so at the end: transfers that fund the owners fr
 
 ## Recorded replay
 
-The replay page plays a recorded run through the same dashboard, with the terminal narration for each act beside it, so judges can watch a real run without installing anything: **https://brockbenton.github.io/blindfold/**
+The replay site plays recorded runs through the same dashboards, with the terminal narration for each act beside them, so judges can watch without installing anything: **https://brockbenton.github.io/blindfold/**. Its landing page offers two replays: **Single agent** (`pnpm demo`, `replay.html`) and **Crowd** (`pnpm crowd`, `replay.html?demo=crowd`).
 
 **Publish a new devnet recording** with one command, once the demo passes:
 
@@ -145,13 +145,16 @@ npx -y pnpm@10.33.0 replay:publish
 
 It runs the devnet demo without pauses (same keys, costs and one-at-a-time rule as `pnpm demo`; extra options such as `--calls 3` pass through), checks that the run finished on devnet, commits it as `scripts/dashboard/recording.json` and pushes the current branch. The `pages` workflow redeploys the page when that commit reaches `main`. A failed run publishes nothing.
 
+**Publish a new crowd recording** the same way with `npx -y pnpm@10.33.0 replay:publish --crowd` (`--agents N` passes through). The crowd demo runs on a local validator only, so it checks for a finished localnet run and commits `scripts/dashboard/crowd-recording.json`.
+
 | Command | Effect |
 |---|---|
 | `pnpm demo --record FILE` | Record without publishing; add `--localnet` for a rehearsal |
-| `pnpm replay [FILE]` | Preview FILE (default: the published recording) at http://localhost:5174 |
+| `pnpm crowd --record FILE` | Record a crowd run without publishing |
+| `pnpm replay [FILE]` | Preview the site at http://localhost:5174, with FILE in place of the published recording of its demo |
 | `pnpm replay --site DIR` | Write the static site that the workflow deploys |
 
-On the page: Space plays and pauses, the arrow keys jump between acts, and the bar under the dashboard has one segment per act. `?act=3`, `?speed=2` and `?autoplay=0` set the start. Waits longer than 2.5 seconds, such as chain confirmations and Copycat's polling, are shortened in playback, and an act too short to read its narration holds for a few seconds at its end; everything else plays as recorded. The Explorer links open the real transactions (in a localnet recording they point at a local validator). Controls that act on a live run are inert.
+On the page: Space plays and pauses, the arrow keys jump between acts, and the bar under the dashboard has one segment per act. `?act=3`, `?speed=2` and `?autoplay=0` set the start. Waits longer than 2.5 seconds, such as chain confirmations and Copycat's polling, are shortened in playback, and an act too short to read its narration holds for a few seconds at its end; everything else plays as recorded. In a devnet recording the Explorer links open the real transactions. A localnet recording (the crowd, or a single-agent rehearsal) shows the shortened signatures without links, since nobody else can reach the validator it ran on. Controls that act on a live run are inert.
 
 ## Recording tips
 
