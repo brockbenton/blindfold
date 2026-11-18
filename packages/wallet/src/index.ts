@@ -1,5 +1,5 @@
 export * from "./errors.js";
-export { AgentWallet, type WalletOptions, type RecoverReport } from "./agent-wallet.js";
+export { AgentWallet, type WalletOptions, type RecoverReport, type PaymentLimits } from "./agent-wallet.js";
 export {
   askApproval, anyApprover, approvalBroker, fixedApprover, terminalApprover,
   type ApprovalOutcome, type ApprovalRequest, type Approver,

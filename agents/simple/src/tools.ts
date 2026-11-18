@@ -1,7 +1,7 @@
 import type { Connection, PublicKey } from "@solana/web3.js";
 import { decodePaymentResponseHeader } from "@x402/fetch";
 import { checkReserves, type ProviderInfo, type ReserveCheckResult } from "@blindfold/protocol";
-import { PaymentFailed, type AgentWallet } from "@blindfold/wallet";
+import { PaymentFailed, type AgentWallet, type PaymentLimits } from "@blindfold/wallet";
 import { HttpError, NetworkError } from "./errors.js";
 import type { Reporter } from "./reporter.js";
 
@@ -9,7 +9,9 @@ export interface Tools {
   balance(): Promise<{ cents: number }>;
   /** Active providers only. */
   list_providers(): Promise<ProviderInfo[]>;
-  call_paid_api(a: { url: string; method?: "GET" | "POST"; body?: unknown }): Promise<{ status: number; data: unknown; paidCents: number; redemptionId?: string }>;
+  /** With `limits`, the wallet refuses (budget_exhausted / provider_not_allowed) before any proofs leave when the
+   *  validated offer exceeds `maxCents` or its signer is not in `providerPubkeys`. */
+  call_paid_api(a: { url: string; method?: "GET" | "POST"; body?: unknown; limits?: PaymentLimits }): Promise<{ status: number; data: unknown; paidCents: number; redemptionId?: string }>;
   /** `verified`: liabilities came from the vault's onchain issuance log, not only the mint's report. */
   check_reserves(): Promise<ReserveCheckResult>;
   report(a: { summary: string; data?: unknown }): Promise<void>;
@@ -60,7 +62,7 @@ export function makeTools(d: ToolDeps): Tools {
       const before = d.wallet.balance();
       let res: Response;
       try {
-        res = await d.wallet.payFetch(a.url, init);
+        res = await d.wallet.payFetch(a.url, init, a.limits);
       } catch (e) {
         if (e instanceof PaymentFailed) throw new HttpError(e.status, e.body);
         throw e;

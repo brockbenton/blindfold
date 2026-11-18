@@ -5,6 +5,7 @@
 //
 // Any OpenAI-compatible chat completions endpoint works (Gemini's, Groq's, OpenAI's...), called with plain fetch.
 import { PaymentRefused } from "@blindfold/wallet";
+import type { ProviderInfo } from "@blindfold/protocol";
 import { HttpError, ReservesFailedError } from "./errors.js";
 import type { ReserveSummary } from "./reporter.js";
 import type { Tools } from "./tools.js";
@@ -151,6 +152,18 @@ export async function runLlm(tools: Tools, o: LlmOptions): Promise<LlmRunResult>
   let reserves: ReserveSummary | null = null;
   let paidCalls = 0;
   const record = (s: LlmStep) => { steps.push(s); o.onStep?.(s); return s; };
+  // Registered providers serving this URL's origin; the wallet refuses any other signer. Read once per run.
+  let providers: Promise<ProviderInfo[]> | null = null;
+  const providerKeysFor = async (url: string): Promise<string[]> => {
+    let origin: string;
+    try {
+      origin = new URL(url).origin;
+    } catch {
+      return [];
+    }
+    const list = await (providers ??= tools.list_providers());
+    return list.filter((p) => { try { return !!p.url && new URL(p.url).origin === origin; } catch { return false; } }).map((p) => p.pubkey.toLowerCase());
+  };
   const finish = async (decision: LlmRunResult["decision"], rationale: string): Promise<LlmRunResult> => {
     const end = (await tools.balance()).cents;
     return { ok: true, mode: "llm", goal: o.goal, decision, rationale, steps, balanceBefore: start, balanceAfter: end, paidCents: start - end, reserves };
@@ -200,8 +213,11 @@ export async function runLlm(tools: Tools, o: LlmOptions): Promise<LlmRunResult>
           reserves = await tools.check_reserves();
           if (!reserves.ok) throw new ReservesFailedError(reserves);
         }
+        // The budget check above only knows past spend. The wallet checks the actual validated price against what is
+        // left, inside its payment lock, so one purchase cannot cross the budget.
+        const limits = { maxCents: o.budgetCents - spent, providerPubkeys: await providerKeysFor(url) };
         try {
-          const r = await tools.call_paid_api({ url });
+          const r = await tools.call_paid_api({ url, limits });
           paidCalls++;
           record({ tool: "buy_data", args, outcome: "ok", paidCents: r.paidCents, data: r.data });
           return r.data;
@@ -209,7 +225,9 @@ export async function runLlm(tools: Tools, o: LlmOptions): Promise<LlmRunResult>
           if (e instanceof PaymentRefused) {
             record({ tool: "buy_data", args, outcome: "refused", paidCents: 0, reason: e.reason });
             const owner = e.reason === "approval_denied" || e.reason === "approval_timeout";
-            return { refused: e.reason, detail: owner ? "your owner did not approve this purchase; nothing was spent. Do not retry it." : "the wallet refused to pay; nothing was spent" };
+            return { refused: e.reason, detail: owner ? "your owner did not approve this purchase; nothing was spent. Do not retry it."
+              : e.reason === "budget_exhausted" ? `this purchase costs more than the ${o.budgetCents - spent} cents left in your budget; nothing was spent`
+              : "the wallet refused to pay; nothing was spent" };
           }
           if (e instanceof HttpError) {
             record({ tool: "buy_data", args, outcome: "error", paidCents: 0, reason: `http_${e.status}` });

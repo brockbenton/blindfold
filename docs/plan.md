@@ -1,6 +1,6 @@
 # Delivery plan
 
-[Implemented scope](mvp.md) · [Runbook](RUNNING.md) · [Demo](DEMO.md)
+[Implemented scope](mvp.md) · [Runbook](RUNNING.md) · [Demo](DEMO.md) · [Roadmap after submission](roadmap.md)
 
 Submission is due November 20, 2026 at noon CST (18:00 UTC).
 
@@ -18,5 +18,5 @@ Run only one settlement writer against the shared devnet vault during rehearsals
 
 - The issuance log records a public claim. The mint still controls issuance and settlement amounts.
 - Deposits and provider payouts are public. Copycat's observations depend on public amounts and timing, and the gateway's upstream purchases remain visible.
-- Owner approval and wallet limits govern the model's purchases. A compromised process or leaked token file can still spend at allowed providers.
+- Owner approval and wallet limits govern the model's purchases. The wallet refuses any offer larger than the session budget left. A compromised process or leaked token file can still spend at allowed providers.
 - A paid response can be lost after redemption. Funding checkpoints can require manual reconciliation after an uncertain deposit.

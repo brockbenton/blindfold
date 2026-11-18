@@ -15,6 +15,8 @@ import { FakeMint } from "../../../packages/wallet/test/fakes/fake-mint.js";
 import { FakeProvider } from "../../../packages/wallet/test/fakes/fake-provider.js";
 import { createApp } from "../../../apps/mock-api/src/app.js";
 import { runMain } from "../src/main.js";
+import { runLlm, type Chat } from "../src/llm.js";
+import { makeTools } from "../src/tools.js";
 
 const providerKey = makeProviderKey();
 const otherKey = makeProviderKey();
@@ -162,5 +164,31 @@ describe("in-process e2e", () => {
     expect(r.code).toBe(0);
     expect(w.balance()).toBe(85);
     expect(w.mint.redeemer.balances.get(0)).toBe(15);
+  });
+
+  it("LLM loop: the wallet refuses an offer larger than the budget left, before any proof leaves", async () => {
+    const w = await world();
+    const wallet = await AgentWallet.open({ tokenFile: w.tokenFile, maxPerCallCents: 30, usdcMint: USDC_DEVNET_MINT });
+    try {
+      const tools = makeTools({
+        wallet, mintUrl: w.mintUrl, connection: connection(100) as never, programId, usdcMint,
+        out: { log: () => undefined, result: () => undefined, error: () => undefined },
+      });
+      const url = `${w.apiUrl}/v1/data/sol`;
+      let i = 0;
+      const chat: Chat = async () => i++ < 3
+        ? { role: "assistant", content: null, tool_calls: [{ id: `c${i}`, type: "function", function: { name: "buy_data", arguments: JSON.stringify({ url }) } }] }
+        : { role: "assistant", content: "HOLD, done" };
+      // Budget 7, price 5: after one purchase 2 cents are left, so the second 5-cent offer must be refused.
+      const r = await runLlm(tools, { goal: "g", chat, budgetCents: 7, reserveEvery: 10 });
+      expect(r.steps.filter((s) => s.tool === "buy_data").map((s) => [s.outcome, s.reason])).toEqual([
+        ["ok", undefined], ["refused", "budget_exhausted"], ["refused", "budget_exhausted"],
+      ]);
+      expect(r.paidCents).toBe(5);
+      expect(w.balance()).toBe(95);
+      expect(w.mint.redeemCalls).toBe(1);
+    } finally {
+      wallet.close();
+    }
   });
 });

@@ -771,7 +771,7 @@ async function main() {
         warn(`model unavailable (${(e as Error).message.slice(0, 120)}); continuing without it`);
       }
     } else {
-      say(yellow("No LLM key (.keys/llm.key or LLM_API_KEY), so this act skips the model and shows only the hijack attempt."));
+      say(yellow("No LLM key (.keys/llm.key or LLM_API_KEY), so this act skips the model and drives the wallet directly."));
     }
     if (!approvalAsked) {
       // The model did not reach for the premium feed (or there is no model): the agent asks for it once directly.
@@ -785,6 +785,43 @@ async function main() {
         if (!(e instanceof PaymentRefused)) throw e;
         ok(`${label(signalsUrl)} -> ${red(bold(`REFUSED (${e.reason})`))}, nothing paid`);
       }
+    }
+    // A compromised agent can also stay on a registered feed and just keep buying. The session allowance caps that:
+    // the wallet checks each validated price against what is left, inside its spend lock, before any proof leaves.
+    // Needs the allowance plus one more read of headroom for Act 7; skip rather than abort if earlier acts spent it.
+    if (walletCents() < 12 + PRICE) warn(`only ${walletCents()} cents left, skipping the session-allowance beat`);
+    else {
+      const ALLOWANCE = 12;
+      const flowUrl = `${apiUrl}/v1/data/${TOPIC}`;
+      const providerPubkeys = (await tools.list_providers())
+        .filter((p) => p.url && new URL(p.url).origin === new URL(apiUrl).origin).map((p) => p.pubkey.toLowerCase());
+      if (!providerPubkeys.length) fail(`${FEED} is not in the mint's provider list`);
+      say(`Now a runaway loop on ${FEED} itself, a registered feed, with a ${ALLOWANCE}-cent session allowance:`);
+      const startCents = walletCents();
+      let refusal: PaymentRefused | null = null;
+      for (let i = 0; i < 5 && !refusal; i++) {
+        const left = ALLOWANCE - (startCents - walletCents());
+        const before = walletCents();
+        try {
+          const res = await llmWallet.payFetch(flowUrl, undefined, { maxCents: left, providerPubkeys });
+          await res.body?.cancel().catch(() => undefined);
+          const paid = before - walletCents();
+          agentSays(`buy ${feedPath(flowUrl)} -> paid ${paid} cents, ${left - paid} of ${ALLOWANCE} left`);
+          emit({ type: "call", side: "blindfold", n: CALLS + 2 + i, cents: paid, label: label(flowUrl), ok: res.status === 200 });
+        } catch (e) {
+          if (!(e instanceof PaymentRefused)) throw e;
+          if (e.reason !== "budget_exhausted") fail(`expected budget_exhausted, wallet refused with ${e.reason}`);
+          if (walletCents() !== before) fail("the refused call spent tokens");
+          refusal = e;
+          agentSays(`buy ${feedPath(flowUrl)} -> ${red(bold("REFUSED (budget_exhausted)"))}: costs ${PRICE}, ${left} left, nothing paid`);
+        }
+      }
+      if (!refusal) fail("the wallet never stopped the loop");
+      const spent = startCents - walletCents();
+      if (spent > ALLOWANCE) fail(`spent ${spent} cents over a ${ALLOWANCE}-cent allowance`);
+      ok(`tokens ${startCents} -> ${walletCents()} cents: ${spent} of the ${ALLOWANCE}-cent allowance spent, the refused call cost nothing`);
+      emit({ type: "note", side: "blindfold", tone: "ok", text: `Runaway loop on ${FEED} stopped at the ${ALLOWANCE}-cent allowance (spent ${spent})` });
+      void refreshBalances();
     }
     if (hijackTried) {
       say("The model followed the injection. The wallet refused: the attacker is not a registered provider, so the agent's tokens cannot pay it.");
@@ -803,7 +840,7 @@ async function main() {
     poisonUrl = null;
   }
   const spentLlm = hijackStart - walletCents();
-  ok(`the attacker received nothing; the agent spent ${spentLlm} cents, all at ${FEED}`);
+  ok(`the attacker received nothing; the agent spent ${spentLlm} cents, all at registered feeds`);
   emit({ type: "note", side: "blindfold", tone: "ok", text: "Hijack attempt refused, nothing paid" });
   void refreshBalances();
   say("The agent's tokens only pay registered providers, and it holds no key it could hand over. Whatever the model believes, an attacker cannot be paid.");
