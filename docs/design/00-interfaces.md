@@ -538,7 +538,7 @@ docker-compose.yml     Postgres
 | `TOKEN_FILE`, `MAX_PER_CALL_CENTS` (10), `WALLET_ALLOWLIST` (comma list of provider pubkeys; default: union of the proofs' signer sets) | wallet SDK, agent |
 | `APPROVAL_OVER_CENTS` (20) | Wallet, CLI agent and MCP. Higher prices need owner approval |
 | `APPROVAL_TIMEOUT_S` | CLI agent (60), MCP (120) |
-| `BUDGET_CENTS` | MCP session spend threshold (50) |
+| `BUDGET_CENTS` | MCP session budget (50); the wallet refuses an offer larger than what is left |
 
 See [gateway settings](06-gateway.md#configuration), [MCP limits](../../agents/mcp/README.md#limits) and [live-stack settings](../RUNNING.md#9-live-stack-pnpm-serve) for component-specific overrides.
 

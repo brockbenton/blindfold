@@ -1,6 +1,6 @@
 # Why Blindfold
 
-[Design](design.md) · [Demo](DEMO.md) · [Scope](mvp.md)
+[Design](design.md) · [Demo](DEMO.md) · [Roadmap](roadmap.md)
 
 ## The problem in one line
 

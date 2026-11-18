@@ -19,6 +19,21 @@ Standard x402 `exact` payments on Solana leave a USDC transfer for each purchase
 
 Blindfold is a custom x402 v2 scheme named `blindfold`. An owner deposits USDC into a shared Solana vault and receives blind-signed [Cashu](https://cashu.space) tokens. The agent pays for data in an HTTP header. Providers redeem the tokens at the mint and receive periodic USDC payouts from the vault. Direct Blindfold purchases leave no per-call transaction. The [public replay](https://brockbenton.github.io/blindfold/) shows the single-agent comparison and a crowd demo that illustrates what deposit amounts can reveal.
 
+### What the demo shows
+
+`pnpm demo` runs the same research twice on devnet, once with standard x402 and once with Blindfold, while Copycat watches the chain. Script and talking points are in [the demo guide](docs/DEMO.md#what-each-act-shows).
+
+| Act | Result |
+|---|---|
+| 1. Standard x402 | Three paid calls are three public transfers. The seller memo names SOL, and Copycat signals **BUY SOL**. |
+| 2. Fund | The owner deposits $1.00 into the vault and receives blind-signed tokens. The issuance log updates. |
+| 3. Blindfold | The same research plus two NewsWire reads. The agent checks reserves against the issuance log first. Copycat reports **NO SIGNAL**. |
+| 4. Settle | One batched, rounded vault payout to both feeds at the next window. |
+| 5. Scoreboard | Copycat is scored against what the agent actually bought. Standard x402: 3/3 purchases attributed (wallet, feed and token). Blindfold: 0/5 attributed, 0 per-call transfers. With a single owner, payouts can still be linked to that owner and the feeds, but not to the token. Incomplete chain coverage is reported as inconclusive. |
+| 6. Poisoned feed | A model-driven agent asks for owner approval on a 25¢ purchase. The session allowance stops a runaway loop with `budget_exhausted`, and an injected payment to an unregistered recipient is refused. |
+| 7. Replay | A copied payment gets a 402. |
+| 8. Reserve gate | The mint claims more than the vault holds, and the agent stops without paying. |
+
 ## Architecture
 
 ```mermaid
@@ -80,7 +95,7 @@ The mint credits a quote from the vault's `DepositRecord`, then signs the owner'
 | Gateway | [`apps/gateway`](apps/gateway) | Accepts Blindfold tokens and buys upstream data with x402 `exact` from one shared wallet. |
 | CLI agent | [`agents/simple`](agents/simple) | Runs scripted or model-driven research. |
 | MCP server | [`agents/mcp`](agents/mcp) | Exposes discovery, quotes, balances, purchases and reserve reports over stdio. |
-| Copycat, demo and replay | [`scripts`](scripts) | Compares the public transactions for standard x402 and Blindfold. |
+| Copycat, demo and replay | [`scripts`](scripts) | Reads the public transactions for standard x402 and Blindfold and scores Copycat's attributions against ground truth. |
 
 The gateway checks the upstream price before redeeming. It builds a new request, forwarding only query parameters permitted by its route map. The vendor sees the gateway's request and shared payer. Each upstream payment and any vendor memo stay public. The devnet demo vendor is TokenFeed with its `exact` rail enabled. See [Gateway setup](docs/design/06-gateway.md#setup-and-running-devnet).
 
@@ -109,7 +124,7 @@ The vault holds USDC and pays registered providers. The mint runs settlement at 
 | `settle_batch` | Mint authority | Pays 1–8 active providers to registered accounts. Requires the next batch ID. Advances the settled total when the issuance log is supplied. |
 | `init_issuance_log`, `log_issuance` | Mint authority | Creates the log with initial totals, then adds issuance to the cumulative claim. |
 
-The devnet issuance-log upgrade is recorded in the [vault deployment notes](docs/design/01-vault.md#issuance-log-added-november-2026). The reserve check compares the vault's USDC balance with the larger of the log's `issued - settled` and the mint's HTTP report. If the log is absent, the check requires the HTTP report and marks the result unverified. The [vault history page](https://brockbenton.github.io/blindfold/vault/) reads public devnet RPC from the browser. It shows deposits, provider changes, settlements and issuance totals when the log is present. It refreshes once a minute while visible.
+The devnet issuance-log upgrade is recorded in the [vault deployment notes](docs/design/01-vault.md#issuance-log-added-november-2026). The reserve check compares the vault's USDC balance with the larger of the log's `issued - settled` and the mint's HTTP report. If the log is absent, the check requires the HTTP report and marks the result unverified. The [vault history page](https://brockbenton.github.io/blindfold/vault/) reads public devnet RPC from the browser. It shows a reserve coverage verdict (vault balance against the logged claim, read in one RPC context, with the slot, the margin and Explorer links), a machine-readable JSON snapshot, and the history of deposits, provider changes, settlements and issuance totals. Missing or malformed data gives an "unknown" verdict. The page refreshes once a minute while visible.
 
 ### Who touches the chain
 
@@ -131,7 +146,7 @@ The scripted CLI checks its balance, discovers active providers and chooses one 
 
 ### LLM loop (`--llm`)
 
-In `--llm` mode, the model receives a research goal and the tools `list_providers`, `get_balance`, `buy_data` and `final_answer`. For a purchase, the loop checks the session budget and reserves. The wallet then checks the offer and asks for approval if required. The loop returns the purchase result to the model. The run ends with a BUY, SELL or HOLD decision or defaults to HOLD after ten turns. Feed content can carry instructions. Payment policy runs outside the model.
+In `--llm` mode, the model receives a research goal and the tools `list_providers`, `get_balance`, `buy_data` and `final_answer`. For a purchase, the loop runs the reserve gate and passes the remaining session budget to the wallet. The wallet checks the offer against that budget and the per-call cap, then asks for approval if required. The loop returns the purchase result to the model. The run ends with a BUY, SELL or HOLD decision or defaults to HOLD after ten turns. Feed content can carry instructions. Payment policy runs outside the model.
 
 ### MCP clients
 
@@ -144,7 +159,7 @@ The MCP server exposes `list_providers`, `get_balance`, `quote`, `buy_data` and 
 | Provider lock and allowlist | Providers active at funding | Same | The mint requires a registered signer in the token's P2PK lock. `WALLET_ALLOWLIST` can narrow wallet spending. |
 | Per-call cap | 10¢ | 30¢ | The wallet refuses offers over `MAX_PER_CALL_CENTS`. The CLI also accepts `--max-per-call`. |
 | Owner approval | Above 20¢, 60 s timeout | Above 20¢, 120 s timeout | The wallet checks the cap first. The CLI prompts in the terminal, the demo also offers dashboard approval, and MCP uses elicitation. Denial, timeout or an MCP client without elicitation blocks the purchase. |
-| Session budget | 30¢ with `--llm` | 50¢ per server process | `--budget` or `BUDGET_CENTS`. The wallet checks each validated price against the budget left, inside its payment lock, and refuses with `budget_exhausted` before any proof leaves, so no purchase crosses it. |
+| Session budget | 30¢ with `--llm` | 50¢ per server process | `--budget` (CLI) or `BUDGET_CENTS` (MCP). The wallet checks each validated price against the budget left, inside its payment lock, and refuses with `budget_exhausted` before any proof leaves, so no purchase crosses it. |
 | Reserve gate | Before call 1 and every 10 calls thereafter | Before the first and every 10 paid calls thereafter | `RESERVE_CHECK_EVERY` sets the interval. A failure stops the CLI with exit code 7. MCP refuses and checks again on the next attempt. |
 | Total funded value | Token file balance | Same | The wallet selects proofs for the exact price. The mint rejects spent proofs. |
 
@@ -230,7 +245,7 @@ Blindfold is an unaudited devnet prototype. The mint, vault admin and upgrade au
 
 Deposits and provider payouts are public. A single depositor, distinctive amounts or repeated timing can link owners to payouts. Providers see requests and network metadata. The mint sees redemption amounts and timing. The gateway pools payment identities while leaving upstream transfers visible. Blindfold has no network anonymity layer.
 
-Approval and limits protect against a manipulated model. A compromised process or leaked token file can still spend at allowed providers. Redemption precedes delivery, so a lost response can consume tokens without returning data. See [wallet recovery limits](docs/design/04-wallet-sdk.md#recovery-limits) and [implemented scope](docs/mvp.md).
+Approval and limits protect against a manipulated model. A compromised process or leaked token file can still spend at allowed providers. Redemption precedes delivery, so a lost response can consume tokens without returning data. See [wallet recovery limits](docs/design/04-wallet-sdk.md#recovery-limits) and the [roadmap](docs/roadmap.md) for planned fixes and what is out of scope.
 
 ## Documentation
 
@@ -242,5 +257,5 @@ Approval and limits protect against a manipulated model. A compromised process o
 | [Why Blindfold](docs/why-blindfold.md) · [Design](docs/design.md) | Motivation, trust and privacy |
 | [Interfaces](docs/design/00-interfaces.md) | Wire formats, accounts, APIs and configuration |
 | Component designs | [Vault](docs/design/01-vault.md) · [Mint](docs/design/02-mint.md) · [Provider](docs/design/03-mock-api.md) · [Wallet](docs/design/04-wallet-sdk.md) · [Agent](docs/design/05-agent.md) · [Gateway](docs/design/06-gateway.md) |
-| [MVP and add-ons](docs/mvp.md) · [Plan](docs/plan.md) | Implemented scope and November 18–20 submission work |
+| [Roadmap](docs/roadmap.md) | Submission checklist, post-submission phases and what we are not doing |
 | [Security references](docs/security-sources.md) | Protocol and security background |

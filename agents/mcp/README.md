@@ -23,7 +23,7 @@ The server uses the same wallet and reserve checks as the CLI agent, with its ow
 | Provider lock | Providers active when the tokens were funded | The tokens' P2PK lock, plus `WALLET_ALLOWLIST` |
 | Per-call cap | 30¢ | `MAX_PER_CALL_CENTS` |
 | Owner approval | Above 20¢ | `APPROVAL_OVER_CENTS`, `APPROVAL_TIMEOUT_S` (120) |
-| Session spend threshold | 50¢ per server process | `BUDGET_CENTS` |
+| Session budget | 50¢ per server process | `BUDGET_CENTS` |
 | Reserve check | Before the first paid call and every 10 paid calls | `RESERVE_CHECK_EVERY` |
 
 A failed reserve check refuses the purchase and runs again on the next attempt. Purchases run one at a time. The wallet checks each validated price against the session budget left and refuses with `budget_exhausted` before any proof leaves, so no purchase crosses it. `quote` and `buy_data` reject an input URL outside the origin of a discoverable active provider. The wallet checks the payment requirements separately.

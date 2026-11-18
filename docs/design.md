@@ -1,6 +1,6 @@
 # Blindfold: Design
 
-[Run locally](RUNNING.md) · [Interfaces](design/00-interfaces.md) · [Scope](mvp.md)
+[Run locally](RUNNING.md) · [Interfaces](design/00-interfaces.md) · [Roadmap](roadmap.md)
 
 ## One purchase end to end
 
@@ -39,7 +39,7 @@ The provider acts as an in-process x402 facilitator. Its successful x402 `transa
 
 | Control | Enforcement and limit |
 |---|---|
-| Budget | Token balance bounds total value. The LLM and MCP sessions also stop further purchases once their spend threshold is reached |
+| Budget | Token balance bounds total value. In LLM and MCP sessions the wallet also refuses any offer larger than the session budget left (`budget_exhausted`), before any proof leaves |
 | Provider lock | Owner-created 1-of-N P2PK lock includes active registered providers at funding time; mint credits the key that signed |
 | Narrower allowlist | `WALLET_ALLOWLIST` is wallet policy, not an additional token restriction |
 | Per-call price cap | Wallet and x402 spend controls; not encoded in tokens |
@@ -80,9 +80,4 @@ The mock API can also accept the standard x402 `exact` scheme on the same routes
 
 ## Planned work
 
-See [planned scope](mvp.md#planned-or-deferred).
-
-- Protocol-level owner approval through a second, co-signed reserve pocket. The wallet already asks the owner above a threshold ([agent](design/05-agent.md#owner-approval)), but that runs in agent code. Current locks accept only 1-of-N and reject refund/time-lock tags; this requires protocol changes.
-- Temporal for durable top-ups. Workflow randomness and signing would run in activities; existing persisted funding checkpoints still have recovery limits.
-- A public view of the mint's full reconciliation.
-- Hiding which provider was paid, through fresh payout accounts. An onchain check of the provider's approval reveals the provider; no check lets the mint pay anyone. Settlement windows, holds and rounding weaken timing and amount correlations. Provider payout accounts remain public.
+See the [roadmap](roadmap.md) for what comes next and what we are deliberately not doing. Protocol-level owner approval (a co-signed reserve pocket) needs protocol changes: current locks accept only 1-of-N and reject refund and time-lock tags. Hiding which provider was paid needs a new authorization design, because an onchain check of the provider's approval reveals the provider and no check lets the mint pay anyone.

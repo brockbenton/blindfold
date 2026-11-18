@@ -1,17 +1,22 @@
 # Roadmap
 
-[Delivery plan](plan.md) · [Implemented scope](mvp.md) · [Design](design.md)
+[Design](design.md) · [Run locally](RUNNING.md) · [Demo](DEMO.md)
 
-This page covers the work after the November 20 submission. The ordering came from an audit of main at `7548a71` (recorded November 17), which we checked against `4a945e0`. Each phase has one exit criterion that can be checked. Nothing here is implemented unless the "Status" column says so.
+This page covers the submission checklist and the work after it. The post-submission ordering came from an audit of main at `7548a71` (recorded November 17), which we checked against `4a945e0`. Each phase has one exit criterion that can be checked. Nothing here is implemented unless the "Status" column or a "Done" note says so.
 
-## Before submission (November 17–20, see [plan](plan.md))
+## Submission (due November 20, 2026, noon CST / 18:00 UTC)
 
 | Work | Status |
 |---|---|
 | Wallet enforces the remaining session budget for **MCP** (purchases run one at a time; the actual offer price is checked against the remaining budget before any proofs leave) | Done in `4a945e0` |
-| Wallet enforces the remaining session budget for the **CLI LLM loop** (`agents/simple/src/llm.ts`) | Done, with a real-wallet test in `agents/simple/test/e2e-local.test.ts` |
-| Deterministic Act 6 beat: an allowed provider uses up the session allowance, then the wallet refuses the next valid offer | In progress |
-| Run devnet acceptance again, then rehearse and record `pnpm demo` and a backup ([demo](DEMO.md)). Check the revision, data source and RPC in use, reserves provenance, approval outcome and Explorer links before publishing a replay | November 18–19 |
+| Wallet enforces the remaining session budget for the **CLI LLM loop** (`agents/simple/src/llm.ts`) | Done in `54cd321`, with a real-wallet test in `agents/simple/test/e2e-local.test.ts` |
+| Deterministic Act 6 beat: an allowed provider uses up the session allowance, then the wallet refuses the next valid offer | Done in `54cd321` |
+| Act 5 attribution scoreboard against ground truth; `/vault/` coverage verdict | Done in `5078eb4` |
+| **November 18:** verify the submission revision with the build, type checks, database tests and [real-vault checks](RUNNING.md#7-real-vault-checks). Rehearse the devnet demo with Streams connected. Confirm the reserve check reads the issuance log and a Stream deposit hint triggers a poll. Exercise owner approval and refusal, and check the gateway and MCP setup | To do |
+| **November 19:** record `pnpm demo` and a backup ([demo](DEMO.md)), plus a short `pnpm crowd` clip. Publish a new replay; the current one predates `5078eb4`. Before publishing, check the revision, data source and RPC in use, reserves provenance, approval outcome and Explorer links | To do |
+| **November 20, before noon CST:** verify the submission links and submit the repo, video and public replay | To do |
+
+Run only one settlement writer against the shared devnet vault during rehearsals and recording. The [live-stack runbook](RUNNING.md#9-live-stack-pnpm-serve) documents the local lock and shared-vault constraint.
 
 ## After submission
 
@@ -21,8 +26,7 @@ Each phase is roughly one week.
 
 **Why:** the issuance log makes published issuance harder to retract. Separate chain reads plus a mint HTTP report can still give an ambiguous snapshot.
 
-- Strict acceptance mode: devnet acceptance fails when the target has no initialized issuance log. Local-validator acceptance already requires it as of `4a945e0`.
-- A snapshot on `/vault/` that machines can read. Chain accounts are read in a shared RPC context, and the snapshot shows the slot, where the claim came from, the coverage margin and any incomplete history.
+- Done in `5078eb4`: strict acceptance mode (devnet acceptance fails without an initialized issuance log; opt out with `--no-strict-reserves`), and a machine-readable coverage snapshot on `/vault/` read in one RPC context, with slot, claim source, margin and incomplete-history flags.
 - A controlled fixture where the mint's HTTP report is lower than an onchain claim the vault can't cover. Acceptance must refuse it. Today this is only covered at unit level in `packages/protocol/test/reserves.test.ts`.
 
 **Exit:** a viewer can independently recover the balance, the logged claim, the observation slot and the coverage verdict.
@@ -33,8 +37,8 @@ Each phase is roughly one week.
 
 **Why:** "no per-call chain transfer" is the central claim, but how well an observer can attribute purchases also depends on seller memos, funding patterns and how much of the chain the observer actually sees.
 
-- Replay one seeded set of purchases under tagged `exact`, nonce-only `exact` and Blindfold.
-- Report per-call transfers and attributions (correct, incorrect, abstained) against known ground truth. The ground truth stays out of what the observer sees.
+- Done in `5078eb4` for the single-agent demo: Act 5 scores tagged `exact` and Blindfold against ground truth (attributed, linked, incorrect, abstained), with per-call transfers and coverage.
+- Replay one seeded set of purchases under tagged `exact`, nonce-only `exact` and Blindfold with the same scorer.
 - Cases: equal deposits, skewed deposits, older unspent tokens, several payout windows.
 - Treat incomplete capture as an inconclusive result, not a success.
 
