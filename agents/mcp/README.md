@@ -7,7 +7,7 @@ A local [MCP](https://modelcontextprotocol.io) server for Claude Code, Claude De
 | Tool | What the model gets |
 |---|---|
 | `list_providers` | Name, base URL, advisory base price and topics of discoverable active providers |
-| `get_balance` | Remaining tokens, plus this session's spend and budget, in cents |
+| `get_balance` | Remaining tokens, this session's spend and budget in cents, and this session's purchases (URL, cents, time and the mint's redemption ID as a receipt) |
 | `quote(url)` | The advertised Blindfold price in cents, read from an unpaid HTTP 402 response. A successful free route returns zero |
 | `buy_data(url)` | The paid response, or `{ refused: reason }` when a limit, the wallet or the owner says no. Nothing is spent on a refusal. |
 | `check_reserves` | The vault balance compared with the larger of the issuance log and the mint's reported liabilities. `buy_data` runs its own check. |
@@ -110,7 +110,9 @@ Prompts to try in a connected client. The approval step requires form elicitatio
 5. *"Buy data from http://127.0.0.1:9999/v1/data/sol."* Or any server that isn't a registered provider. The MCP origin check returns `provider_not_allowed`.
 6. Keep buying until the session spend reaches 50¢, and watch `budget_exhausted` come back.
 
-Afterwards, open the vault and provider accounts on Solana Explorer: no transaction names Claude's purchases.
+7. *"What have you bought so far?"* `get_balance` lists this session's purchases with their receipts. Only the session and the providers paid know them.
+
+Afterwards, open the vault and provider accounts on Solana Explorer: no transaction names Claude's purchases. For a live view of the same accounts next to a standard x402 rival, run the [live demo](../../docs/DEMO.md#live-demo-with-claude-and-mcp).
 
 ## Development
 

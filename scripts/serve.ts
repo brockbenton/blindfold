@@ -229,7 +229,10 @@ async function main() {
   };
   step(`starting TokenFeed${exactOn ? " (Blindfold and the exact baseline)" : ""}`);
   const exact = exactOn
-    ? { payTo: loadKeypair(payoutPath).publicKey.toBase58(), facilitator: await exactFacilitator({ keypair: loadKeypair(facilitatorPath).secretKey, rpcUrl: rpc }) } // ExactSvmScheme adds a random memo when the seller does not prescribe one.
+    // The feed tags its exact payments with the feed and token (x402 `extra.memo`, e.g. `whale-flow/SOL`), as sellers
+    // do to reconcile payments, so `pnpm watch` can show what a standard x402 buyer gives away. Other routes get
+    // ExactSvmScheme's random memo.
+    ? { payTo: loadKeypair(payoutPath).publicKey.toBase58(), facilitator: await exactFacilitator({ keypair: loadKeypair(facilitatorPath).secretKey, rpcUrl: rpc }), memoTopics: ["sol", "btc", "eth"] }
     : undefined;
   const facSol = exactOn ? (await connection.getBalance(loadKeypair(facilitatorPath).publicKey, SOLANA_COMMITMENT)) / LAMPORTS_PER_SOL : 1;
   if (facSol < 0.01) warn(`the exact facilitator has ${facSol} SOL; exact payments need fees (it pays them)`);

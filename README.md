@@ -234,6 +234,7 @@ The last command runs the agent with stubbed wallet, provider and reserve reads.
 | To run | Command | What you need |
 |---|---|---|
 | Narrated devnet demo | `pnpm demo` | Funded devnet keys in `.keys/` and PostgreSQL. An LLM key enables the model-driven part of Act 6. See [demo setup](docs/DEMO.md#before-the-first-run). |
+| Live demo with Claude | `pnpm serve --local --window 60`, `pnpm watch`, `pnpm rival` | The same as the narrated demo, plus the [MCP server](agents/mcp/README.md#set-up) in Claude. See [live demo](docs/DEMO.md#live-demo-with-claude-and-mcp). |
 | Crowd comparison | `pnpm crowd` | Local validator tools, PostgreSQL and `anchor build`. See [crowd demo](docs/DEMO.md#crowd-demo-privacy-needs-other-people). |
 | Persistent devnet stack | `pnpm serve --local` | Deployed vault, registered TokenFeed, mint authority key and PostgreSQL. `pnpm serve` opens public tunnels by default. Follow the printed funding commands or use [MCP setup](agents/mcp/README.md#set-up). See [live stack](docs/RUNNING.md#9-live-stack-pnpm-serve). |
 

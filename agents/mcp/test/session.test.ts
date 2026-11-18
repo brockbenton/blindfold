@@ -46,7 +46,8 @@ describe("Session", () => {
     const { s } = session();
     const r = await s.buy("http://feed/v1/data/sol");
     expect(r).toMatchObject({ ok: true, paid_cents: 5, balance_cents: 95, data: { topic: "sol" } });
-    expect(s.balance()).toEqual({ balance_cents: 95, spent_cents: 5, budget_cents: 50, budget_left_cents: 45 });
+    expect(s.balance()).toMatchObject({ balance_cents: 95, spent_cents: 5, budget_cents: 50, budget_left_cents: 45 });
+    expect(s.balance().purchases).toEqual([{ at: expect.any(String), url: "http://feed/v1/data/sol", paid_cents: 5 }]);
   });
 
   it("lists only active providers, without keys", async () => {

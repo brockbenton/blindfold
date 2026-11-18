@@ -16,7 +16,9 @@
     "gateway": "pnpm --filter @blindfold/gateway start",
     "gateway:setup": "pnpm --filter @blindfold/scripts gateway:setup",
     "replay": "pnpm --filter @blindfold/scripts replay",
-    "replay:publish": "pnpm --filter @blindfold/scripts replay:publish"
+    "replay:publish": "pnpm --filter @blindfold/scripts replay:publish",
+    "watch": "pnpm --filter @blindfold/scripts watch",
+    "rival": "pnpm --filter @blindfold/scripts rival"
   },
   "devDependencies": {
     "@types/node": "26.6.6",

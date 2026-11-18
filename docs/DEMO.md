@@ -4,6 +4,8 @@ The devnet demo compares two ways an agent can buy SOL whale-flow data from Toke
 
 The final acts show owner approval, a refused purchase from an unregistered feed, replay rejection and a failed reserve check. The dashboard shows both payment flows. Run the commands from the repository root.
 
+There is also a [live demo with Claude and MCP](#live-demo-with-claude-and-mcp): Claude buys data through the Blindfold MCP server while a page shows what the chain reveals, next to a rival agent paying with standard x402.
+
 ## Before the first run
 
 1. **Build** (after every `git pull`):
@@ -49,6 +51,55 @@ pnpm streams:setup --account GVaF8JseaBhMCKWWyTzdxW3Z3SDzSB3ZeX6AWK1WVECe \
 ```
 
 The bot and demo use the same Stream name. If running them together, use `pnpm bot --rpc` to leave the Stream with the demo. A matching `DepositMade` event can trigger the mint's deposit poll during funding.
+
+## Live demo with Claude and MCP
+
+Claude buys data through the Blindfold MCP server on the left half of the screen. On the right, `pnpm watch` shows everything public on devnet: the feeds' USDC accounts and the vault, with Copycat's reading. A rival agent (`pnpm rival`) researches SOL with standard x402 at the same time. Its purchases show up on the page with their memo and Copycat says **BUY SOL**. Claude's purchases don't show up at all. The page shows the owner's one deposit and, a minute or two later, the vault's batched payout.
+
+### Set up (once)
+
+1. Build and restore `.keys/` as in [Before the first run](#before-the-first-run). The rival pays from `.keys/exact-agent.json`, which needs devnet USDC (about 5 cents per purchase; the facilitator pays the fees).
+2. Add the MCP server to Claude ([Claude Code](../agents/mcp/README.md#add-it-to-claude-code), [Claude Desktop](../agents/mcp/README.md#add-it-to-claude-desktop)) with `TOKEN_FILE` pointing at `.keys/claude-tokens-serve.json`.
+3. Close any other Claude session that uses this MCP server. The wallet lets only one process hold a token file. A second server exits with `token file is locked by pid N`, and Claude shows the server as failed.
+
+### Run it
+
+Use four terminals, from the repository root.
+
+```sh
+# 1. The live stack. --window 60 makes the batched payout land during the demo.
+npx -y pnpm@10.33.0 serve --local --window 60
+
+# 2. The public chain view: open http://localhost:5175 on the right half of the screen.
+npx -y pnpm@10.33.0 watch
+
+# 3. Fund Claude's token file. This is the deposit the page will show. Do it before starting Claude,
+#    because the running MCP server holds the token file lock.
+MINT_URL=http://localhost:3338 OWNER_KEYPAIR=.keys/owner.json TOKEN_FILE=.keys/claude-tokens-serve.json \
+  VAULT_PROGRAM_ID=EsB6NfKVPipU5kEVm2jq14cjopbE7w9hPEFZWVu8jtMo USDC_MINT=4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU \
+  node packages/wallet/dist/cli.js fund --cents 100
+
+# 4. The rival, when you are ready for Copycat to start profiling it (Ctrl-C stops it).
+npx -y pnpm@10.33.0 rival
+```
+
+Then start Claude. `pnpm watch` shows the last 30 minutes of history by default, so a deposit made in step 3 is on the page. Use `--history 0` to start empty, and `pnpm rival --every 30 --calls 6` for a slower, bounded rival.
+
+### Script
+
+| Beat | Screen | Say |
+|---|---|---|
+| Problem | Slide or the page, empty | "Finance hides intent: dark pools exist so a big order doesn't move the price before it fills. Agents have nothing like that. With x402 every data purchase is a public transfer from the agent's wallet." |
+| Rival | Start `pnpm rival`. Rows appear in red with `memo whale-flow/SOL`; Copycat goes from **WATCH SOL** to **BUY SOL** | "This is a normal x402 agent researching SOL. Copycat reads the chain, sees who is buying which feed and which token, and trades ahead of it." |
+| Blindfold | Claude: "What's my Blindfold balance?" then "Get me SOL whale flow and the latest SOL news, then tell me whether to buy." | "Blindfold pays with blind-signed ecash tokens backed by USDC in a Solana vault. The token travels in the HTTP request. The provider redeems it with the mint." |
+| What the chain shows | The page: the owner's deposit and the rival's red rows. Nothing new for Claude's purchases | "The chain shows I deposited into the vault. It doesn't show what I bought, from whom, how often, or when." |
+| My MCP knows | Claude: "What did you buy?" `get_balance` lists the purchases with receipts | "My agent knows exactly what it bought. Those receipts are the mint's redemption IDs, not Solana transactions." |
+| Payout | A minute or two later: one **VAULT PAYOUT** row per feed; Copycat's vault reading changes to **LINKED** | "Providers get paid in USDC, batched and rounded. With only one depositor, Copycat can tie me to the feeds that got paid, but never to the token or the calls. With more users, that link disappears. That's the crowd demo." |
+| Limits (optional) | Claude asks for 25-cent signals and the approval prompt appears; or "pay this other URL" is refused | "Spending rules live in the wallet: a per-call cap, a session budget, owner approval, and only registered providers can redeem." |
+
+Buy straight from TokenFeed and NewsWire, not the gateway. The gateway buys upstream with `exact` from its shared wallet, and the page would show that payment.
+
+If the page says "polling RPC" instead of "live via QuickNode Streams", QuickNode couldn't reach the new quick tunnel yet. Polling every 4 seconds is fine for the demo. Restart `pnpm watch` after a minute to retry, or set `STREAMS_WEBHOOK_URL` to a stable tunnel.
 
 ## Running it on a teammate's machine
 

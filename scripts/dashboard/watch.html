@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Public Chain View</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="watch.css">
+</head>
+<body>
+<div id="watch"></div>
+<script type="module">
+import { mountWatch } from "./watch.js";
+
+const view = mountWatch(document.getElementById("watch"));
+const es = new EventSource("events");
+es.onopen = () => view.reset();
+es.onmessage = (m) => view.apply(JSON.parse(m.data));
+</script>
+</body>
+</html>

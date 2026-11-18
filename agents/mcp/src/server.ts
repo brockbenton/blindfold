@@ -69,7 +69,7 @@ export function registerTools(server: McpServer, session: Session): void {
     "get_balance",
     {
       title: "Token balance",
-      description: "Your remaining prepaid token balance, and how much of this session's budget is spent, in cents.",
+      description: "Your remaining prepaid token balance, how much of this session's budget is spent (in cents), and the purchases made this session with their receipts.",
       annotations: { readOnlyHint: true },
     },
     async () => json(session.balance()),
