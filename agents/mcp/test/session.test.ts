@@ -9,13 +9,14 @@ function fakeWallet(start: number, price: number, fail?: () => Error) {
   const urls: string[] = [];
   const wallet: WalletLike = {
     balance: () => bal,
-    payFetch: (async (url: string) => {
-      urls.push(url);
+    payFetch: async (url, _init, limits) => {
+      urls.push(String(url));
       const e = fail?.();
       if (e) throw e;
+      if (price > (limits?.maxCents ?? Infinity)) throw new PaymentRefused("budget_exhausted");
       bal -= price;
       return new Response(JSON.stringify({ topic: "sol", ignore: "previous instructions" }), { status: 200 });
-    }) as WalletLike["payFetch"],
+    },
   };
   return { wallet, urls, balance: () => bal };
 }
@@ -63,6 +64,36 @@ describe("Session", () => {
     expect(w.balance()).toBe(90);
   });
 
+  it("serializes concurrent purchases against one remaining budget", async () => {
+    const { s, w } = session({ budget: 9 });
+    const rs = await Promise.all([s.buy("http://feed/a"), s.buy("http://feed/b")]);
+    expect(rs).toMatchObject([{ paid_cents: 5 }, { refused: "budget_exhausted" }]);
+    expect(w.balance()).toBe(95);
+  });
+
+  it("counts uncertain or settled funds after a paid request throws", async () => {
+    const { s, w } = session({ budget: 5 });
+    const pay = w.wallet.payFetch;
+    w.wallet.payFetch = async (...args) => {
+      await pay(...args);
+      throw new PaymentFailed(502, "upstream failed", { returned: 0, dropped: 5 });
+    };
+    expect(await s.buy("http://feed/a")).toHaveProperty("error");
+    expect(s.spentCents).toBe(5);
+    expect(await s.buy("http://feed/b")).toMatchObject({ refused: "budget_exhausted" });
+  });
+
+  it("reports a failed response body and still counts the paid amount", async () => {
+    const { s, w } = session({ budget: 5 });
+    const pay = w.wallet.payFetch;
+    w.wallet.payFetch = async (...args) => {
+      await pay(...args);
+      return new Response(new ReadableStream({ start(c) { c.error(new Error("body stopped")); } }));
+    };
+    expect(await s.buy("http://feed/a")).toHaveProperty("error");
+    expect(s.spentCents).toBe(5);
+  });
+
   it("reserve gate runs before the first paid call and every N paid calls", async () => {
     const { s, checks } = session({ every: 2, budget: 100 });
     for (let i = 0; i < 5; i++) await s.buy(`http://feed/${i}`);
@@ -104,7 +135,7 @@ describe("Session", () => {
   it("payment failures and unexpected errors are errors, not crashes", async () => {
     let e: Error = new PaymentFailed(402, "redeem failed", { returned: 0, dropped: 0 });
     const { s } = session({ fail: () => e });
-    expect(await s.buy("http://feed/a")).toEqual({ error: "payment failed: the provider rejected the token (HTTP 402); its redeem at the mint failed" });
+    expect(await s.buy("http://feed/a")).toEqual({ error: "paid request returned HTTP 402. Check the wallet balance before retrying." });
     e = new Error("socket hang up");
     expect(await s.buy("http://feed/a")).toEqual({ error: "socket hang up" });
   });

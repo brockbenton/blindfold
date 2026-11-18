@@ -16,15 +16,24 @@ export function loadOrCreateKeypair(path: string, create: boolean): { bytes: Uin
   const pub = publicKey.export({ format: "der", type: "spki" }).subarray(-32);
   const bytes = Uint8Array.from([...seed, ...pub]);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify([...bytes]), { mode: 0o600 });
+  writeFileSync(path, JSON.stringify([...bytes]), { mode: 0o600, flag: "wx" });
   return { bytes, created: true };
 }
 
 /** `fetch` wrappers that pay x402 `exact` in `asset` from the wallet, each capped per payment. */
 export async function walletPayFetch(o: { keypair: Uint8Array; rpcUrl: string; network: string; asset: string }): Promise<{ address: string; payFetch: PayFetchFactory }> {
   const signer = await createKeyPairSignerFromBytes(o.keypair);
-  const payFetch: PayFetchFactory = (maxBase) => wrapFetchWithPayment(fetch, new x402Client()
+  const payFetch: PayFetchFactory = (maxBase, payTo) => {
+    let signed = false;
+    return wrapFetchWithPayment(fetch, new x402Client()
     .register(o.network as `${string}:${string}`, new ExactSvmScheme(signer, { rpcUrl: o.rpcUrl }))
-    .setSpendControls({ allowedAssets: [{ network: o.network as `${string}:${string}`, asset: o.asset, maxAmountPerPayment: String(maxBase) }] }));
+    .setSpendControls({ allowedAssets: [{ network: o.network as `${string}:${string}`, asset: o.asset, maxAmountPerPayment: String(maxBase) }] })
+    .onBeforePaymentCreation(async ({ selectedRequirements }) => {
+      if (signed || selectedRequirements.payTo !== payTo || BigInt(selectedRequirements.amount) !== maxBase) {
+        return { abort: true, reason: "vendor quote changed or payment was already attempted" };
+      }
+      signed = true;
+    }));
+  };
   return { address: String(signer.address), payFetch };
 }

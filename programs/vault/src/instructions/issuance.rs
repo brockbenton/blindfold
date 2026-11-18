@@ -58,7 +58,6 @@ pub fn handle_log_issuance(ctx: Context<LogIssuance>, add: u64) -> Result<()> {
     whole_cents(add)?;
     let log = &mut ctx.accounts.issuance_log;
     let issued = log.issued.checked_add(add).ok_or(VaultError::MathOverflow)?;
-    require!(issued >= log.settled, VaultError::IssuanceBelowSettled);
     let clock = Clock::get()?;
     log.issued = issued;
     log.seq = log.seq.checked_add(1).ok_or(VaultError::MathOverflow)?;

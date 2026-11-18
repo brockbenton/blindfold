@@ -114,12 +114,13 @@ async function main() {
   cleanups.push(acquireSettleLock(KEYS, "pnpm serve"));
 
   const connection = new Connection(rpc, SOLANA_COMMITMENT);
+  if (!(await connection.getGenesisHash()).startsWith(SOLANA_DEVNET_CAIP2.split(":")[1])) fail("the RPC is not Solana devnet");
   const programId = new PublicKey(process.env.VAULT_PROGRAM_ID ?? DEFAULT_VAULT_PROGRAM_ID);
   const usdcMint = new PublicKey(process.env.USDC_MINT ?? USDC_DEVNET_MINT);
   const authority = keyFile("mint-authority");
   step(`checking the vault at ${programId.toBase58()}`);
   const cfgInfo = await connection.getAccountInfo(configPda(programId));
-  if (!cfgInfo) fail(`vault Config not found for ${programId.toBase58()} on ${rpc}`);
+  if (!cfgInfo) fail(`vault Config not found for ${programId.toBase58()} on the configured RPC`);
   const config = decodeConfig(cfgInfo.data);
   if (!config.mintAuthority.equals(authority.publicKey)) fail("mint-authority.json does not match the vault's mint authority");
   if (!config.usdcMint.equals(usdcMint)) fail("USDC mint does not match the vault");
@@ -161,7 +162,7 @@ async function main() {
 
   const [mintPort, feedPort] = [await needPort(3338, "mint"), await needPort(4000, "TokenFeed")];
   const newsPort = newsId !== null ? await needPort(4001, "NewsWire") : null;
-  const gatewayPort = gatewayId !== null ? await needPort(4100, "gateway") : null;
+  const gatewayPort = gatewayId !== null && exactOn ? await needPort(4100, "gateway") : null;
   const localMint = `http://localhost:${mintPort}`;
 
   // Public URLs: your own (SERVE_*_URL), a quick tunnel, or localhost with --local. Tunnels start before the
@@ -177,12 +178,17 @@ async function main() {
     fail("cloudflared not found. Install it (docs/DEMO.md, QuickNode Streams), or run pnpm serve --local.");
   }
   if (!local) step("opening cloudflared tunnels (10 to 60 seconds)");
-  const [mintUrl, feedUrl, newsUrl, gatewayUrl] = await Promise.all([
+  const tunnels = await Promise.allSettled([
     tunnel(mintPort, process.env.SERVE_MINT_URL, "mint"),
     tunnel(feedPort, process.env.SERVE_FEED_URL, "feed"),
     newsPort !== null ? tunnel(newsPort, process.env.SERVE_NEWS_URL, "news") : Promise.resolve(null),
     gatewayPort !== null ? tunnel(gatewayPort, process.env.SERVE_GATEWAY_URL, "gateway") : Promise.resolve(null),
   ]);
+
+  const [mintUrl, feedUrl, newsUrl, gatewayUrl] = tunnels.map((t) => {
+    if (t.status === "rejected") throw t.reason;
+    return t.value;
+  }) as [string, string, string | null, string | null];
 
   // The mint: a stable schema and seed, so balances, spent proofs and the deposit cursor survive restarts.
   const dbUrl = databaseUrl();
@@ -217,12 +223,13 @@ async function main() {
 
   // The feeds advertise the public mint URL (wallets check it against their token file) but redeem locally.
   const feedLog = (name: string) => (e: Record<string, unknown>) => {
-    if (e.outcome === "served") ok(`${name} served ${e.route} (paid)`);
+    if (e.outcome === "owed") console.error(JSON.stringify(e));
+    else if (e.outcome === "served") ok(`${name} served ${e.route} (paid)`);
     else if (e.outcome && e.outcome !== "challenge") say(dim(`${name} ${e.route}: ${e.outcome}${e.reason ? ` (${e.reason})` : ""}`));
   };
   step(`starting TokenFeed${exactOn ? " (Blindfold and the exact baseline)" : ""}`);
   const exact = exactOn
-    ? { payTo: loadKeypair(payoutPath).publicKey.toBase58(), facilitator: await exactFacilitator({ keypair: loadKeypair(facilitatorPath).secretKey, rpcUrl: rpc }), memoTopics: topics }
+    ? { payTo: loadKeypair(payoutPath).publicKey.toBase58(), facilitator: await exactFacilitator({ keypair: loadKeypair(facilitatorPath).secretKey, rpcUrl: rpc }) } // ExactSvmScheme adds a random memo when the seller does not prescribe one.
     : undefined;
   const facSol = exactOn ? (await connection.getBalance(loadKeypair(facilitatorPath).publicKey, SOLANA_COMMITMENT)) / LAMPORTS_PER_SOL : 1;
   if (facSol < 0.01) warn(`the exact facilitator has ${facSol} SOL; exact payments need fees (it pays them)`);
@@ -271,11 +278,13 @@ async function main() {
   kv("Settlement", `every ${WINDOW_S}s window, after a ${WINDOW_S}s hold, in ${UNIT_CENTS}-cent units`);
   kv("Admin token", join(KEYS, "serve-admin-token"));
   blank();
+  const shellWord = (s: string) => "'" + s.replaceAll("'", "'\"'\"'") + "'";
+  if (process.env.SOLANA_RPC_URL) say(dim("Set SOLANA_RPC_URL in the terminal where you run these commands."));
   say(dim("Fund an agent (the token file only pays this mint at this URL):"));
-  console.log(`  MINT_URL=${mintUrl} OWNER_KEYPAIR=${join(KEYS, "owner.json")} TOKEN_FILE=./tokens.json SOLANA_RPC_URL=${rpc} VAULT_PROGRAM_ID=${programId.toBase58()} USDC_MINT=${usdcMint.toBase58()} \\`);
+  console.log(`  MINT_URL=${shellWord(mintUrl)} OWNER_KEYPAIR=${shellWord(join(KEYS, "owner.json"))} TOKEN_FILE=./tokens.json VAULT_PROGRAM_ID=${programId.toBase58()} USDC_MINT=${usdcMint.toBase58()} \\`);
   console.log(`    node packages/wallet/dist/cli.js fund --cents 50`);
   say(dim("Run the agent against it:"));
-  console.log(`  MINT_URL=${mintUrl} TOKEN_FILE=./tokens.json SOLANA_RPC_URL=${rpc} VAULT_PROGRAM_ID=${programId.toBase58()} USDC_MINT=${usdcMint.toBase58()} \\`);
+  console.log(`  MINT_URL=${shellWord(mintUrl)} TOKEN_FILE=./tokens.json VAULT_PROGRAM_ID=${programId.toBase58()} USDC_MINT=${usdcMint.toBase58()} \\`);
   console.log(`    node agents/simple/dist/main.js --topic sol --calls 2`);
   if (!local && !process.env.SERVE_MINT_URL) say(yellow("Quick tunnel URLs change on every run. Token files funded through this URL stop paying when it goes away; use --local or SERVE_MINT_URL for a stable one."));
   say(dim("Ctrl-C stops everything. The mint's database and seed stay in the \"serve\" schema and .keys/."));
@@ -311,7 +320,9 @@ main()
     process.exit(0);
   })
   .catch(async (e) => {
-    console.error(`\n  ${(e as { serve?: boolean }).serve ? "" : "unexpected error: "}${(e as Error).message}`);
+    const rpc = process.env.SOLANA_RPC_URL;
+    const message = rpc ? (e as Error).message.replaceAll(rpc, "[Solana RPC]") : (e as Error).message;
+    console.error(`\n  ${(e as { serve?: boolean }).serve ? "" : "unexpected error: "}${message}`);
     await cleanup();
     process.exit(1);
   });

@@ -185,6 +185,6 @@ Unlike `pnpm demo`, the mint is persistent. Its database lives in the `serve` sc
 
 Quick tunnel URLs change on every run, and a token file only pays the mint URL it was funded through. Use `--local` or `SERVE_MINT_URL` when token files need to outlive one run.
 
-**One settlement writer.** `pnpm serve` and a devnet `pnpm demo` both sign `settle_batch` with the same mint authority. Both check for an existing local writer in `.keys/.settlement-writer.lock` (or under the shared `KEYS_DIR`). This file does not coordinate different machines or key directories. Coordinate devnet demo, serve and acceptance runs across the team.
+**One settlement writer.** `pnpm serve` and a devnet `pnpm demo` both sign `settle_batch` with the same mint authority. Both acquire `.keys/.settlement-writer.lock` exclusively (or under the shared `KEYS_DIR`). After an unclean exit, check the PID in the lock and remove the file once the writer has stopped. This file does not coordinate different machines or key directories. Coordinate devnet demo, serve and acceptance runs across the team.
 
 The [public vault history](https://brockbenton.github.io/blindfold/vault/) reads deposits, settlements, provider changes and issuance totals from devnet RPC. To serve the page locally, run `python3 -m http.server -d scripts/vault-history` and open `http://localhost:8000`.

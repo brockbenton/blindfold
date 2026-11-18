@@ -15,6 +15,8 @@
 // Run with --keep-validator to leave the localnet validator running.
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { once } from "node:events";
+import { rm } from "node:fs/promises";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
@@ -28,11 +30,13 @@ import {
 } from "@solana/web3.js";
 import { createMint, getOrCreateAssociatedTokenAccount, mintTo, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import {
-  DEFAULT_VAULT_PROGRAM_ID, MAX_DEPOSIT_CENTS, SOLANA_COMMITMENT, USDC_DEVNET_MINT, buildInitializeIx,
+  DEFAULT_VAULT_PROGRAM_ID, MAX_DEPOSIT_CENTS, SOLANA_COMMITMENT, SOLANA_DEVNET_CAIP2, USDC_DEVNET_MINT, buildInitializeIx,
   buildDeactivateProviderIx, buildRegisterProviderIx, centsToBaseUnits, configPda, decodeConfig, decodeIssuanceLog, issuancePda, vaultAta,
 } from "@blindfold/protocol";
 import { AgentWallet, SolanaDepositor, ownerFund } from "@blindfold/wallet";
 import { createApp } from "../apps/mock-api/src/app.js";
+import { UpstreamClient } from "../apps/gateway/src/upstream.js";
+import { walletPayFetch } from "../apps/gateway/src/wallet.js";
 import { HttpRedeemClient } from "../apps/mock-api/src/x402/redeemClient.js";
 import { SolanaSettleSender } from "../services/mint/src/chain/settleSender.js";
 import { SolanaVaultReader } from "../services/mint/src/chain/vaultReader.js";
@@ -59,7 +63,7 @@ const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const log = (m: string) => console.log(m);
 function check(name: string, ok: boolean, detail?: unknown) {
-  if (!ok) throw new Error(`FAIL ${name}${detail === undefined ? "" : `: ${JSON.stringify(detail)}`}`);
+  if (!ok) throw new Error(`FAIL ${name}${detail === undefined ? "" : `: ${JSON.stringify(detail, (_, v) => typeof v === "bigint" ? v.toString() : v)}`}`);
   log(`  ok   ${name}`);
 }
 function need(name: string): string {
@@ -77,7 +81,6 @@ const freePort = () =>
   });
 
 const cleanups: (() => Promise<void> | void)[] = [];
-let validator: ChildProcess | undefined;
 
 async function tokenBalance(c: Connection, ata: PublicKey): Promise<bigint> {
   return BigInt((await c.getTokenAccountBalance(ata, SOLANA_COMMITMENT)).value.amount);
@@ -93,15 +96,26 @@ async function startValidator(rpc: string, programId: PublicKey): Promise<void> 
   if (!existsSync(so)) throw new Error(`${so} missing: run \`anchor build\` first`);
   const c = new Connection(rpc, SOLANA_COMMITMENT);
   if (await c.getVersion().then(() => true, () => false)) {
+    const genesis = await c.getGenesisHash();
+    if (["EtWTRABZaYq6iMfeYKouRu166VU2xqa1", "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3z"].some((id) => genesis.startsWith(id))) {
+      throw new Error("the local RPC is connected to a public cluster");
+    }
     log("using the validator already running on " + rpc);
     return;
   }
   const ledger = mkdtempSync(join(tmpdir(), "bf-ledger-"));
-  validator = spawn(`${solanaBin}/solana-test-validator`, ["--bpf-program", programId.toBase58(), so, "--ledger", ledger, "--reset", "--quiet"], {
+  const validator: ChildProcess = spawn(`${solanaBin}/solana-test-validator`, ["--bpf-program", programId.toBase58(), so, "--ledger", ledger, "--reset", "--quiet"], {
     stdio: "ignore", env: { ...process.env, PATH: `${solanaBin}:${process.env.PATH}` },
   });
   validator.on("exit", (code) => { if (code) console.error(`validator exited with ${code}`); });
-  if (!keepValidator) cleanups.push(() => { validator?.kill("SIGTERM"); });
+  if (!keepValidator) cleanups.push(async () => {
+    if (validator.pid && validator.exitCode === null && validator.signalCode === null) {
+      const exited = once(validator, "exit");
+      validator.kill("SIGTERM");
+      await exited;
+    }
+    await rm(ledger, { recursive: true, force: true });
+  });
   for (let i = 0; i < 90; i++) {
     if (await c.getVersion().then(() => true, () => false)) return;
     await sleep(1000);
@@ -110,7 +124,7 @@ async function startValidator(rpc: string, programId: PublicKey): Promise<void> 
 }
 
 async function main() {
-  const rpc = process.env.SOLANA_RPC_URL ?? (localnet ? "http://127.0.0.1:8899" : "https://api.devnet.solana.com");
+  const rpc = localnet ? "http://127.0.0.1:8899" : process.env.SOLANA_RPC_URL ?? "https://api.devnet.solana.com";
   if (/mainnet/i.test(rpc)) throw new Error("refusing to run against mainnet");
   const programId = new PublicKey(process.env.VAULT_PROGRAM_ID ?? DEFAULT_VAULT_PROGRAM_ID);
   const databaseUrl = process.env.DATABASE_URL;
@@ -197,7 +211,7 @@ async function main() {
     db, cfg, vault: new SolanaVaultReader(connection, programId, usdcMint),
     sender: new SolanaSettleSender(connection, programId, usdcMint, authority), confirmTimeoutMs: 60_000,
   });
-  cleanups.push(start());
+  cleanups.push(start(["deposits", "providers", "settlement"]));
   const stop = (s: ReturnType<typeof serve>) => new Promise<void>((r) => { (s as any).closeAllConnections?.(); s.close(() => r()); });
   const mintServer = serve({ fetch: mintApp.fetch, port: mintPort, hostname: "127.0.0.1" });
   cleanups.push(() => stop(mintServer));
@@ -220,6 +234,7 @@ async function main() {
   cleanups.push(() => stop(apiServer));
 
   const dir = mkdtempSync(join(tmpdir(), "bf-e2e-"));
+  cleanups.push(() => rm(dir, { recursive: true, force: true }));
   const tokenFile = join(dir, "tokens.json");
   const walletCents = () => (JSON.parse(readFileSync(tokenFile, "utf8")).proofs as { amount: number }[]).reduce((s, p) => s + p.amount, 0);
   const providerBalance = async () =>
@@ -254,6 +269,7 @@ async function main() {
     return info ? decodeIssuanceLog(info.data) : null;
   };
   const logged = (await mintReq("/v1/blindfold/admin/log-issuance", { body: {}, auth: true })).json.result as string;
+  if (localnet) check("local validator supports issuance logging", logged === "initialized");
   const withLog = logged !== "unsupported";
   if (!withLog) log("  skip  the vault program has no issuance log instructions; agents use the mint's report");
   else {
@@ -360,6 +376,20 @@ async function main() {
     check("bot sees the exact payer's wallet and both calls", direct.length === 1 && direct[0].payer === payer.address && direct[0].calls === 2, direct);
     const payouts = obs.filter((o) => o.kind === "vault_payout");
     check("bot sees the blindfold flow only as one vault payout, no payer", payouts.length === 1 && payouts[0].signature === s.json.tx, payouts);
+  }
+
+  if (localnet && exactKeys) {
+    section("8. concurrent purchases from the gateway wallet");
+    const asset = usdcMint.toBase58(), network = SOLANA_DEVNET_CAIP2;
+    const { payFetch } = await walletPayFetch({ keypair: exactKeys.agent.secretKey, rpcUrl: rpc, asset, network });
+    const vendor = new UpstreamClient({ payFetch, asset, network });
+    const url = `${apiUrl}/v1/data/sol`;
+    const quote = await vendor.quote(url);
+    const vendorBefore = await tokenBalance(connection, payoutAta);
+    const results = await Promise.all([vendor.buy(url, quote), vendor.buy(url, quote)]);
+    const sigs = results.map((r) => r.transaction);
+    check("gateway purchases each have a distinct onchain receipt", sigs.every(Boolean) && new Set(sigs).size === 2, sigs);
+    check("vendor received both gateway payments", (await tokenBalance(connection, payoutAta)) - vendorBefore === centsToBaseUnits(2 * PRICE));
   }
 
   log("\nE2E PASSED");

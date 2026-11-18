@@ -20,9 +20,9 @@ The gateway hides **which agent** is researching, not **what** is being research
 
 ## Flow per paid call
 
-1. **Quote, before payment.** The gateway builds the upstream URL from the route map and asks the vendor for its 402 challenge (cached for 30 s). If the vendor is unreachable, not an x402 `exact` seller in the configured asset and network, or charges more than the route's `maxUpstreamCents`, the gateway answers 502 and the agent's tokens are untouched.
+1. **Quote, before payment.** The gateway builds the upstream URL from the route map and asks the vendor for its 402 challenge (cached for 30 s on unpaid requests and refreshed before redemption). If the vendor is unreachable, not an x402 `exact` seller in the configured asset and network, or charges more than the route's `maxUpstreamCents`, the gateway answers 502 and the agent's tokens are untouched.
 2. **Redeem.** The x402 middleware settles the `blindfold` payment upfront, exactly like the mock API: tokens locked to the gateway's key are signed and redeemed at the mint before the handler runs.
-3. **Buy.** The gateway pays the vendor with `@x402/fetch` and `@x402/svm` from its wallet. The wallet's spend control refuses any payment above the route's cap, even if the vendor raised its price after the quote. A transient failure (network error, HTTP 5xx) is retried once.
+3. **Buy.** The gateway pays the vendor with `@x402/fetch` and `@x402/svm` from its wallet. The wallet requires the quoted recipient and amount and signs at most once. A network error or vendor failure can leave the transfer outcome uncertain, so the gateway records the failure for reconciliation.
 4. **Serve.** The vendor's body and content type go back to the agent, with `X-Upstream-Payment: <signature>` when the vendor returns a readable payment receipt.
 
 **Why redeem before buying.** Buying first and redeeming only on success would protect the agent, but the mint is the only party that knows whether a token is unspent. Anyone could then make the gateway buy with tokens that were already spent and drain its wallet. Redeeming first protects the shared wallet; the preflight quote in step 1 removes the common failure cases before any payment. If the purchase still fails after the redeem, the agent has already paid the route price: the gateway answers 502 and logs `{"outcome":"owed", "owed_cents": ...}` so the operator can make it good. There are no refunds in the protocol.
@@ -44,7 +44,7 @@ The gateway builds every upstream request from scratch. It sends only `accept: a
 | `SOLANA_RPC_URL`, `USDC_MINT` | devnet, Circle devnet USDC | Where the wallet pays |
 | `PROVIDER_ID` | — | Logging sanity check, as for the mock API |
 
-A route map is a JSON array. `priceCents` must cover the maximum charge for each upstream attempt. The gateway fronts the purchase from its own wallet. A retry after an ambiguous failure may pay upstream again.
+A route map is a JSON array. `priceCents` must cover the maximum charge for each upstream attempt. The gateway fronts one purchase from its own wallet per redemption.
 
 ```json
 [
@@ -80,4 +80,4 @@ The gateway is registered on the devnet vault as provider 4. A devnet run on Nov
 
 ## Tests
 
-`apps/gateway/test` uses a fake vendor and a fake mint: pay-through order (quote, redeem, buy), the upstream price cap refusing before payment, an unreachable vendor refusing before payment, one retry on a transient failure, an `owed` record when the purchase fails after the redeem, route prices, the header and query stripping, and route-map validation.
+`apps/gateway/test` uses a fake vendor and a fake mint: pay-through order (quote, redeem, buy), the upstream price cap refusing before payment, an unreachable vendor refusing before payment, a single purchase attempt on ambiguous failures, an `owed` record when the purchase fails after the redeem, route prices, the header and query stripping, and route-map validation.

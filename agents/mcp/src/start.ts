@@ -35,15 +35,19 @@ export async function start(
     approvalOverCents: cfg.approvalOverCents,
     approvalTimeoutMs: cfg.approvalTimeoutMs,
     approve: o.approver ?? elicitationApprover(server),
-    ...(o.fetch ? { fetch: o.fetch } : {}),
+    fetch: (req, init) => f(req, { ...init, signal: AbortSignal.timeout(15_000) }),
   });
-  const connection = o.connection ?? new Connection(cfg.rpcUrl, "confirmed");
+  const connection = o.connection ?? new Connection(cfg.rpcUrl, {
+    commitment: "confirmed",
+    fetch: (req, init) => fetch(req, { ...init, signal: AbortSignal.timeout(15_000) }),
+  });
   const mint = mintUrl.replace(/\/+$/, "");
   const tokenProblem = await keysetProblem(f, mint, file.proofs ?? []);
   if (tokenProblem) console.error(`blindfold-mcp: ${tokenProblem}`);
   const session = new Session({
     wallet,
     tokenProblem,
+    usdcMint: cfg.usdcMint,
     fetch: f,
     budgetCents: cfg.budgetCents,
     reserveEvery: cfg.reserveEvery,

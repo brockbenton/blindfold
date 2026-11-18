@@ -26,8 +26,8 @@ export function fakeVendor() {
   const state = {
     priceBase: 50_000n,
     down: false,
-    /** Failures for the next paid calls, consumed in order: "throw" (network, retryable), "402" or "500". */
-    buyFailures: [] as ("throw" | "402" | "500")[],
+    /** Failures for the next paid calls, consumed in order: "throw" (ambiguous network failure), "402" or "500". */
+    buyFailures: [] as ("throw" | "402" | "500" | "body")[],
   };
   const requests: { url: string; headers: Record<string, string>; paid: boolean; maxBase?: bigint }[] = [];
   const events: string[] = [];
@@ -49,6 +49,7 @@ export function fakeVendor() {
     if (f === "throw") throw new TypeError("fetch failed");
     if (f === "402") return new Response("{}", { status: 402 });
     if (f === "500") return new Response("oops", { status: 500 });
+    if (f === "body") return new Response(new ReadableStream({ start(c) { c.error(new Error("connection lost reading body")); } }));
     if (state.priceBase > maxBase) throw new Error("amount exceeds maxAmountPerPayment");
     const receipt = Buffer.from(JSON.stringify({ success: true, transaction: "VendorTxSig" })).toString("base64");
     return new Response(JSON.stringify({ vendor: true, url: new URL(input as string).pathname }), {

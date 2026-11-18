@@ -9,7 +9,8 @@ const PROGRAM = params.get("program") || "EsB6NfKVPipU5kEVm2jq14cjopbE7w9hPEFZWV
 const USDC = params.get("usdc") || "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
 const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const ATA_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
-const CACHE_KEY = `bf-vault-history:v2:${new URL(RPC).host}:${PROGRAM}`;
+const CACHE_KEY = `bf-vault-history:v3:${new URL(RPC).host}:${PROGRAM}:${USDC}`;
+const ISSUANCE_DISCRIMINATOR = "13609a201322caf1";
 /** Minimum spacing between RPC requests; the public devnet RPC rate-limits bursts. */
 const GAP_MS = 300;
 const CONCURRENCY = 2;
@@ -20,6 +21,7 @@ const EVENTS = {
   "26d1894eb913930e": "ProviderRegistered",
   "881f626db8ff7bde": "ProviderDeactivated",
   ee0ebbc07f5f6809: "BatchSettled",
+  "280a45c80cd1b3fd": "IssuanceLogged",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -34,13 +36,18 @@ const usd = (base) => {
 };
 const signed = (base) => (BigInt(base) > 0n ? `+${usd(base)}` : usd(base));
 const cluster = (() => {
-  if (/devnet/i.test(RPC)) return "?cluster=devnet";
-  if (/mainnet/i.test(RPC)) return "";
-  if (/testnet/i.test(RPC)) return "?cluster=testnet";
-  return `?cluster=custom&customUrl=${encodeURIComponent(RPC)}`;
+  const url = new URL(RPC);
+  const host = url.hostname;
+  if (params.get("cluster") === "mainnet" || /mainnet/i.test(host)) return "";
+  if (params.get("cluster") === "testnet" || /testnet/i.test(host)) return "?cluster=testnet";
+  if (["localhost", "127.0.0.1", "[::1]"].includes(host)) {
+    return `?cluster=custom&customUrl=${encodeURIComponent(url.origin)}`;
+  }
+  // A provider URL can contain an API key. Never send it along to the Explorer.
+  return "?cluster=devnet";
 })();
-const explorerTx = (sig) => `https://explorer.solana.com/tx/${sig}${cluster}`;
-const explorerAddr = (a) => `https://explorer.solana.com/address/${a}${cluster}`;
+const explorerTx = (sig) => `https://explorer.solana.com/tx/${encodeURIComponent(sig)}${cluster}`;
+const explorerAddr = (a) => `https://explorer.solana.com/address/${encodeURIComponent(a)}${cluster}`;
 const fmtTime = (t) => (t ? new Date(t * 1000).toISOString().replace("T", " ").slice(0, 16) : "pending");
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -55,7 +62,7 @@ async function rpc(method, rpcParams, tries = 8) {
     let retry = false;
     try {
       const r = await fetch(RPC, {
-        method: "POST", headers: { "content-type": "application/json" },
+        method: "POST", signal: AbortSignal.timeout(15_000), headers: { "content-type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: rpcParams }),
       });
       if (r.status === 429 || r.status >= 500) { retry = true; throw new Error(`RPC HTTP ${r.status}`); }
@@ -66,7 +73,7 @@ async function rpc(method, rpcParams, tries = 8) {
       }
       return j.result;
     } catch (e) {
-      if (e instanceof TypeError) retry = true; // network error or CORS hiccup
+      if (e instanceof TypeError || e.name === "TimeoutError") retry = true; // network error or CORS hiccup
       if (!retry || attempt >= tries) throw e;
       await sleep(Math.min(10_000, 1000 * 2 ** attempt));
     }
@@ -120,6 +127,7 @@ function decodeEvent(data) {
     case "ProviderRegistered": return { name, providerId: v.getUint32(8, true), payoutToken: pk(b.subarray(45, 77)) };
     case "ProviderDeactivated": return { name, providerId: v.getUint32(8, true) };
     case "BatchSettled": return { name, batchId: u64(8), total: u64(16), count: b[24] };
+    case "IssuanceLogged": return { name, issued: u64(8), settled: u64(16), seq: u64(24) };
   }
   return null;
 }
@@ -130,15 +138,24 @@ function summarize(sig, tx, vaultToken) {
   const logs = tx.meta.logMessages || [];
   const names = [];
   const events = [];
+  const stack = [];
   for (let i = 0; i < logs.length; i++) {
-    if (logs[i].startsWith(`Program ${PROGRAM} invoke`)) {
-      const m = /^Program log: Instruction: (\w+)/.exec(logs[i + 1] || "");
-      if (m) names.push(m[1]);
-    } else if (logs[i].startsWith("Program data: ")) {
+    const line = logs[i];
+    const invoke = /^Program (\S+) invoke \[(\d+)\]$/.exec(line);
+    if (invoke && Number(invoke[2]) >= 1) {
+      stack.length = Number(invoke[2]) - 1;
+      stack.push(invoke[1]);
+      if (invoke[1] === PROGRAM) {
+        const m = /^Program log: Instruction: (\w+)$/.exec(logs[i + 1] || "");
+        if (m) names.push(m[1]);
+      }
+    } else if (/^Program \S+ (?:success|failed:.*)$/.test(line)) {
+      stack.pop();
+    } else if (stack.at(-1) === PROGRAM && line.startsWith("Program data: ")) {
       try {
-        const e = decodeEvent(logs[i].slice(14));
+        const e = decodeEvent(line.slice(14));
         if (e) events.push(e);
-      } catch { /* not ours */ }
+      } catch { /* invalid event data */ }
     }
   }
   const byIndex = new Map();
@@ -167,13 +184,13 @@ function classify(s, providerByAccount) {
   if (n.includes("Deposit")) {
     const e = ev("DepositMade");
     const who = e ? e.depositor : s.signer;
-    return { kind: "deposit", label: "deposit", detail: `deposit #${e ? e.index : "?"} from <a href="${explorerAddr(who)}" target="_blank" rel="noopener">${short(who)}</a>` };
+    return { kind: "deposit", label: "deposit", detail: `deposit #${e ? e.index : "?"} from <a href="${explorerAddr(who)}" target="_blank" rel="noopener">${esc(short(who))}</a>` };
   }
   if (n.includes("SettleBatch")) {
     const e = ev("BatchSettled");
     const paid = s.others.filter((o) => BigInt(o.delta) > 0n).map((o) => {
       const id = providerByAccount.get(o.account);
-      return `${id !== undefined ? `provider ${id}` : short(o.owner || o.account)} ${signed(o.delta)}`;
+      return `${id !== undefined ? `provider ${id}` : esc(short(o.owner || o.account))} ${signed(o.delta)}`;
     });
     return { kind: "settle", label: "settlement", detail: `batch ${e ? e.batchId : "?"}: ${paid.join(", ") || "payouts"}` };
   }
@@ -185,12 +202,12 @@ function classify(s, providerByAccount) {
     const e = ev("ProviderDeactivated");
     return { kind: "provider", label: "provider removed", detail: e ? `provider ${e.providerId} deactivated` : "provider deactivated" };
   }
-  if (n.includes("Initialize")) return { kind: "other", label: "vault created", detail: `initialized by ${short(s.signer)}` };
+  if (n.includes("Initialize")) return { kind: "other", label: "vault created", detail: `initialized by ${esc(short(s.signer))}` };
   const issuance = n.find((x) => /issu/i.test(x));
   if (issuance) return { kind: "other", label: "issuance log", detail: `${issuance} by the mint authority` };
   if (n.length) return { kind: "other", label: n.join(", "), detail: "" };
-  if (s.loader) return { kind: "other", label: "program deploy", detail: `vault program deployed or upgraded by ${short(s.signer)}` };
-  if (BigInt(s.vaultDelta) !== 0n) return { kind: "other", label: "direct transfer", detail: `USDC sent straight to the vault account by ${short(s.signer)}` };
+  if (s.loader) return { kind: "other", label: "program deploy", detail: `vault program deployed or upgraded by ${esc(short(s.signer))}` };
+  if (BigInt(s.vaultDelta) !== 0n) return { kind: "other", label: "direct transfer", detail: `USDC sent straight to the vault account by ${esc(short(s.signer))}` };
   return { kind: "other", label: "other", detail: "" };
 }
 
@@ -287,17 +304,18 @@ function renderChart(asc, current) {
 
 async function renderIssuance(issuancePda, list) {
   const info = await rpc("getAccountInfo", [issuancePda, { encoding: "base64", commitment: "confirmed" }]).catch(() => null);
+  const account = info?.value;
+  const bytes = account?.owner === PROGRAM ? b64bytes(account.data[0]) : null;
   const updates = list.filter((r) => r.c.label === "issuance log");
   if (!info?.value && !updates.length) { $("issuance-panel").hidden = true; return; }
   $("issuance-panel").hidden = false;
   const last = updates[0];
-  const bytes = info?.value ? b64bytes(info.value.data[0]) : null;
   // IssuanceLog: 8-byte discriminator, then issued, settled, seq (u64 LE, cumulative USDC base units).
   const u64 = (o) => { let v = 0n; for (let i = 7; i >= 0; i--) v = (v << 8n) | BigInt(bytes[o + i]); return v; };
-  const totals = bytes && bytes.length >= 32 ? { issued: u64(8), settled: u64(16), seq: u64(24) } : null;
+  const totals = bytes && bytes.length === 49 && hex(bytes.subarray(0, 8)) === ISSUANCE_DISCRIMINATOR ? { issued: u64(8), settled: u64(16), seq: u64(24) } : null;
   $("issuance").innerHTML = [
-    info?.value ? `The mint publishes its issuance totals to <a href="${explorerAddr(issuancePda)}" target="_blank" rel="noopener">${short(issuancePda)}</a>.` : "The issuance account is not present.",
-    totals ? `Issued ${usd(totals.issued)}, settled ${usd(totals.settled)}: <strong>${usd(totals.issued - totals.settled)} outstanding</strong> by the mint's own public claim, after ${totals.seq} update${totals.seq === 1n ? "" : "s"}. Agents compare this with the vault's USDC before paying.` : "",
+    totals ? `The mint publishes its issuance totals to <a href="${explorerAddr(issuancePda)}" target="_blank" rel="noopener">${short(issuancePda)}</a>.` : "The issuance account could not be verified.",
+    totals ? `Issued ${usd(totals.issued)}, settled ${usd(totals.settled)}: <strong>${totals.settled > totals.issued ? "issuance log catching up with settlement" : `${usd(totals.issued - totals.settled)} outstanding`}</strong> by the mint's own public claim, after ${totals.seq} update${totals.seq === 1n ? "" : "s"}. Agents compare this with the vault's USDC before paying.` : "",
     `${updates.length} update${updates.length === 1 ? "" : "s"} on record.`,
     last ? `Last: ${fmtTime(last.s.time)} UTC, <a href="${explorerTx(last.s.sig)}" target="_blank" rel="noopener">tx</a>.` : "",
   ].join(" ");
@@ -327,19 +345,23 @@ async function load() {
     const cache = loadCache();
     status.textContent = "reading signatures";
     const sigs = new Map();
+    const newest = { ...cache.newest };
     for (const addr of [PROGRAM, vaultToken]) {
       const list = await signatures(addr, cache.newest[addr]);
-      if (list.length) cache.newest[addr] = list[0].signature;
+      if (list.length) newest[addr] = list[0].signature;
       for (const s of list) if (!s.err) sigs.set(s.signature, s);
     }
-    const missing = [...sigs.keys()].filter((s) => !cache.txs[s]);
+    const missing = [...sigs.keys()].filter((s) => !Object.hasOwn(cache.txs, s));
+    let incomplete = false;
     await pool(missing, async (sig) => {
       const tx = await rpc("getTransaction", [sig, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0, commitment: "confirmed" }]);
-      if (tx && !tx.meta?.err) cache.txs[sig] = summarize(sig, tx, vaultToken);
+      if (tx?.meta && !tx.meta.err) cache.txs[sig] = summarize(sig, tx, vaultToken);
+      else incomplete = true;
     }, (done, total) => {
       status.textContent = `reading transactions ${done} / ${total}`;
       if (done % 25 === 0) saveCache(cache);
     });
+    if (!incomplete) cache.newest = newest;
     saveCache(cache);
 
     const current = BigInt((await rpc("getTokenAccountBalance", [vaultToken, { commitment: "confirmed" }])).value.amount);
@@ -360,7 +382,7 @@ async function load() {
     renderChart(asc, current);
     renderRows();
     await renderIssuance(issuancePda, rows);
-    status.textContent = `updated ${new Date().toLocaleTimeString()}`;
+    status.textContent = incomplete ? "Some transactions are still unavailable from RPC. Refresh to retry." : `updated ${new Date().toLocaleTimeString()}`;
   } catch (e) {
     status.className = "err";
     status.textContent = `${e.message || e}${/devnet\.solana/.test(RPC) ? " (the public RPC rate-limits; try again or add ?rpc=)" : ""}`;

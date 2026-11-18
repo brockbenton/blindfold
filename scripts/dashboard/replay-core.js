@@ -40,6 +40,7 @@ export function buildTimeline(rec, { maxGapMs = 2500, reading = true } = {}) {
   entries.forEach((en, i) => {
     if (en.kind !== "event" || en.event?.type !== "act") return;
     const n = en.event.n;
+    if (!Number.isSafeInteger(n)) return;
     const header = entries.findIndex((x) => x.kind === "line" && x.act === n);
     starts.push({ n, title: String(en.event.title ?? `Act ${n}`), i: header >= 0 ? Math.min(header, i) : i });
   });

@@ -79,7 +79,7 @@ describe("settlement", () => {
     await earn([A], [4]);
     h.sender.failNext("afterLand");
     expect((await settle()).status).toBe(500);
-    expect((await rows())[0].status).toBe("pending");
+    expect((await rows())[0]).toMatchObject({ status: "submitted", tx_sig: expect.stringMatching(/^fake-tx/) });
     const r = await settle();
     expect(r.status).toBe(200);
     expect(r.json).toMatchObject({ batch_id: 1 });
@@ -98,14 +98,28 @@ describe("settlement", () => {
     expect(h.sender.sends).toBe(1);
   });
 
-  it("BadBatchId re-reads the chain: batch landed elsewhere means confirmed", async () => {
+  it("restores the balance when a different writer takes the batch ID", async () => {
     const A = await addProvider(h);
     await earn([A], [4]);
     h.sender.raceNext();
-    const r = await settle();
-    expect(r.status).toBe(200);
-    expect(r.json).toMatchObject({ batch_id: 1 });
-    expect((await rows()).map((x) => x.status)).toEqual(["confirmed"]);
+    expect((await settle()).status).toBe(502);
+    expect(await balances(h)).toEqual({ [A.id]: 4 });
+    expect((await rows())[0]).toMatchObject({ status: "failed", batch_id: 1 });
+    expect(h.sender.sends).toBe(0);
+    expect((await settle()).json).toMatchObject({ batch_id: 2 });
+    expect(h.vault.paid.get(A.id)).toBe(40_000n);
+  });
+
+  it("does not mark a legacy unsigned pending row confirmed or resend it", async () => {
+    const A = await addProvider(h);
+    await earn([A], [4]);
+    h.sender.failNext("send");
+    await settle();
+    await h.db.query("update settlements set signed_before_send = false");
+    expect((await settle()).status).toBe(409);
+    h.vault.lastBatchId = 1n;
+    expect((await settle()).status).toBe(409);
+    expect((await rows())[0].status).toBe("pending");
     expect(h.sender.sends).toBe(0);
   });
 

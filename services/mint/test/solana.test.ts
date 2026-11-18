@@ -1,6 +1,6 @@
 // The Solana-backed classes against a fake Connection (no validator).
 import { BN, BorshAccountsCoder } from "@anchor-lang/core";
-import { Keypair, PublicKey, Transaction } from "@solana/web3.js";
+import { Keypair, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
 import { PLACEHOLDER_VAULT_PROGRAM_ID, USDC_DEVNET_MINT, VAULT_IDL, configPda, decodeInstruction, depositPda, issuancePda, providerPda, vaultAta } from "@blindfold/protocol";
 import { describe, expect, it } from "vitest";
 import { ProgramError, SolanaSettleSender, programErrorFrom } from "../src/chain/settleSender.js";
@@ -92,7 +92,15 @@ describe("SolanaSettleSender", () => {
       getBlockHeight: async () => 501,
     };
     const s = new SolanaSettleSender(conn, program, usdc, authority);
-    expect(await s.submit(4n, [{ providerId: 2, payoutToken: payout.toBase58(), amountBase: 150_000n }])).toEqual({ tx: "sig1", validUntil: 500 });
+    const payouts = [{ providerId: 2, payoutToken: payout.toBase58(), amountBase: 150_000n }];
+    conn.getAccountInfo = async () => ({ owner: SystemProgram.programId, data: Buffer.alloc(0), lamports: 123 });
+    expect(await new SolanaVaultReader(conn, program, usdc).getIssuanceLog()).toBeNull();
+    const prepared = await s.prepareSettlement(4n, payouts);
+    expect(prepared).toMatchObject({ validUntil: 500, withIssuanceLog: false });
+    expect((await s.prepareSettlement(4n, payouts)).sig).not.toBe(prepared.sig);
+    expect((await s.prepareLogIssuance(10_000n)).sig).not.toBe((await s.prepareLogIssuance(10_000n)).sig);
+    expect(sent).toBeUndefined();
+    await prepared.send();
     const tx = Transaction.from(sent!);
     expect(tx.feePayer?.equals(authority.publicKey)).toBe(true);
     expect(tx.verifySignatures()).toBe(true);
@@ -101,8 +109,13 @@ describe("SolanaSettleSender", () => {
     expect(dec.name).toBe("settle_batch");
     expect(ix.keys.slice(5).map((m) => m.pubkey.toBase58())).toEqual([providerPda(2, program).toBase58(), payout.toBase58()]);
     // Once the issuance log exists, the batch passes it so the program advances its settled total.
-    conn.getAccountInfo = async (pk: PublicKey) => (pk.equals(issuancePda(program)) ? { owner: program, data: Buffer.alloc(0) } : null);
-    await s.submit(5n, [{ providerId: 2, payoutToken: payout.toBase58(), amountBase: 150_000n }]);
+    const logData = await new BorshAccountsCoder(VAULT_IDL).encode("IssuanceLog", {
+      issued: new BN(150_000), settled: new BN(0), seq: new BN(0), updated_slot: new BN(0), updated_at: new BN(0), bump: 255,
+    });
+    conn.getAccountInfo = async (pk: PublicKey) => (pk.equals(issuancePda(program)) ? { owner: program, data: logData } : null);
+    const preparedWithLog = await s.prepareSettlement(5n, payouts);
+    expect(preparedWithLog.withIssuanceLog).toBe(true);
+    await preparedWithLog.send();
     const withLog = Transaction.from(sent!).instructions[0];
     expect(withLog.keys.slice(5).map((m) => m.pubkey.toBase58())).toEqual([providerPda(2, program).toBase58(), payout.toBase58(), issuancePda(program).toBase58()]);
     expect(withLog.keys[7].isWritable).toBe(true);
@@ -111,9 +124,9 @@ describe("SolanaSettleSender", () => {
     expect(await s.isExpired(500)).toBe(true);
 
     conn.sendRawTransaction = async () => { throw Object.assign(new Error("Simulation failed"), { logs: ["Program log: AnchorError ... Error Code: BadBatchId. Error Number: 6006."] }); };
-    await expect(s.submit(9n, [{ providerId: 2, payoutToken: payout.toBase58(), amountBase: 10_000n }])).rejects.toMatchObject({ name: "ProgramError", program: "BadBatchId" });
+    await expect((await s.prepareSettlement(9n, payouts)).send()).rejects.toMatchObject({ name: "ProgramError", program: "BadBatchId" });
     conn.sendRawTransaction = async () => { throw new Error("fetch failed"); };
-    await expect(s.submit(9n, [{ providerId: 2, payoutToken: payout.toBase58(), amountBase: 10_000n }])).rejects.not.toBeInstanceOf(ProgramError);
+    await expect((await s.prepareSettlement(9n, payouts)).send()).rejects.not.toBeInstanceOf(ProgramError);
     expect(programErrorFrom(new Error("Error Code: NotAnError"))).toBeNull();
     // Vault short of funds: logs as captured from the vault's LiteSVM test settle_vault_short_of_funds.
     const short = Object.assign(new Error("Simulation failed"), { logs: [

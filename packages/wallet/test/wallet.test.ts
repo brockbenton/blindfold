@@ -1,11 +1,12 @@
 import { createServer, type Server } from "node:http";
 import { readFileSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Mint, verifyMintSignatures, type Proof } from "@cashu/cashu-ts";
 import { decodePaymentResponseHeader } from "@x402/fetch";
 import { SOLANA_DEVNET_CAIP2, USDC_DEVNET_MINT, fromWireProof, signerSet } from "@blindfold/protocol";
 import { AgentWallet, PaymentFailed, PaymentRefused, proofY } from "../src/index.js";
+import { FileTokenStore } from "../src/store.js";
 import { makeWorld, type World } from "./helpers.js";
 
 let w: World;
@@ -208,6 +209,21 @@ describe("refusals (nothing leaves the wallet, file unchanged)", () => {
 });
 
 describe("failure recovery", () => {
+  it("keeps proofs available if persisting a pending payment fails", async () => {
+    w = await makeWorld();
+    await w.fund(100);
+    const wallet = await w.open();
+    const write = vi.spyOn(FileTokenStore.prototype, "write").mockRejectedValueOnce(new Error("disk full"));
+    try {
+      await expect(wallet.payFetch(`${w.provider.url}/v1/data/sol`)).rejects.toThrow("disk full");
+      expect(wallet.balance()).toBe(100);
+      expect(wallet.pendingBalance()).toBe(0);
+      expect(w.provider.handlerRuns).toBe(0);
+    } finally {
+      write.mockRestore();
+    }
+  });
+
   it("rejected settle: proofs unspent at the mint, returned to the wallet", async () => {
     w = await makeWorld({ mode: "rejectSettle" });
     await w.fund(100);

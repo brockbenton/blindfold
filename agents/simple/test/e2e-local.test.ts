@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { VAULT_IDL, USDC_DEVNET_MINT, configPda, vaultAta, type ProviderInfo } from "@blindfold/protocol";
 import { makeProviderKey } from "@blindfold/testkit";
 import { AgentWallet, ownerFund } from "@blindfold/wallet";
+import { fakeVaultToken } from "../../../packages/wallet/test/fakes/fake-vault-token.js";
 import { FakeDepositor } from "../../../packages/wallet/test/fakes/fake-depositor.js";
 import { FakeMint } from "../../../packages/wallet/test/fakes/fake-mint.js";
 import { FakeProvider } from "../../../packages/wallet/test/fakes/fake-provider.js";
@@ -30,12 +31,9 @@ async function configData() {
   });
 }
 const connection = (vaultCents: number | "rpc_error") => ({
-  async getAccountInfo(a: PublicKey) {
+  async getMultipleAccountsInfo() {
     if (vaultCents === "rpc_error") throw new Error("rpc down");
-    return a.equals(configPda(programId)) ? { owner: programId, data: await configData() } : null; // no issuance log
-  },
-  async getTokenAccountBalance() {
-    return { value: { amount: String((vaultCents as number) * 10_000) } };
+    return [{ owner: programId, data: await configData() }, fakeVaultToken(usdcMint, configPda(programId), BigInt(vaultCents) * 10_000n), null];
   },
 });
 

@@ -1,14 +1,14 @@
 // Agent reserve check (00 section 7.6). Fails closed: never throws, any problem gives ok:false.
+import { AccountLayout, AccountState, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import type { PublicKey } from "@solana/web3.js";
 import { BASE_UNITS_PER_CENT, SOLANA_COMMITMENT } from "./constants.js";
 import { baseUnitsToCents } from "./units.js";
-import { configPda, decodeConfig, decodeIssuanceLog, issuancePda, vaultAta } from "./vault.js";
+import { configPda, decodeConfig, issuancePda, readIssuanceLog, vaultAta } from "./vault.js";
 import type { ReservesResponse } from "./types.js";
 
-/** The two Connection methods this check uses. */
+/** Fetches the config, balance and issuance claim from the same bank. */
 export interface ReserveConnection {
-  getTokenAccountBalance(account: PublicKey, commitment?: "confirmed"): Promise<{ value: { amount: string } }>;
-  getAccountInfo(account: PublicKey, commitment?: "confirmed"): Promise<{ owner: PublicKey; data: Uint8Array } | null>;
+  getMultipleAccountsInfo(accounts: PublicKey[], commitment?: "confirmed"): Promise<({ owner: PublicKey; data: Uint8Array } | null)[]>;
 }
 
 export interface ReserveCheckResult {
@@ -48,33 +48,34 @@ export async function checkReserves(opts: {
     const { connection, programId, usdcMint } = opts;
     const vault = vaultAta(usdcMint, programId);
 
-    const info = await connection.getAccountInfo(configPda(programId), SOLANA_COMMITMENT);
+    const configAddress = configPda(programId);
+    const [info, bal, logInfo] = await connection.getMultipleAccountsInfo([configAddress, vault, issuancePda(programId)], SOLANA_COMMITMENT);
     if (!info) return fail("config account not found");
     if (!info.owner.equals(programId)) return fail("config account is not owned by the vault program");
     const config = decodeConfig(info.data);
     if (!config.usdcMint.equals(usdcMint)) return fail("config usdc_mint does not match USDC_MINT");
     if (!config.vaultToken.equals(vault)) return fail("config vault_token is not the expected vault account");
 
-    const bal = await connection.getTokenAccountBalance(vault, SOLANA_COMMITMENT);
-    const balance = BigInt(bal.value.amount);
-    if (balance < 0n) return fail("vault balance must not be negative");
-    // Direct transfers can include dust; count only whole cents toward liabilities.
-    vaultCents = cents(balance);
+    if (!bal?.owner.equals(TOKEN_PROGRAM_ID) || bal.data.length !== AccountLayout.span) return fail("invalid vault token account");
+    const token = AccountLayout.decode(bal.data);
+    if (!token.mint.equals(usdcMint) || !token.owner.equals(configAddress) || token.state !== AccountState.Initialized) {
+      return fail("invalid vault token account");
+    }
+    vaultCents = cents(token.amount);
 
     // The mint's public issuance claim, if this vault has one. A wrong owner or garbage data fails closed.
-    const logInfo = await connection.getAccountInfo(issuancePda(programId), SOLANA_COMMITMENT);
-    if (logInfo) {
-      if (!logInfo.owner.equals(programId)) return fail("issuance log is not owned by the vault program");
-      const log = decodeIssuanceLog(logInfo.data);
+    const log = readIssuanceLog(logInfo, programId);
+    if (log) {
       if (log.settled > log.issued) return fail("issuance log is inconsistent: settled exceeds issued");
       extra.onchainOutstandingCents = cents(log.issued - log.settled);
-      verified = true;
     }
 
     const f = opts.fetch ?? fetch;
     let mintError: string | undefined;
     try {
-      const res = await f(`${opts.mintUrl.replace(/\/+$/, "")}/v1/blindfold/reserves`);
+      const res = await f(`${opts.mintUrl.replace(/\/+$/, "")}/v1/blindfold/reserves`, {
+        redirect: "error", signal: AbortSignal.timeout(10_000),
+      });
       if (!res.ok) mintError = `reserves endpoint returned HTTP ${res.status}`;
       else {
         const body = (await res.json()) as Partial<ReservesResponse>;
@@ -85,15 +86,15 @@ export async function checkReserves(opts: {
     } catch (e) {
       mintError = `reserves endpoint failed: ${(e as Error).message}`;
     }
-    // Without the onchain log the mint's report is the only source of liabilities, so it must answer.
-    if (!verified && mintError) return fail(mintError);
+    // The asynchronous log can omit recent issuance. Require the mint report too.
+    if (mintError) return fail(mintError);
 
     const onchain = extra.onchainOutstandingCents;
     const reported = extra.mintOutstandingCents;
     // Use the larger claim: the mint may have issued tokens it has not logged yet.
     outstandingCents = Math.max(onchain ?? 0, reported ?? 0);
-    if (!verified) extra.note = "unverified: no onchain issuance log, liabilities are mint-reported";
-    else if (mintError) extra.note = `liabilities from the onchain issuance log only (${mintError})`;
+    verified = onchain !== undefined && onchain >= (reported ?? 0);
+    if (onchain === undefined) extra.note = "unverified: no onchain issuance log, liabilities are mint-reported";
     else if (reported !== undefined && onchain !== undefined && reported > onchain) {
       extra.note = `mint reports ${reported - onchain} cents not yet logged onchain`;
     }

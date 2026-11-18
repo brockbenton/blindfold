@@ -23,18 +23,26 @@ const paramsOf = (s: string) => [...s.matchAll(PARAM)].map((m) => m[1]).sort();
 /** Validates a route map (JSON array). Throws with the offending route on any problem. */
 export function parseRoutes(input: unknown): GatewayRoute[] {
   if (!Array.isArray(input) || input.length === 0) throw new Error("routes must be a non-empty array");
-  const seen = new Set<string>();
+  const seen: string[][] = [];
   return input.map((r: Partial<GatewayRoute>, i) => {
     const where = `route ${i} (${r?.path ?? "?"})`;
-    if (typeof r?.path !== "string" || !r.path.startsWith("/")) throw new Error(`${where}: path must start with /`);
-    if (seen.has(r.path)) throw new Error(`${where}: duplicate path`);
-    seen.add(r.path);
+    if (typeof r?.path !== "string" || !/^(?:\/(?:[A-Za-z0-9_-]+|:[a-z][A-Za-z0-9]{0,31}))+$/.test(r.path)) {
+      throw new Error(`${where}: expected literal path segments or :parameters`);
+    }
+    const segments = r.path.toLowerCase().split("/");
+    if (seen.some((prev) => prev.length === segments.length && prev.every((p, j) => p === segments[j] || p.startsWith(":") || segments[j].startsWith(":")))) {
+      throw new Error(`${where}: duplicate or overlapping path`);
+    }
+    seen.push(segments);
     if (typeof r.upstream !== "string") throw new Error(`${where}: upstream URL missing`);
     const u = new URL(r.upstream.replace(PARAM, "x"));
+    if (u.username || u.password || u.hash || paramsOf(new URL(r.upstream).pathname).join() !== paramsOf(r.upstream).join()) {
+      throw new Error(`${where}: upstream parameters must be in the path; credentials and fragments are forbidden`);
+    }
     if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error(`${where}: upstream must be http(s)`);
     if (paramsOf(r.path).join() !== paramsOf(r.upstream).join()) throw new Error(`${where}: path and upstream must use the same :parameters`);
     for (const k of ["priceCents", "maxUpstreamCents"] as const) {
-      if (!Number.isInteger(r[k]) || (r[k] as number) < 1) throw new Error(`${where}: ${k} must be a positive integer`);
+      if (!Number.isSafeInteger(r[k]) || (r[k] as number) < 1) throw new Error(`${where}: ${k} must be a positive integer`);
     }
     if (r.maxUpstreamCents! > r.priceCents!) throw new Error(`${where}: priceCents must be at least maxUpstreamCents, or the gateway pays out of pocket`);
     if (r.query !== undefined && (!Array.isArray(r.query) || r.query.some((q) => typeof q !== "string"))) throw new Error(`${where}: query must be a list of names`);
@@ -43,6 +51,10 @@ export function parseRoutes(input: unknown): GatewayRoute[] {
       description: typeof r.description === "string" ? r.description : `resold from ${u.host}`, query: r.query ?? [],
     };
   });
+}
+
+export function upstreamHost(route: GatewayRoute): string {
+  return new URL(route.upstream.replace(PARAM, "x")).host;
 }
 
 /**

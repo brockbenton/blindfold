@@ -1,5 +1,5 @@
 import {
-  SOLANA_COMMITMENT, configPda, decodeConfig, decodeDepositRecord, decodeIssuanceLog, decodeProviderRecord, depositPda, issuancePda, providerPda,
+  SOLANA_COMMITMENT, configPda, decodeConfig, decodeDepositRecord, decodeProviderRecord, depositPda, issuancePda, providerPda, readIssuanceLog,
   vaultAta, type DepositRecordAccount, type IssuanceLogAccount, type ProviderRecordAccount,
 } from "@blindfold/protocol";
 import { Connection, PublicKey, type AccountInfo } from "@solana/web3.js";
@@ -59,7 +59,7 @@ export class SolanaVaultReader implements VaultReader {
 
   async getIssuanceLog(): Promise<IssuanceLogAccount | null> {
     const info = await this.connection.getAccountInfo(issuancePda(this.programId), SOLANA_COMMITMENT);
-    return info ? decodeIssuanceLog(this.owned(info, "IssuanceLog")) : null;
+    return readIssuanceLog(info, this.programId);
   }
 
   async getVaultBalanceBase(): Promise<bigint> {

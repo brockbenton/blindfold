@@ -108,9 +108,18 @@ export class FakeSender implements SettleSender, IssuanceWriter {
     this.height += blocks;
   }
 
-  async submit(batchId: bigint, payouts: SettlePayout[]) {
+  async prepareSettlement(batchId: bigint, payouts: SettlePayout[]) {
     const knob = this.knobs.shift();
     if (knob?.kind === "send") throw new Error("rpc unavailable");
+    const withIssuanceLog = this.vault.issuanceLog !== null;
+    const sig = `fake-tx-${++this.n}`;
+    const validUntil = this.height + 100;
+    return { withIssuanceLog, sig, validUntil, send: async () => {
+      this.sendSettlement(batchId, payouts, withIssuanceLog, sig, knob);
+    } };
+  }
+
+  private sendSettlement(batchId: bigint, payouts: SettlePayout[], withIssuanceLog: boolean, sig: string, knob?: Knob) {
     if (knob?.kind === "program") throw new ProgramError(knob.name);
     if (knob?.kind === "race") this.vault.lastBatchId += 1n;
     if (batchId !== this.vault.lastBatchId + 1n) throw new ProgramError("BadBatchId");
@@ -123,19 +132,16 @@ export class FakeSender implements SettleSender, IssuanceWriter {
       if (p.amountBase <= 0n || p.amountBase % 10_000n !== 0n) throw new ProgramError("AmountNotWholeCents");
     }
     this.sends++;
-    const tx = `fake-tx-${++this.n}`;
-    const validUntil = this.height + 100;
-    if (knob?.kind === "neverLand") return { tx, validUntil };
+    if (knob?.kind === "neverLand") return;
     this.vault.lastBatchId = batchId;
     for (const p of payouts) {
       this.vault.balanceBase -= p.amountBase;
       this.vault.paid.set(p.providerId, (this.vault.paid.get(p.providerId) ?? 0n) + p.amountBase);
     }
     // Like SolanaSettleSender: the batch is added to the log when the log exists.
-    if (this.vault.issuanceLog) this.vault.issuanceLog.settled += payouts.reduce((t, p) => t + p.amountBase, 0n);
-    this.landed.add(tx);
+    if (withIssuanceLog && this.vault.issuanceLog) this.vault.issuanceLog.settled += payouts.reduce((t, p) => t + p.amountBase, 0n);
+    this.landed.add(sig);
     if (knob?.kind === "afterLand") throw new Error("connection lost after send");
-    return { tx, validUntil };
   }
 
   async prepareInitIssuanceLog(issuedBase: bigint, settledBase: bigint) {
@@ -150,7 +156,6 @@ export class FakeSender implements SettleSender, IssuanceWriter {
     return this.prepareLog(() => {
       const log = this.vault.issuanceLog;
       if (!log) throw simulated("AccountNotInitialized");
-      if (log.issued + addBase < log.settled) throw simulated("Error Code: IssuanceBelowSettled");
       log.issued += addBase;
       log.seq += 1n;
     });

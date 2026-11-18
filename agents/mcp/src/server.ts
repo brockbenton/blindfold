@@ -44,8 +44,7 @@ export function elicitationApprover(server: McpServer): Approver {
       },
       { signal, timeout: req.timeoutMs },
     );
-    // Accept means approve unless the owner unticked the box; decline, cancel or no answer is a denial.
-    return r.action === "accept" && r.content?.approve !== false;
+    return r.action === "accept" && r.content?.approve === true;
   };
 }
 

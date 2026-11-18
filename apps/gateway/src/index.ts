@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { SOLANA_DEVNET_CAIP2, USDC_DEVNET_MINT } from "@blindfold/protocol";
 import { createGateway, withPublicUrl } from "./app.js";
-import { parseRoutes, standInRoutes } from "./routes.js";
+import { parseRoutes, standInRoutes, upstreamHost } from "./routes.js";
 import { UpstreamClient } from "./upstream.js";
 import { loadOrCreateKeypair, walletPayFetch } from "./wallet.js";
 
@@ -30,7 +30,7 @@ const app = createGateway({
 serve({ fetch: withPublicUrl(app, env.PUBLIC_URL ?? `http://localhost:${port}`), port }, () => {
   console.log(JSON.stringify({
     msg: "gateway listening", port, pubkey: app.providerPubkey, wallet: wallet.address,
-    routes: routes.map((r) => `${r.path} -> ${r.upstream} (${r.priceCents}c, upstream max ${r.maxUpstreamCents}c)`),
+    routes: routes.map((r) => `${r.path} -> ${upstreamHost(r)} (${r.priceCents}c, upstream max ${r.maxUpstreamCents}c)`),
     ...(created ? { note: `created ${walletFile}: fund it with devnet USDC (faucet.circle.com) before serving paid calls` } : {}),
   }));
 });

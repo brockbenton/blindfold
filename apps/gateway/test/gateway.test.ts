@@ -13,6 +13,7 @@ describe("gateway pay-through", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ vendor: true, url: "/v1/data/sol" });
     expect(res.headers.get("x-upstream-payment")).toBe("VendorTxSig");
+    expect(res.headers.get("content-security-policy")).toContain("sandbox");
     expect(a.balance()).toBe(0);
     // Quoted once for the challenge, once before the paid retry; the redeem comes before the purchase.
     expect(g.vendor.events).toEqual(["quote", "quote", "redeem", "buy"]);
@@ -43,12 +44,13 @@ describe("gateway pay-through", () => {
     expect(g.vendor.events).not.toContain("redeem");
   });
 
-  it("retries a transient purchase failure once", async () => {
+  it.each(["throw", "500", "body"] as const)("does not resend an ambiguous payment (%s)", async (fault) => {
     g = await startGateway();
-    g.vendor.state.buyFailures = ["throw"];
+    g.vendor.state.buyFailures = [fault];
     const res = await agent({ proofs: proofs([1, 4]) }).fetch(`${g.url}/v1/data/sol`);
-    expect(res.status).toBe(200);
-    expect(g.vendor.events.filter((e) => e === "buy")).toHaveLength(2);
+    expect(res.status).toBe(502);
+    expect(g.vendor.events.filter((e) => e === "buy")).toHaveLength(1);
+    expect(g.logs).toContainEqual(expect.objectContaining({ outcome: "owed", owed_cents: 5 }));
   });
 
   it("logs the call as owed when the purchase fails after the redeem", async () => {
@@ -60,7 +62,16 @@ describe("gateway pay-through", () => {
     expect(((await res.json()) as { error: string }).error).toBe("upstream_payment_failed");
     expect(a.balance()).toBe(0);
     expect(g.vendor.events).toEqual(["quote", "quote", "redeem", "buy"]);
-    expect(g.logs).toContainEqual(expect.objectContaining({ outcome: "owed", owed_cents: 5, reason: "upstream_payment_failed" }));
+    expect(g.logs).toContainEqual(expect.objectContaining({
+      outcome: "owed", owed_cents: 5, reason: "upstream_payment_failed", redemption_id: expect.any(String),
+    }));
+  });
+
+  it("does not process HEAD as a purchase", async () => {
+    g = await startGateway();
+    const res = await fetch(`${g.url}/v1/data/sol`, { method: "HEAD" });
+    expect(res.status).toBe(405);
+    expect(g.vendor.events).toEqual([]);
   });
 
   it("charges the route's price, not the vendor's", async () => {
@@ -69,7 +80,7 @@ describe("gateway pay-through", () => {
     const res = await a.fetch(`${g.url}/v1/data/sol/depth`);
     expect(res.status).toBe(200);
     expect(a.balance()).toBe(5);
-    expect(g.vendor.requests.find((r) => r.paid)?.maxBase).toBe(100_000n);
+    expect(g.vendor.requests.find((r) => r.paid)?.maxBase).toBe(50_000n);
   });
 });
 

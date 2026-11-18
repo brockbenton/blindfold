@@ -1,3 +1,4 @@
+import { fakeVaultToken } from "../../../packages/wallet/test/fakes/fake-vault-token.js";
 // Real mint (fake-chain mode, Postgres) + real mock API + real owner flow + real agent. Skips without DATABASE_URL.
 import { randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync } from "node:fs";
@@ -9,7 +10,7 @@ import { BN, BorshAccountsCoder } from "@anchor-lang/core";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { USDC_DEVNET_MINT, VAULT_IDL, checkReserves, configPda, issuancePda, vaultAta } from "@blindfold/protocol";
+import { USDC_DEVNET_MINT, VAULT_IDL, checkReserves, configPda, vaultAta } from "@blindfold/protocol";
 import { makeProviderKey } from "@blindfold/testkit";
 import { AgentWallet, DevDepositor, PaymentRefused, ownerFund } from "@blindfold/wallet";
 import { FakeSender, MemoryVault } from "../../../services/mint/src/chain/memory.js";
@@ -68,19 +69,14 @@ describe.skipIf(!DATABASE_URL)("real mint + mock API + owner + agent", () => {
   }
   /** Fake Solana connection: vault balance and issuance log are read from the mint's in-memory vault unless overridden. */
   const connection = (override?: { vaultCents: number }) => ({
-    async getAccountInfo(a: PublicKey) {
-      if (a.equals(configPda(programId))) return { owner: programId, data: await configData() };
+    async getMultipleAccountsInfo() {
       const l = vault.issuanceLog;
-      if (!a.equals(issuancePda(programId)) || !l) return null;
-      const data = await new BorshAccountsCoder(VAULT_IDL).encode("IssuanceLog", {
+      const data = l && await new BorshAccountsCoder(VAULT_IDL).encode("IssuanceLog", {
         issued: new BN(l.issued.toString()), settled: new BN(l.settled.toString()), seq: new BN(l.seq.toString()),
         updated_slot: new BN(1), updated_at: new BN(1), bump: l.bump,
       });
-      return { owner: programId, data };
-    },
-    async getTokenAccountBalance() {
       const base = override ? BigInt(override.vaultCents) * 10_000n : vault.balanceBase;
-      return { value: { amount: base.toString() } };
+      return [{ owner: programId, data: await configData() }, fakeVaultToken(usdc, configPda(programId), base), data && { owner: programId, data }];
     },
   });
   const agent = async (argv: string[], conn = connection()) => {

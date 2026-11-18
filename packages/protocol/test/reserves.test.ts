@@ -1,4 +1,5 @@
 import { BN, BorshAccountsCoder } from "@anchor-lang/core";
+import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import { describe, expect, it } from "vitest";
 import { VAULT_IDL, checkReserves, configPda, issuancePda, vaultAta, type ReserveConnection } from "../src/index.js";
@@ -27,16 +28,19 @@ function conn(o: {
   log?: Uint8Array; logOwner?: PublicKey;
 }): ReserveConnection {
   return {
-    async getAccountInfo(a) {
+    async getMultipleAccountsInfo(accounts) {
       if (o.rpcError) throw new Error("rpc down");
-      if (a.equals(issuancePda(programId))) return o.log ? { owner: o.logOwner ?? programId, data: o.log } : null;
-      expect(a.equals(configPda(programId))).toBe(true);
-      return o.missing ? null : { owner: o.owner ?? programId, data: o.data! };
-    },
-    async getTokenAccountBalance(a) {
-      if (o.rpcError) throw new Error("rpc down");
-      expect(a.equals(vaultAta(usdcMint, programId))).toBe(true);
-      return { value: { amount: o.amount ?? "0" } };
+      expect(accounts).toEqual([configPda(programId), vaultAta(usdcMint, programId), issuancePda(programId)]);
+      const data = Buffer.alloc(165);
+      usdcMint.toBuffer().copy(data, 0);
+      configPda(programId).toBuffer().copy(data, 32);
+      data.writeBigUInt64LE(BigInt(o.amount ?? "0"), 64);
+      data[108] = 1; // initialized
+      return [
+        o.missing ? null : { owner: o.owner ?? programId, data: o.data! },
+        { owner: TOKEN_PROGRAM_ID, data },
+        o.log ? { owner: o.logOwner ?? programId, data: o.log } : null,
+      ];
     },
   };
 }
@@ -118,16 +122,15 @@ describe("checkReserves with the onchain issuance log", () => {
   });
   it("uses the mint's report when it is higher (issuance not yet logged)", async () => {
     const r = await run(conn({ data: await configData(), amount: "7000000", log: await logData(1000, 400) }), reserves(650));
-    expect(r).toMatchObject({ ok: true, verified: true, outstandingCents: 650 });
+    expect(r).toMatchObject({ ok: true, verified: false, outstandingCents: 650 });
     expect(r.note).toMatch(/50 cents not yet logged/);
     expect((await run(conn({ data: await configData(), amount: "6400000", log: await logData(1000, 400) }), reserves(650))).ok).toBe(false);
   });
-  it("keeps working on the log alone when the mint is down", async () => {
+  it("fails closed when the log could omit recent issuance and the mint is down", async () => {
     const down: typeof fetch = async () => { throw new Error("ECONNREFUSED"); };
     const r = await run(conn({ data: await configData(), amount: "6000000", log: await logData(1000, 400) }), down);
-    expect(r).toMatchObject({ ok: true, verified: true, outstandingCents: 600 });
-    expect(r.mintOutstandingCents).toBeUndefined();
-    expect(r.note).toMatch(/onchain issuance log only.*ECONNREFUSED/);
+    expect(r).toMatchObject({ ok: false, verified: false, onchainOutstandingCents: 600 });
+    expect(r.reason).toMatch(/ECONNREFUSED/);
   });
   it("fails closed on a foreign, inconsistent or garbage log", async () => {
     const data = await configData();

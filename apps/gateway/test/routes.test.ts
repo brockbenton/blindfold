@@ -12,14 +12,17 @@ describe("parseRoutes", () => {
     [{ ...ok, priceCents: 1 }, "at least maxUpstreamCents"],
     [{ ...ok, upstream: "https://vendor.example/price/:other" }, "same :parameters"],
     [{ ...ok, upstream: "ftp://vendor.example/:sym" }, "http(s)"],
-    [{ ...ok, path: "v1/price" }, "start with /"],
+    [{ ...ok, path: "v1/price" }, "expected literal path segments"],
     [{ ...ok, maxUpstreamCents: 0 }, "positive integer"],
+    [{ ...ok, upstream: "https://user:password@vendor.example/:sym" }, "credentials"],
+    [{ ...ok, upstream: "https://vendor.example/data?symbol=:sym" }, "must be in the path"],
   ])("rejects %j", (route, msg) => {
     expect(() => parseRoutes([route])).toThrow(msg);
   });
 
   it("rejects duplicates and empty maps", () => {
     expect(() => parseRoutes([ok, ok])).toThrow("duplicate");
+    expect(() => parseRoutes([ok, { ...ok, path: "/v1/price/sol", upstream: "https://vendor.example/sol" }])).toThrow("overlapping");
     expect(() => parseRoutes([])).toThrow("non-empty");
   });
 
