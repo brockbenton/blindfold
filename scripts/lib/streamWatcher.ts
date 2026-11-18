@@ -1,15 +1,15 @@
-// Copycat's data source: QuickNode Streams first, RPC polling as the automatic fallback. Same surface as
+// The observer's data source: QuickNode Streams first, RPC polling as the automatic fallback. Same surface as
 // ChainWatcher (observations, start, stop, scan, waitFor, onObservation), so the demo, dashboard and inference do
 // not care which source delivered a transaction.
 //
 // start() polls RPC while the tunnel and Stream come up. The first delivery switches to Streams-only and polling
 // stops. If deliveries stop (the filter answers every batch, so silence means trouble), polling resumes until they
-// come back. When Streams cannot start at all (no API key, no cloudflared, QuickNode refuses), Copycat simply keeps
+// come back. When Streams cannot start at all (no API key, no cloudflared, QuickNode refuses), the observer simply keeps
 // polling. Nothing in the demo depends on QuickNode being up.
 import type { Connection, PublicKey } from "@solana/web3.js";
 import { SOLANA_COMMITMENT } from "@blindfold/protocol";
 import type { Observation } from "./bot.js";
-import { ChainWatcher, type SlotRange } from "./copycat.js";
+import { ChainWatcher, type SlotRange } from "./observer.js";
 import {
   StreamsApi, newSecurityToken, recordToObservation, startReceiver, startTunnel, streamSpec,
   type Receiver, type StreamBatch, type StreamDeposit, type Tunnel, type Watch,

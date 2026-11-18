@@ -23,7 +23,7 @@ function fakeRun() {
   const r = startRecorder({ file, now: c.now, capture: false, columns: 40 });
   let seq = 0;
   const emit = (e: any) => r.event({ ...e, seq: ++seq });
-  r.line(`\n${BAR}\n  Copycat vs. your trading agent\n${BAR}`);
+  r.line(`\n${BAR}\n  Standard x402 vs. Blindfold\n${BAR}`);
   r.line("     setting up");
   c.advance(4000);
   emit({ type: "setup", mode: "localnet", topic: "sol", prices: { whaleFlow: 5, depth: 10 }, exactWallet: "w", vault: "v", provider: "p", links: {} });
@@ -53,7 +53,7 @@ describe("recorder", () => {
       [4000, "setup"], [4000, "act"], [4500, "act"], [64_600, "chain"], [64_800, "act"], [65_100, "brand_new_event"], [65_100, "done"],
     ]);
     const byAct = (n: number) => rec.narration.filter((l) => l.act === n).map((l) => l.text);
-    expect(byAct(0)).toEqual(["", BAR, "  Copycat vs. your trading agent", BAR, "     setting up"]);
+    expect(byAct(0)).toEqual(["", BAR, "  Standard x402 vs. Blindfold", BAR, "     setting up"]);
     expect(byAct(1)).toEqual(["", BAR, "  1. Standard x402", BAR, "  ok   call 1: paid 5 cents"]);
     expect(byAct(2)).toEqual(["", BAR, "  2. Fund", BAR]);
   });
@@ -196,7 +196,7 @@ describe("narration formatting", () => {
       "     starting the mint",
       "  ok   call 1: paid 5 cents",
       "  !!   created a key",
-      "  Copycat  BUY SOL",
+      "  Observer  BUY SOL",
       "  Agent    buy_data -> REFUSED",
       "   Agent wallet   7xKX...gAsU  (a key the agent must hold)",
       "   tx 1       https://explorer.solana.com/tx/5Kq3abcZt9f?cluster=devnet",
@@ -213,7 +213,7 @@ describe("narration formatting", () => {
       { cls: "step", text: "starting the mint" },
       { cls: "ok", text: "call 1: paid 5 cents" },
       { cls: "warn", text: "created a key" },
-      { cls: "copycat", text: "BUY SOL" },
+      { cls: "observer", text: "BUY SOL" },
       { cls: "agent", text: "buy_data -> REFUSED" },
       { cls: "kv", key: "Agent wallet", text: "7xKX...gAsU  (a key the agent must hold)" },
       { cls: "kv", key: "tx 1", text: "https://explorer.solana.com/tx/5Kq3abcZt9f?cluster=devnet" },

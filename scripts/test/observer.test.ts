@@ -1,7 +1,7 @@
-// Copycat's inference and the dashboard's event stream. No chain access: observations are built by hand.
+// The observer's inference and the dashboard's event stream. No chain access: observations are built by hand.
 import { afterEach, describe, expect, it } from "vitest";
 import type { Observation } from "../lib/bot.js";
-import { attributeVault, describe as describeTx, infer, parseMemo } from "../lib/copycat.js";
+import { attributeVault, describe as describeTx, infer, parseMemo } from "../lib/observer.js";
 import { startDashboard, type Dashboard } from "../lib/dashboard.js";
 import { approvalBroker, askApproval } from "@blindfold/wallet";
 
@@ -49,7 +49,7 @@ describe("infer", () => {
     expect(both.map((s) => [s.payer, s.action])).toEqual([[AGENT, "BUY SOL"], [OTHER, "WATCH BTC"]]);
   });
 
-  it("describes each transaction the way Copycat reads it", () => {
+  it("describes each transaction the way the observer reads it", () => {
     expect(describeTx(pay(AGENT, "whale-flow/SOL", 0))).toBe("7xKX...gAsU paid the feed $0.05 for whale-flow on SOL");
     expect(describeTx({ kind: "vault_payout", signature: "p", slot: 2, time: null, from: "v", to: "f", amountBase: 150_000n })).toContain("Payer: unknown");
     expect(describeTx({ kind: "vault_payout", signature: "p", slot: 2, time: null, from: "v", to: "f", amountBase: 100_000n }, { f: "NewsWire" }))
@@ -131,11 +131,11 @@ describe("dashboard", () => {
     d = await startDashboard({ port: 0 });
     expect(await (await fetch(d.url)).text()).toContain("<title>Blindfold</title>");
     d.emit({ type: "act", n: 1, title: "first" });
-    d.emit({ type: "copycat", side: "exact", action: "BUY SOL", reason: "r", tone: "alarm" });
+    d.emit({ type: "observer", side: "exact", action: "BUY SOL", reason: "r", tone: "alarm" });
     const pending = read(d.url, 3);
     setTimeout(() => d!.emit({ type: "done", ok: true }), 100);
     const got = await pending;
-    expect(got.map((e) => [e.seq, e.type])).toEqual([[1, "act"], [2, "copycat"], [3, "done"]]);
+    expect(got.map((e) => [e.seq, e.type])).toEqual([[1, "act"], [2, "observer"], [3, "done"]]);
   });
 
   it("passes the owner's Approve click to the wallet's approval broker; only JSON, only pending ids", async () => {

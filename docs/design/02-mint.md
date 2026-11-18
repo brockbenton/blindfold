@@ -134,4 +134,4 @@ The mint tests create isolated PostgreSQL schemas. They cover issuance replay, c
 
 ## Deposit poll hints
 
-`POST /v1/blindfold/admin/poll-deposits` runs the deposit poll now and returns `{ processed }`. The timer and hints share one in-flight poll. `pnpm demo` calls it when Copycat's QuickNode Stream delivers a `DepositMade`; `pnpm bot` does when `MINT_URL` and `MINT_ADMIN_TOKEN` are set. Crediting is unchanged: only `DepositRecord` accounts count.
+`POST /v1/blindfold/admin/poll-deposits` runs the deposit poll now and returns `{ processed }`. The timer and hints share one in-flight poll. `pnpm demo` calls it when the observer's QuickNode Stream delivers a `DepositMade`; `pnpm bot` does when `MINT_URL` and `MINT_ADMIN_TOKEN` are set. Crediting is unchanged: only `DepositRecord` accounts count.

@@ -11,7 +11,7 @@ export type DashboardEvent =
   | { type: "act"; n: number; title: string }
   | { type: "call"; side: "exact" | "blindfold"; n: number; cents: number; label: string; ok: boolean; tx?: string; url?: string }
   | { type: "chain"; side: "exact" | "blindfold"; kind: string; text: string; amountBase: string; from: string; memo?: string; time: string | null; url: string; signature: string }
-  | { type: "copycat"; side: "exact" | "blindfold"; action: string; reason: string; tone: "alarm" | "calm" }
+  | { type: "observer"; side: "exact" | "blindfold"; action: string; reason: string; tone: "alarm" | "calm" }
   | { type: "balances"; agentTokensCents: number; exactWalletBase: string; providerDirectBase: string; providerSettledBase: string; providerOwedCents: number; vaultBase: string }
   | { type: "reserve"; ok: boolean; verified: boolean; text: string; detail: string; url?: string }
   | { type: "source"; text: string }

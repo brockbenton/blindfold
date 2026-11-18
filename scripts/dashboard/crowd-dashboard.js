@@ -13,7 +13,7 @@ const MARKUP = `
       <div class="head"><span class="name">Standard x402</span><span class="scheme">exact</span></div>
       <div class="verdict"><div class="who">watcher's answer</div><div class="action">watching</div><div class="detail"></div></div>
       <div class="log">
-        <div class="section"><span>wallets Copycat profiled</span><span class="count">0 txs</span></div>
+        <div class="section"><span>wallets the observer profiled</span><span class="count">0 txs</span></div>
         <div class="rows"></div>
       </div>
       <div class="buys"><span class="label">purchases</span><div class="lanes"></div></div>
@@ -22,7 +22,7 @@ const MARKUP = `
       <div class="head"><span class="name">Blindfold</span><span class="scheme">blindfold</span></div>
       <div class="verdict"><div class="who">watcher's answer</div><div class="action">watching</div><div class="detail"></div></div>
       <div class="log">
-        <div class="section"><span>the vault, as Copycat sees it</span><span class="count">0 txs</span></div>
+        <div class="section"><span>the vault, as the observer sees it</span><span class="count">0 txs</span></div>
         <div class="rows"></div>
       </div>
       <div class="buys"><span class="label">purchases</span><div class="lanes"></div></div>
@@ -99,7 +99,7 @@ export function mountCrowd(root) {
         : `<span class="tick" title="${esc(e.label)}"></span>`);
       l.querySelector(".where").textContent = list[e.agent] + (e.side === "exact" ? " · onchain" : " · offchain");
     },
-    /* Copycat's per-wallet profile from exact payments: the left table is rebuilt from it. */
+    /* The observer's per-wallet profile from exact payments: the left table is rebuilt from it. */
     exact(e) {
       const sorted = [...e.signals].sort((a, b) => agentOf(a.payer) - agentOf(b.payer));
       ex.querySelector(".rows").innerHTML = sorted.map((s) => {

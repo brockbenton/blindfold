@@ -12,7 +12,7 @@ export function parseRecording(rec) {
 }
 
 /**
- * Merges events and narration into one timeline. Idle gaps longer than `maxGapMs` (chain confirmations, Copycat's
+ * Merges events and narration into one timeline. Idle gaps longer than `maxGapMs` (chain confirmations, the observer's
  * polling) are shortened to `maxGapMs`; order and everything else stay as recorded.
  * @returns {{ entries: Entry[], acts: Act[], duration: number }}
  *   Entry: { t, kind: "event", event } | { t, kind: "line", act, text }
@@ -161,7 +161,7 @@ function classify(raw, inHeader, headerFirst) {
   if (inHeader) return { cls: headerFirst ? "title" : "sub", text };
   let m;
   if ((m = /^ {2}(ok|!!) {3}(.*)$/.exec(raw))) return { cls: m[1] === "ok" ? "ok" : "warn", text: m[2] };
-  if ((m = /^ {2}(Copycat|Agent) +(.*)$/.exec(raw))) return { cls: m[1].toLowerCase(), text: m[2] };
+  if ((m = /^ {2}(Observer|Agent) +(.*)$/.exec(raw))) return { cls: m[1].toLowerCase(), text: m[2] };
   if (/^Demo stopped/.test(text)) return { cls: "err", text };
   if (/^Demo complete/.test(text)) return { cls: "ok", text };
   if (/^ {5}\S/.test(raw)) return { cls: "step", text };

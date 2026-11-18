@@ -1,29 +1,29 @@
-// The attribution scoreboard: how many of the agent's purchases Copycat pinned on it, scored against what the
-// agent actually bought. The demo writes the ground truth as it buys; Copycat never reads it. Scoring only pairs
-// Copycat's own output (infer, attributeVault, the memo parser) with that list, so a better Copycat scores better.
+// The attribution scoreboard: how many of the agent's purchases the observer pinned on it, scored against what the
+// agent actually bought. The demo writes the ground truth as it buys; the observer never reads it. Scoring only pairs
+// the observer's own output (infer, attributeVault, the memo parser) with that list, so a better observer scores better.
 //
 // What counts as an attribution, per purchase:
-// - correct: Copycat names the wallet that paid for this purchase, the provider it bought from, and the topic
+// - correct: the observer names the wallet that paid for this purchase, the provider it bought from, and the topic
 //   (token) it researched, all three right. The paying wallet is the `exact` agent's wallet for `exact`, and for
 //   Blindfold the owner wallet whose vault deposit funded the tokens (the agent itself has no wallet).
 // - partial: the wallet and the provider are right, the topic is not named. For Blindfold this is the vault
-//   reading: with one depositor in view, Copycat links that depositor to every feed the batch paid. It is counted
-//   for every purchase at a paid feed, although Copycat sees neither the count nor the timing; this errs toward
+//   reading: with one depositor in view, the observer links that depositor to every feed the batch paid. It is counted
+//   for every purchase at a paid feed, although the observer sees neither the count nor the timing; this errs toward
 //   attributing.
-// - incorrect: Copycat names a wallet, provider or topic for this purchase and one of them is wrong.
-// - abstained: nothing Copycat output names a wallet for this purchase.
+// - incorrect: the observer names a wallet, provider or topic for this purchase and one of them is wrong.
+// - abstained: nothing the observer output names a wallet for this purchase.
 //
-// A purchase made with a per-call transfer is paired with Copycat's reading of that transaction (the scorer knows
-// the signature; Copycat does not need to). A purchase with no transfer can only be named through the vault.
+// A purchase made with a per-call transfer is paired with the observer's reading of that transaction (the scorer knows
+// the signature; the observer does not need to). A purchase with no transfer can only be named through the vault.
 //
-// Coverage: abstaining is only a privacy result if Copycat actually read the slots the purchases happened in. A
+// Coverage: abstaining is only a privacy result if the observer actually read the slots the purchases happened in. A
 // side whose slot window any watched account's coverage does not span is "inconclusive", not a win.
 import type { Observation } from "./bot.js";
-import { attributeVault, infer, parseMemo, type SlotRange } from "./copycat.js";
+import { attributeVault, infer, parseMemo, type SlotRange } from "./observer.js";
 
 export type Side = "exact" | "blindfold";
 
-/** One purchase as the demo made it. Ground truth: never shown to Copycat. */
+/** One purchase as the demo made it. Ground truth: never shown to the observer. */
 export interface Purchase {
   side: Side;
   /** The wallet that paid: the `exact` agent's wallet, or the owner wallet that funded Blindfold tokens. */
@@ -44,13 +44,13 @@ export type Outcome = "correct" | "partial" | "incorrect" | "abstained";
 export interface SideScore {
   side: Side;
   purchases: number;
-  /** Per-call transfers to a provider (direct payments) Copycat saw inside the side's slot window, from anyone. */
+  /** Per-call transfers to a provider (direct payments) the observer saw inside the side's slot window, from anyone. */
   transfers: number;
   correct: number;
   partial: number;
   incorrect: number;
   abstained: number;
-  /** Direct payments in the window that Copycat pinned on this side's wallet but match no purchase. */
+  /** Direct payments in the window that the observer pinned on this side's wallet but match no purchase. */
   spurious: number;
   coverage: { complete: boolean; window: SlotRange; missing: string[] };
   /**
@@ -64,7 +64,7 @@ export interface SideScore {
 export interface Scoreboard {
   exact: SideScore;
   blindfold: SideScore;
-  /** What Copycat still sees of the Blindfold side: vault deposits and batched payouts, and its reading of them. */
+  /** What the observer still sees of the Blindfold side: vault deposits and batched payouts, and its reading of them. */
   vault: { deposits: number; payouts: number; payoutProviders: string[]; action: string; reason: string };
 }
 
@@ -72,9 +72,9 @@ export interface ScoreInput {
   purchases: Purchase[];
   /** Slot window per side: from before its first purchase to after its last. */
   windows: Record<Side, SlotRange>;
-  /** Everything Copycat observed in the run. */
+  /** Everything the observer observed in the run. */
   observations: Observation[];
-  /** Per watched token account, slot ranges Copycat read completely (ChainWatcher.coverage). */
+  /** Per watched token account, slot ranges the observer read completely (ChainWatcher.coverage). */
   coverage: Record<string, SlotRange[]>;
   /** The watched token accounts that must cover each window. */
   accounts: string[];
@@ -153,8 +153,8 @@ export function describeScore(s: SideScore): string {
   return parts.join(", ");
 }
 
-/** What Copycat still sees on the Blindfold side. */
+/** What the observer still sees on the Blindfold side. */
 export function describeVisible(b: Scoreboard["vault"]): string {
   const paid = b.payoutProviders.length ? ` to ${b.payoutProviders.join(" and ")}` : "";
-  return `${plural(b.deposits, "vault deposit")} and ${plural(b.payouts, "batched payout")}${paid}; Copycat's reading: ${b.action}`;
+  return `${plural(b.deposits, "vault deposit")} and ${plural(b.payouts, "batched payout")}${paid}; the observer's reading: ${b.action}`;
 }

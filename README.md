@@ -15,21 +15,21 @@
 
 ## Overview
 
-Standard x402 `exact` payments on Solana leave a USDC transfer for each purchase. A seller can attach a memo naming the feed or token. Copycat, the demo's chain observer, uses those transfers to infer what an agent is researching.
+Standard x402 `exact` payments on Solana leave a USDC transfer for each purchase. A seller can attach a memo naming the feed or token. The demo's chain observer uses those transfers to infer what an agent is researching.
 
 Blindfold is a custom x402 v2 scheme named `blindfold`. An owner deposits USDC into a shared Solana vault and receives blind-signed [Cashu](https://cashu.space) tokens. The agent pays for data in an HTTP header. Providers redeem the tokens at the mint and receive periodic USDC payouts from the vault. Direct Blindfold purchases leave no per-call transaction. The [public replay](https://brockbenton.github.io/blindfold/) shows the single-agent comparison and a crowd demo that illustrates what deposit amounts can reveal.
 
 ### What the demo shows
 
-`pnpm demo` runs the same research twice on devnet, once with standard x402 and once with Blindfold, while Copycat watches the chain. Script and talking points are in [the demo guide](docs/DEMO.md#what-each-act-shows).
+`pnpm demo` runs the same research twice on devnet, once with standard x402 and once with Blindfold, while the observer watches the chain. Script and talking points are in [the demo guide](docs/DEMO.md#what-each-act-shows).
 
 | Act | Result |
 |---|---|
-| 1. Standard x402 | Three paid calls are three public transfers. The seller memo names SOL, and Copycat signals **BUY SOL**. |
+| 1. Standard x402 | Three paid calls are three public transfers. The seller memo names SOL, and the observer signals **BUY SOL**. |
 | 2. Fund | The owner deposits $1.00 into the vault and receives blind-signed tokens. The issuance log updates. |
-| 3. Blindfold | The same research plus two NewsWire reads. The agent checks reserves against the issuance log first. Copycat reports **NO SIGNAL**. |
+| 3. Blindfold | The same research plus two NewsWire reads. The agent checks reserves against the issuance log first. The observer reports **NO SIGNAL**. |
 | 4. Settle | One batched, rounded vault payout to both feeds at the next window. |
-| 5. Scoreboard | Copycat is scored against what the agent actually bought. Standard x402: 3/3 purchases attributed (wallet, feed and token). Blindfold: 0/5 attributed, 0 per-call transfers. With a single owner, payouts can still be linked to that owner and the feeds, but not to the token. Incomplete chain coverage is reported as inconclusive. |
+| 5. Scoreboard | The observer is scored against what the agent actually bought. Standard x402: 3/3 purchases attributed (wallet, feed and token). Blindfold: 0/5 attributed, 0 per-call transfers. With a single owner, payouts can still be linked to that owner and the feeds, but not to the token. Incomplete chain coverage is reported as inconclusive. |
 | 6. Poisoned feed | A model-driven agent asks for owner approval on a 25¢ purchase. The session allowance stops a runaway loop with `budget_exhausted`, and an injected payment to an unregistered recipient is refused. |
 | 7. Replay | A copied payment gets a 402. |
 | 8. Reserve gate | The mint claims more than the vault holds, and the agent stops without paying. |
@@ -46,7 +46,7 @@ flowchart LR
         Feed["TokenFeed / NewsWire"]
         Gateway["Gateway"]
         Vendor["Upstream x402 exact vendor"]
-        Copycat["Copycat"]
+        Observer["Observer"]
     end
     subgraph solana["Solana devnet"]
         Vault["Blindfold vault"]
@@ -76,8 +76,8 @@ flowchart LR
     Vault -->|advance settled total| Log
     Balance -->|batched USDC| Payouts
     Vault -.->|devnet blocks| Stream
-    Stream -.->|filtered webhook| Copycat
-    Copycat -.->|deposit poll hint| Mint
+    Stream -.->|filtered webhook| Observer
+    Observer -.->|deposit poll hint| Mint
 ```
 
 The mint credits a quote from the vault's `DepositRecord`, then signs the owner's blinded outputs. The owner verifies the DLEQ proofs and hands the agent a token file. Tokens are locked to the keys of providers active at funding time. When a provider returns HTTP 402, the wallet checks the offer and pays the exact amount in the `PAYMENT-SIGNATURE` header. The provider signs the proofs and redeems them before serving data. The mint records spent proofs and credits the provider in one database transaction.
@@ -95,7 +95,7 @@ The mint credits a quote from the vault's `DepositRecord`, then signs the owner'
 | Gateway | [`apps/gateway`](apps/gateway) | Accepts Blindfold tokens and buys upstream data with x402 `exact` from one shared wallet. |
 | CLI agent | [`agents/simple`](agents/simple) | Runs scripted or model-driven research. |
 | MCP server | [`agents/mcp`](agents/mcp) | Exposes discovery, quotes, balances, purchases and reserve reports over stdio. |
-| Copycat, demo and replay | [`scripts`](scripts) | Reads the public transactions for standard x402 and Blindfold and scores Copycat's attributions against ground truth. |
+| Observer, demo and replay | [`scripts`](scripts) | Reads the public transactions for standard x402 and Blindfold and scores the observer's attributions against ground truth. |
 
 The gateway checks the upstream price before redeeming. It builds a new request, forwarding only query parameters permitted by its route map. The vendor sees the gateway's request and shared payer. Each upstream payment and any vendor memo stay public. The devnet demo vendor is TokenFeed with its `exact` rail enabled. See [Gateway setup](docs/design/06-gateway.md#setup-and-running-devnet).
 
@@ -136,7 +136,7 @@ The devnet issuance-log upgrade is recorded in the [vault deployment notes](docs
 | CLI agent and MCP server | Configuration, vault USDC balance and issuance log | None. Both use a token file. |
 | Direct Blindfold provider | — | None for a Blindfold purchase. The provider redeems over HTTP and receives USDC from the vault. |
 | Gateway | Upstream payment state through the `exact` client | Signs upstream `exact` payments from its shared wallet. The upstream facilitator submits the transaction. |
-| Copycat and vault history | Public transactions. Vault history also reads the current balance and issuance log. | None |
+| Observer and vault history | Public transactions. Vault history also reads the current balance and issuance log. | None |
 
 ## Agent decision loop and safety limits
 
@@ -209,11 +209,11 @@ The facilitator and scheme are workspace exports of `apps/mock-api`, not a publi
 |---|---|
 | Network | `solana-devnet` |
 | Dataset | `block`, starting at the chain tip, with batches of five and elastic batching enabled. |
-| Filter | [`scripts/streams/copycat-filter.js`](scripts/streams/copycat-filter.js). Keeps successful transactions that change a watched USDC balance. Extracts amounts and SPL memos and decodes `DepositMade` logs for the vault. |
+| Filter | [`scripts/streams/observer-filter.js`](scripts/streams/observer-filter.js). Keeps successful transactions that change a watched USDC balance. Extracts amounts and SPL memos and decodes `DepositMade` logs for the vault. |
 | Destination | `POST /streams` in `pnpm demo` or `pnpm bot`, exposed through a cloudflared tunnel by default. The receiver verifies `X-QN-Signature` using the per-run security token. |
 | Provisioning | [`pnpm streams:setup`](scripts/streams-setup.ts) creates a paused Stream or updates its filter. The watcher configures and activates it for the run and pauses it on clean exit. |
 
-Filtering at QuickNode reduces block payloads to the events Copycat needs. The Stream's reported tip lets the demo wait for delivery past a slot before reporting that it saw no new payment. Copycat falls back to RPC when Streams are unavailable or silent for 20 seconds, and deduplicates observations across both sources.
+Filtering at QuickNode reduces block payloads to the events the observer needs. The Stream's reported tip lets the demo wait for delivery past a slot before reporting that it saw no new payment. The observer falls back to RPC when Streams are unavailable or silent for 20 seconds, and deduplicates observations across both sources.
 
 A `DepositMade` event tells the demo to call the mint's authenticated `POST /v1/blindfold/admin/poll-deposits`. The standalone bot does the same when `MINT_URL` and `MINT_ADMIN_TOKEN` are set. The mint joins any poll already in flight and credits only vault-owned `DepositRecord` accounts. The two-second timer continues during funding. The demo stops that timer after its funding step. See [Stream setup and filter test](docs/DEMO.md#quicknode-streams-optional).
 
@@ -252,7 +252,7 @@ Approval and limits protect against a manipulated model. A compromised process o
 | Document | Contents |
 |---|---|
 | [Run it locally](docs/RUNNING.md) | Setup, service commands and vault checks |
-| [Run the demo](docs/DEMO.md) | Demo, Copycat, crowd comparison, Streams and recording |
+| [Run the demo](docs/DEMO.md) | Demo, observer, crowd comparison, Streams and recording |
 | [MCP setup](agents/mcp/README.md) | Claude Code, Claude Desktop, tools and limits |
 | [Why Blindfold](docs/why-blindfold.md) · [Design](docs/design.md) | Motivation, trust and privacy |
 | [Interfaces](docs/design/00-interfaces.md) | Wire formats, accounts, APIs and configuration |

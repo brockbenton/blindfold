@@ -165,7 +165,7 @@ Two deposits built against the same `deposit_count` collide on the `DepositRecor
 
 ### 4.4 Events
 
-Emitted with `emit!`. The mint credits deposits from accounts (§6). Events can trigger a poll. Copycat's QuickNode Stream filter (`scripts/streams/copycat-filter.js`) decodes `DepositMade` from the `Program data:` log line (8-byte discriminator `sha256("event:DepositMade")[0..8]`, then the Borsh fields) and reports it; Copycat's signals come from USDC balance changes, not events.
+Emitted with `emit!`. The mint credits deposits from accounts (§6). Events can trigger a poll. The observer's QuickNode Stream filter (`scripts/streams/observer-filter.js`) decodes `DepositMade` from the `Program data:` log line (8-byte discriminator `sha256("event:DepositMade")[0..8]`, then the Borsh fields) and reports it; the observer's signals come from USDC balance changes, not events.
 
 | Event | Fields |
 |---|---|
@@ -513,7 +513,7 @@ packages/wallet/       04: wallet SDK + owner CLI
 agents/simple/         05: CLI agent
 agents/mcp/            MCP stdio server
 config/providers.json  provider_id → name, url
-scripts/               devnet setup, e2e test, demo, Copycat (bot.ts), streams/ (QuickNode Stream filter)
+scripts/               devnet setup, e2e test, demo, the observer (bot.ts), streams/ (QuickNode Stream filter)
 spikes/x402-cashu/     feasibility spike (reference only, not production code)
 docker-compose.yml     Postgres
 .env.example

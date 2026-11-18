@@ -1,4 +1,4 @@
-// QuickNode Streams filter for Copycat (network solana-devnet, dataset block). QuickNode runs main() on every block
+// QuickNode Streams filter for the observer (network solana-devnet, dataset block). QuickNode runs main() on every block
 // batch. It keeps only successful transactions that move USDC into a watched token account (the data feed's
 // payout account or the Blindfold vault) and returns one compact record per movement, plus the vault's DepositMade
 // events. Every batch returns { tip }, even with no records, so the receiver knows the Stream is alive and how far

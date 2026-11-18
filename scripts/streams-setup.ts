@@ -1,5 +1,5 @@
-// Creates (or updates) Copycat's QuickNode Stream from code: network solana-devnet, dataset block, the filter in
-// scripts/streams/copycat-filter.js with the feed and vault addresses filled in, webhook destination. The Stream is
+// Creates (or updates) the observer's QuickNode Stream from code: network solana-devnet, dataset block, the filter in
+// scripts/streams/observer-filter.js with the feed and vault addresses filled in, webhook destination. The Stream is
 // left paused with a placeholder URL; `pnpm bot` and `pnpm demo` point it at their own tunnel and activate it.
 //
 //   pnpm streams:setup                 create or update the Stream (paused)
@@ -47,7 +47,7 @@ if (argv.includes("--delete")) {
 
 const summary = (s: { id: string; status: string }) => ({
   name: STREAM_NAME, id: s.id, status: s.status, network: "solana-devnet", dataset: "block", watch,
-  filter: { file: "scripts/streams/copycat-filter.js", sha256: createHash("sha256").update(filterSource(watch)).digest("hex").slice(0, 16) },
+  filter: { file: "scripts/streams/observer-filter.js", sha256: createHash("sha256").update(filterSource(watch)).digest("hex").slice(0, 16) },
 });
 
 if (argv.includes("--status")) {
@@ -56,7 +56,7 @@ if (argv.includes("--status")) {
   process.exit(0);
 }
 
-const spec = streamSpec(watch, { url: "https://example.com/blindfold-copycat", token: newSecurityToken(), status: "paused" });
+const spec = streamSpec(watch, { url: "https://example.com/blindfold-observer", token: newSecurityToken(), status: "paused" });
 let stream;
 if (existing) {
   await api.update(existing.id, { filter_function: spec.filter_function });

@@ -1,4 +1,4 @@
-// QuickNode Streams source for Copycat: the filter on real devnet blocks (fixtures saved from QuickNode's
+// QuickNode Streams source for the observer: the filter on real devnet blocks (fixtures saved from QuickNode's
 // test_filter), the webhook receiver, and the watcher's Streams-first, RPC-fallback behaviour. No network access:
 // QuickNode, the tunnel and the Solana RPC are faked.
 import { readFileSync } from "node:fs";
@@ -24,7 +24,7 @@ const DEPOSIT = 522985117; // owner deposit into the vault (DepositMade #12)
 const PAYOUT = 522985192; // vault settle_batch to the feed
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-describe("copycat-filter.js", () => {
+describe("observer-filter.js", () => {
   it("returns an exact payment as a compact record with sender, amount and memo", () => {
     const out = runFilter(watch, { data: [block(PAYMENT)] })!;
     expect(out.tip).toBe(PAYMENT);
@@ -161,7 +161,7 @@ function fakeQuickNode(o: { createErrors?: string[] } = {}) {
     created: [] as ReturnType<typeof streamSpec>[],
     removed: [] as string[],
     paused: [] as string[],
-    existing: { id: "old", name: "blindfold-copycat", status: "paused", network: "solana-devnet" } as any,
+    existing: { id: "old", name: "blindfold-observer", status: "paused", network: "solana-devnet" } as any,
     api: {
       find: async () => qn.existing,
       remove: async (id: string) => { qn.removed.push(id); qn.existing = null; return {}; },

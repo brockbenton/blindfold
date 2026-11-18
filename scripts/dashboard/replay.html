@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Blindfold replay</title>
-<meta name="description" content="A recorded run of Blindfold: private x402 payments for AI agents on Solana. Copycat, a bot reading public Solana data, front-runs standard x402 and sees nothing with Blindfold.">
+<meta name="description" content="A recorded run of Blindfold: private x402 payments for AI agents on Solana. The observer, a bot reading public Solana data, front-runs standard x402 and sees nothing with Blindfold.">
 <meta property="og:title" content="Blindfold replay">
 <meta property="og:description" content="Watch a recorded Solana run: standard x402 leaks what your agent researches; Blindfold does not.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -33,13 +33,13 @@
   .term-body .step, .term-body .key { color: var(--muted); }
   .term-body .step { padding-left: 16px; }
   .term-body .kv { display: grid; grid-template-columns: 112px 1fr; gap: 12px; }
-  .term-body .ok, .term-body .warn, .term-body .copycat, .term-body .agent { display: grid; grid-template-columns: 24px 1fr; gap: 12px; }
-  .term-body .copycat, .term-body .agent { grid-template-columns: 64px 1fr; }
+  .term-body .ok, .term-body .warn, .term-body .observer, .term-body .agent { display: grid; grid-template-columns: 24px 1fr; gap: 12px; }
+  .term-body .observer, .term-body .agent { grid-template-columns: 72px 1fr; }
   .term-body .tag.ok { color: var(--green); }
   .term-body .tag.warn { color: var(--amber); }
-  .term-body .tag.copycat { color: var(--red); }
+  .term-body .tag.observer { color: var(--red); }
   .term-body .tag.agent { color: var(--text); }
-  .term-body .copycat > span:last-child { color: var(--text); }
+  .term-body .observer > span:last-child { color: var(--text); }
   .term-body .err { color: var(--red); }
   .term-body a { color: var(--text); border-bottom: 1px solid var(--line); transition: border-color 150ms var(--ease); }
   .term-body a:hover { border-color: var(--text-2); }

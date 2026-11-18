@@ -99,7 +99,7 @@ function linkify(s) {
   return out + esc(s.slice(last));
 }
 
-const TAGS = { ok: "ok", warn: "!!", copycat: "Copycat", agent: "Agent" };
+const TAGS = { ok: "ok", warn: "!!", observer: "Observer", agent: "Agent" };
 function line(l) {
   if (l.cls === "gap") return '<div class="l gap"></div>';
   if (l.cls === "kv") return `<div class="l kv"><span class="key">${esc(l.key)}</span><span>${linkify(l.text)}</span></div>`;

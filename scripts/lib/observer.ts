@@ -1,4 +1,4 @@
-// Copycat: a front-running bot that reads only public Solana data. It watches a data provider's USDC account and
+// The observer: a front-running bot that reads only public Solana data. It watches a data provider's USDC account and
 // the Blindfold vault, profiles every wallet that pays the provider directly, and turns purchase patterns into
 // trading signals. It has no access to the mint, the provider's logs or any wallet.
 import { Connection, PublicKey } from "@solana/web3.js";
@@ -21,9 +21,9 @@ export interface Signal {
   token: string | null;
   tokenCalls: number;
   spanSeconds: number | null;
-  /** What Copycat does: `BUY SOL`, `WATCH SOL` or `WATCH WALLET`. */
+  /** What the observer does: `BUY SOL`, `WATCH SOL` or `WATCH WALLET`. */
   action: string;
-  /** Copycat's reasoning, one sentence. */
+  /** The observer's reasoning, one sentence. */
   reason: string;
 }
 
@@ -32,7 +32,7 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /**
  * One signal per wallet that paid the provider directly. Repeated research on one token means a trade is coming,
- * so Copycat buys first; a single purchase is only worth watching. Copycat cannot see the data the agent bought, so
+ * so the observer buys first; a single purchase is only worth watching. The observer cannot see the data the agent bought, so
  * the direction is its bet, not knowledge.
  */
 export function infer(obs: Observation[]): Signal[] {
@@ -87,7 +87,7 @@ export interface VaultReading {
 }
 
 /**
- * What Copycat can say about Blindfold users from vault deposits and payouts alone. Payouts carry no payer and no
+ * What the observer can say about Blindfold users from vault deposits and payouts alone. Payouts carry no payer and no
  * memo, so the token researched is never visible; the question is only whether a payout can be pinned on a wallet.
  * It sees only the watched window: deposits from before it widen the real crowd, so this errs toward attributing.
  */
@@ -134,7 +134,7 @@ export function attributeVault(obs: Observation[]): VaultReading {
   };
 }
 
-/** Copycat's one-line reading of a single transaction, for live feeds. `names` maps payout wallets to feed names. */
+/** The observer's one-line reading of a single transaction, for live feeds. `names` maps payout wallets to feed names. */
 export function describe(o: Observation, names: Record<string, string> = {}): string {
   const usd = `$${(Number(o.amountBase) / 1e6).toFixed(2)}`;
   if (o.kind === "direct_payment") {
@@ -238,7 +238,7 @@ export class ChainWatcher {
 
   /**
    * Slot ranges, per watched token account, in which RPC passes read every transaction. A gap means more
-   * transactions arrived between two passes than one page holds, so Copycat may have missed some there.
+   * transactions arrived between two passes than one page holds, so the observer may have missed some there.
    */
   coverage(): Record<string, SlotRange[]> {
     return Object.fromEntries([...this.covered].map(([a, r]) => [a, r.map((x) => ({ ...x }))]));

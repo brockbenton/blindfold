@@ -1,7 +1,7 @@
 // Crowd demo: privacy needs other people. Several agents, each with its own owner wallet, research different
-// tokens with interleaved timing. With standard x402 `exact`, Copycat attributes every purchase to a wallet and a
+// tokens with interleaved timing. With standard x402 `exact`, the observer attributes every purchase to a wallet and a
 // token. With Blindfold, each owner deposits the same amount, the agents pay with tokens, and one settlement batch
-// pays the feed for all of it: Copycat sees N deposits and one payout and cannot attribute the purchases. A second
+// pays the feed for all of it: the observer sees N deposits and one payout and cannot attribute the purchases. A second
 // round with one big deposit and small ones shows how odd amounts give a depositor away.
 //
 //   pnpm crowd                 local validator with fresh keys (needs `anchor build` and the Solana tools)
@@ -37,7 +37,7 @@ import { SolanaVaultReader } from "../services/mint/src/chain/vaultReader.js";
 import type { AppConfig } from "../services/mint/src/config.js";
 import { createPool } from "../services/mint/src/db.js";
 import { createMint as createMintServer } from "../services/mint/src/mint.js";
-import { ChainWatcher, attributeVault, describe as describeTx, infer } from "./lib/copycat.js";
+import { ChainWatcher, attributeVault, describe as describeTx, infer } from "./lib/observer.js";
 import { startDashboard, type Dashboard } from "./lib/dashboard.js";
 import { exactPayFetch, paymentResponse } from "./lib/exactClient.js";
 import { explorerTx } from "./lib/explorer.js";
@@ -146,11 +146,11 @@ async function startValidator(rpc: string, programId: PublicKey) {
 }
 
 async function main() {
-  act("Privacy needs a crowd", `${N} trading agents, ${N} owners, one data feed. Copycat reads public Solana data and tries to work out who is researching what.`);
+  act("Privacy needs a crowd", `${N} trading agents, ${N} owners, one data feed. The observer reads public Solana data and tries to work out who is researching what.`);
   say(dim("Mode: local rehearsal (throwaway validator, fresh keys)."));
   blank();
 
-  // ---------------------------------------------------------------- chain: everything funded before Copycat looks
+  // ---------------------------------------------------------------- chain: everything funded before the observer looks
   const rpc = "http://127.0.0.1:8899";
   const programId = new PublicKey(DEFAULT_VAULT_PROGRAM_ID);
   step("starting a local Solana validator with the vault program");
@@ -227,7 +227,7 @@ async function main() {
   const apiServer = serve({ fetch: api.fetch, port: apiPort, hostname: "127.0.0.1" });
   cleanups.push(() => stop(apiServer));
 
-  // Copycat watches from here on: the feed's USDC account and the vault. The dashboard shows what it finds.
+  // The observer watches from here on: the feed's USDC account and the vault. The dashboard shows what it finds.
   const startSlot = await connection.getSlot(SOLANA_COMMITMENT);
   const vaultStart = await tokenBalance(connection, vaultToken);
   let dash: Dashboard<CrowdEvent> | null = null;
@@ -257,9 +257,9 @@ async function main() {
   });
   if (dash) watcher.start();
   cleanups.push(() => watcher.stop());
-  const copycat = (text: string) => console.log(`  ${bold(magenta("Copycat"))}  ${text}`);
+  const observer = (text: string) => console.log(`  ${bold(magenta("Observer"))}  ${text}`);
   const captions = ["The crowd", "The crowd pays with standard x402", "The crowd funds Blindfold", "The same research, paid with Blindfold",
-    "One payout for everyone", "Odd amounts give a depositor away", "Copycat's report"];
+    "One payout for everyone", "Odd amounts give a depositor away", "The observer's report"];
   const scene = (n: number, title: string, subtitle: string) => {
     act(`${n}. ${title}`, subtitle);
     emit({ type: "act", n, title: captions[n] });
@@ -268,7 +268,7 @@ async function main() {
   blank();
   say(bold("The crowd"));
   for (let i = 0; i < N; i++) kv(`Agent ${name(i)}`, `researches ${TOPICS[i].toUpperCase()}: ${PLANS[i].map((p) => (p === "d" ? "depth" : "whale flow")).join(", ")}`);
-  say(dim(`Each agent has its own owner wallet, funded separately before Copycat starts watching. ${FEED} sells whale flow at ${PRICE} cents and depth at ${DEPTH_PRICE} cents.`));
+  say(dim(`Each agent has its own owner wallet, funded separately before the observer starts watching. ${FEED} sells whale flow at ${PRICE} cents and depth at ${DEPTH_PRICE} cents.`));
   const payers = await Promise.all(exactAgents.map((k) => exactPayFetch({ keypair: k.secretKey, rpcUrl: rpc, usdcMint: usdcMint.toBase58() })));
   if (dash) {
     blank();
@@ -295,15 +295,15 @@ async function main() {
     ok(`Agent ${name(agent)} paid ${cents(path)} cents for ${label(path)}  ${dim(short(payers[agent].address))}`);
     emit({ type: "call", side: "exact", agent, label: label(path), cents: cents(path), url: explorerTx(pr.transaction, rpc) });
   }
-  step("Copycat is scanning the feed's USDC account");
+  step("The observer is scanning the feed's USDC account");
   await watcher.waitFor((o) => exactSigs.every((x) => o.some((y) => y.signature === x)), 90_000);
   const signals = infer(watcher.observations);
   blank();
-  for (const s of signals) copycat(`${bold(red(s.action.padEnd(9)))} ${s.reason}`);
+  for (const s of signals) observer(`${bold(red(s.action.padEnd(9)))} ${s.reason}`);
   const attributed = signals.filter((s) => s.token && payers.some((p, i) => p.address === s.payer && s.token === TOPICS[i].toUpperCase())).length;
-  if (attributed !== N) fail(`Copycat attributed ${attributed} of ${N} agents with exact`);
+  if (attributed !== N) fail(`The observer attributed ${attributed} of ${N} agents with exact`);
   emit({ type: "exact", signals: signals.map((x) => ({ payer: x.payer, token: x.token, calls: x.calls, totalBase: String(x.totalBase), action: x.action })), final: true });
-  say(`Interleaving did not help: every payment names its wallet, so Copycat sorts them per agent. ${N} of ${N} agents attributed, wallet and token.`);
+  say(`Interleaving did not help: every payment names its wallet, so the observer sorts them per agent. ${N} of ${N} agents attributed, wallet and token.`);
   await pause(pausing);
 
   // ---------------------------------------------------------------- 2. the crowd funds Blindfold
@@ -346,9 +346,9 @@ async function main() {
   const spent = await buy(tokenFiles[0], schedule());
   await watcher.waitFor((o) => deposits.every((x) => o.some((y) => y.signature === x)), 60_000);
   const fresh = watcher.observations.slice(knownBefore).filter((o) => o.kind === "direct_payment");
-  if (fresh.length) fail(`Copycat saw ${fresh.length} direct payments during the Blindfold calls`);
+  if (fresh.length) fail(`The observer saw ${fresh.length} direct payments during the Blindfold calls`);
   blank();
-  copycat(`${bold(green("NO SIGNAL"))} ${spent} cents of purchases, 0 new transactions at the feed.`);
+  observer(`${bold(green("NO SIGNAL"))} ${spent} cents of purchases, 0 new transactions at the feed.`);
   emit({ type: "vault", round: 1, action: "NO SIGNAL", reason: `${spent} cents of purchases, 0 transactions at the feed.`, forced: [] });
   await pause(pausing);
 
@@ -371,9 +371,9 @@ async function main() {
   const reading = attributeVault(watcher.observations);
   blank();
   for (const o of watcher.observations.filter((x) => x.kind !== "direct_payment")) say(dim(describeTx(o)));
-  copycat(`${bold(reading.action === "CANNOT ATTRIBUTE" ? green(reading.action) : red(reading.action))}`);
-  copycat(reading.reason);
-  if (reading.action !== "CANNOT ATTRIBUTE") fail(`expected CANNOT ATTRIBUTE, Copycat said ${reading.action}`);
+  observer(`${bold(reading.action === "CANNOT ATTRIBUTE" ? green(reading.action) : red(reading.action))}`);
+  observer(reading.reason);
+  if (reading.action !== "CANNOT ATTRIBUTE") fail(`expected CANNOT ATTRIBUTE, the observer said ${reading.action}`);
   emit({ type: "vault", round: 1, action: reading.action, reason: reading.reason, forced: reading.forced });
   await pause(pausing);
 
@@ -392,19 +392,19 @@ async function main() {
   const spent2 = await buy(tokenFiles[1], shuffle(plan2));
   await settle(spent2);
   await watcher.waitFor((o) => deposits2.every((x) => o.some((y) => y.signature === x)), 60_000);
-  // Copycat assumes this round's payout was funded by this round's deposits. Older tokens widen the real crowd;
+  // The observer assumes this round's payout was funded by this round's deposits. Older tokens widen the real crowd;
   // here the agents spent only this round's tokens, so the guess is right.
   const reading2 = attributeVault(watcher.observations.filter((o) => o.slot >= round2Slot));
   blank();
-  copycat(`${bold(red(reading2.action))}`);
-  copycat(reading2.reason);
-  if (reading2.action !== "PARTIAL" || reading2.forced[0] !== owners[0].publicKey.toBase58()) fail(`expected PARTIAL naming Agent A's owner, Copycat said ${reading2.action}`);
+  observer(`${bold(red(reading2.action))}`);
+  observer(reading2.reason);
+  if (reading2.action !== "PARTIAL" || reading2.forced[0] !== owners[0].publicKey.toBase58()) fail(`expected PARTIAL naming Agent A's owner, the observer said ${reading2.action}`);
   emit({ type: "vault", round: 2, action: reading2.action, reason: reading2.reason, forced: reading2.forced });
   say(`The small deposits hold ${usd(centsToBaseUnits(SMALL_CENTS * (N - 1)))} together, less than the ${usd(reading2.payoutBase)} payout, so the big depositor must have bought from ${FEED}. The token stays hidden; the wallet does not. Boring, equal amounts avoid this.`);
   await pause(pausing);
 
   // ---------------------------------------------------------------- 6. the report
-  scene(6, "Copycat's report", "The same crowd and the same purchases, paid two ways.");
+  scene(6, "The observer's report", "The same crowd and the same purchases, paid two ways.");
   blank();
   say(bold(red("Standard x402 (exact)")));
   for (const [i, s] of signals.map((x) => [payers.findIndex((p) => p.address === x.payer), x] as const).sort((a, b) => a[0] - b[0])) {
@@ -423,7 +423,7 @@ async function main() {
   kv("Verdict", `${bold(red(reading2.action))}: ${short(reading2.forced[0])} bought from ${FEED}; token: unknown`);
   blank();
   say(bold("What still leaks"));
-  say(yellow("- Funding: if the owners' USDC came from one wallet, that transfer links them. Here each was funded on its own, before Copycat started watching."));
+  say(yellow("- Funding: if the owners' USDC came from one wallet, that transfer links them. Here each was funded on its own, before the observer started watching."));
   say(yellow("- Amounts: odd or uneven deposits can single out a depositor, as act 5 showed."));
   say(yellow("- Size: the payout total bounds the crowd's spending, and the feed's revenue is public."));
   say(yellow("- Timing: deposits right before a payout, or one owner's deposits always followed by large payouts, can be correlated over time."));

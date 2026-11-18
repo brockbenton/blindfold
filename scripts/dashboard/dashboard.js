@@ -102,7 +102,7 @@ export function mountDashboard(root, { interactive = true } = {}) {
     }
   }
 
-  /* What Copycat can say about the agent, from the exact payments it has seen. */
+  /* What the observer can say about the agent, from the exact payments it has seen. */
   function exactDetail() {
     const txs = state.exact.txs.filter((t) => t.kind === "direct_payment");
     if (!txs.length) return "no transactions yet";
@@ -151,7 +151,7 @@ export function mountDashboard(root, { interactive = true } = {}) {
       el.querySelector(".count").textContent = s.txs.length + (s.txs.length === 1 ? " tx" : " txs");
       if (e.side === "exact") el.querySelector(".detail").textContent = exactDetail();
     },
-    copycat(e) {
+    observer(e) {
       const el = sideEl(e.side);
       el.querySelector(".verdict").classList.add("on");
       el.querySelector(".action").textContent = e.side === "exact" ? e.action : "no signal";

@@ -65,7 +65,7 @@ The admin reconciliation endpoint reports `vault_balance`, `deposited`, `issued`
 | Provider | Sees query and token proofs; can also observe client network metadata |
 | Mint | Sees deposits, issuance amounts, provider redemptions and timing; blinding hides the direct issuance-to-proof link |
 | One depositor funding a payout | If that deposit is the only source of the payout, it links the owner to the paid provider. The token and calls stay private |
-| Several equal depositors, one payout | No single depositor can be attributed from amounts; Copycat's `attributeVault` reports `CANNOT ATTRIBUTE` |
+| Several equal depositors, one payout | No single depositor can be attributed from amounts; the observer's `attributeVault` reports `CANNOT ATTRIBUTE` |
 | Distinctive amounts, shared funding, repeated timing | Can link owners and narrow possible contributors. If all other deposits together are too small to cover a payout, the large depositor must have contributed under the model |
 | Leaked tokens | Anyone holding them can submit payments to allowed providers; locks prevent arbitrary-recipient redemption, not budget theft through allowed services |
 | Double spend | Online redemption and a unique spent-proof key prevent double credit |
@@ -76,7 +76,7 @@ The current provider does not log client IPs, token headers or secrets. Omitting
 
 ## Baseline comparison
 
-The mock API can also accept the standard x402 `exact` scheme on the same routes, and Copycat (`scripts/bot.ts`, `scripts/lib/copycat.ts`) observes the chain like a front-running competitor would. With `exact`, every call is a USDC transfer from the agent's wallet to the provider, so the observer learns the payer, the provider, each amount and each time, plus the token when the seller tags payments with a memo. Copycat turns repeated research on one token into a signal such as `BUY SOL`. With `blindfold`, it sees owner deposits into the vault and batched vault payouts, at fixed windows in rounded amounts, with no agent wallet and no per-call transaction; the demo registers a second feed so one batch pays more than one provider. `attributeVault` then asks whether a payout can be pinned on a depositor (`LINKED` with one, `PARTIAL` when amounts force one in, `CANNOT ATTRIBUTE` otherwise). `pnpm demo` runs both flows side by side with one agent, and `pnpm crowd` with several ([demo](DEMO.md)).
+The mock API can also accept the standard x402 `exact` scheme on the same routes, and the observer (`scripts/bot.ts`, `scripts/lib/observer.ts`) observes the chain like a front-running competitor would. With `exact`, every call is a USDC transfer from the agent's wallet to the provider, so the observer learns the payer, the provider, each amount and each time, plus the token when the seller tags payments with a memo. The observer turns repeated research on one token into a signal such as `BUY SOL`. With `blindfold`, it sees owner deposits into the vault and batched vault payouts, at fixed windows in rounded amounts, with no agent wallet and no per-call transaction; the demo registers a second feed so one batch pays more than one provider. `attributeVault` then asks whether a payout can be pinned on a depositor (`LINKED` with one, `PARTIAL` when amounts force one in, `CANNOT ATTRIBUTE` otherwise). `pnpm demo` runs both flows side by side with one agent, and `pnpm crowd` with several ([demo](DEMO.md)).
 
 ## Planned work
 

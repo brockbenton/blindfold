@@ -1,4 +1,4 @@
-// Copycat, standalone: a front-running bot that watches the data feeds' USDC accounts and the Blindfold vault
+// The observer, standalone: a front-running bot that watches the data feeds' USDC accounts and the Blindfold vault
 // using only public Solana data, prints what each transaction reveals and the trading signal it infers. New
 // transactions arrive through a QuickNode Stream (webhook over a cloudflared quick tunnel) when .keys/quicknode.json
 // exists, with RPC polling as the fallback. Run it in a second terminal next to `pnpm demo`.
@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { DEFAULT_VAULT_PROGRAM_ID, SOLANA_COMMITMENT, USDC_DEVNET_MINT } from "@blindfold/protocol";
 import type { Observation } from "./lib/bot.js";
-import { attributeVault, describe, infer } from "./lib/copycat.js";
+import { attributeVault, describe, infer } from "./lib/observer.js";
 import { StreamWatcher } from "./lib/streamWatcher.js";
 import { defaultWatch, feedWallets, loadApiKey } from "./lib/streams.js";
 import { explorerTx } from "./lib/explorer.js";
@@ -50,16 +50,16 @@ function report(o: Observation, all: Observation[]) {
   if (o.kind !== "direct_payment") {
     const r = attributeVault(all);
     const tone = r.action === "NO SIGNAL" || r.action === "CANNOT ATTRIBUTE" ? green : red;
-    console.log(`          ${bold(magenta("Copycat"))}  ${tone(bold(r.action))}  ${dim(r.reason)}`);
+    console.log(`          ${bold(magenta("Observer"))}  ${tone(bold(r.action))}  ${dim(r.reason)}`);
     return;
   }
   const s = infer(all).find((x) => x.payer === o.from);
   if (!s || signals.get(s.payer) === s.reason) return;
   signals.set(s.payer, s.reason);
-  console.log(`          ${bold(magenta("Copycat"))}  ${red(bold(s.action))}  ${s.reason}`);
+  console.log(`          ${bold(magenta("Observer"))}  ${red(bold(s.action))}  ${s.reason}`);
 }
 
-act("Copycat", `A front-running bot reading public Solana data only. ${watch.tokenAccounts.length > 2 ? "Feed accounts" : "Feed account"} ${watch.tokenAccounts.slice(0, -1).map(short).join(", ")}, vault ${short(vaultToken.toBase58())}.`);
+act("Observer", `A front-running bot reading public Solana data only. ${watch.tokenAccounts.length > 2 ? "Feed accounts" : "Feed account"} ${watch.tokenAccounts.slice(0, -1).map(short).join(", ")}, vault ${short(vaultToken.toBase58())}.`);
 // Starts from recent history (the last 20 transactions per account, over RPC: a free-plan Stream only follows the
 // chain tip), then reports new ones as they land.
 const watcher = new StreamWatcher({

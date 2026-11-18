@@ -85,4 +85,4 @@ Each phase is roughly one week.
 | A full public view of the mint's books | Would disclose redemption activity, and completeness would still depend on the mint. |
 | Temporal as the fix for duplicate charges | A durable scheduler can repeat activities. Retries need to be safe first (see Ops hardening). |
 | Key rotation | Deferred. It needs a funded migration and a retirement process. |
-| A stronger model or flashier Copycat animation as the safety proof | The evidence we're missing is a hard bound against an allowed recipient, plus measured observer accuracy. |
+| A stronger model or flashier observer animation as the safety proof | The evidence we're missing is a hard bound against an allowed recipient, plus measured observer accuracy. |

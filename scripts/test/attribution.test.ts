@@ -3,7 +3,7 @@ import { PublicKey } from "@solana/web3.js";
 import { describe, expect, it } from "vitest";
 import type { Observation } from "../lib/bot.js";
 import { describeScore, describeVisible, scoreAttribution, type Purchase, type ScoreInput } from "../lib/attribution.js";
-import { ChainWatcher, COVERAGE_LAG_SLOTS } from "../lib/copycat.js";
+import { ChainWatcher, COVERAGE_LAG_SLOTS } from "../lib/observer.js";
 
 const AGENT = "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU";
 const OWNER = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
@@ -45,7 +45,7 @@ describe("scoreAttribution", () => {
     expect(s.vault).toMatchObject({ deposits: 1, payouts: 2, payoutProviders: ["TokenFeed", "NewsWire"], action: "LINKED" });
     expect(describeScore(s.exact)).toBe("3/3 purchases attributed (wallet+feed+topic), 3 per-call transfers, coverage complete");
     expect(describeScore(s.blindfold)).toBe("0/5 purchases attributed (wallet+feed+topic), 5/5 linked to wallet+feed only (topic unknown), 0 per-call transfers, coverage complete");
-    expect(describeVisible(s.vault)).toBe("1 vault deposit and 2 batched payouts to TokenFeed and NewsWire; Copycat's reading: LINKED");
+    expect(describeVisible(s.vault)).toBe("1 vault deposit and 2 batched payouts to TokenFeed and NewsWire; the observer's reading: LINKED");
   });
 
   it("abstains on Blindfold purchases when several equal deposits hide the payer", () => {

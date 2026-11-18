@@ -1,4 +1,4 @@
-// QuickNode Streams for Copycat: the filter's configuration, the Streams REST API, a webhook receiver and a free
+// QuickNode Streams for the observer: the filter's configuration, the Streams REST API, a webhook receiver and a free
 // cloudflared quick tunnel that makes the receiver reachable from QuickNode. scripts/lib/streamWatcher.ts combines
 // them with RPC polling as the fallback.
 import { spawn, type ChildProcess } from "node:child_process";
@@ -13,11 +13,11 @@ import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { vaultAta } from "@blindfold/protocol";
 import type { Observation, ObservationKind } from "./bot.js";
 
-export const STREAM_NAME = "blindfold-copycat";
+export const STREAM_NAME = "blindfold-observer";
 export const STREAM_NETWORK = "solana-devnet";
 export const STREAM_DATASET = "block";
 const API = "https://api.quicknode.com/streams/rest/v1";
-const FILTER_FILE = new URL("../streams/copycat-filter.js", import.meta.url);
+const FILTER_FILE = new URL("../streams/observer-filter.js", import.meta.url);
 
 /** What the filter watches. `tokenAccounts` are USDC token accounts; incoming transfers to them become records. */
 export interface Watch {
@@ -85,7 +85,7 @@ export function defaultWatch(o: { keysDir: string; usdcMint: PublicKey; programI
 export function filterSource(watch: Watch): string {
   const src = readFileSync(FILTER_FILE, "utf8");
   const line = /^const WATCH = .*\/\/ @watch$/m;
-  if (!line.test(src)) throw new Error("copycat-filter.js lost its `const WATCH = ...; // @watch` line");
+  if (!line.test(src)) throw new Error("observer-filter.js lost its `const WATCH = ...; // @watch` line");
   return src.replace(line, `const WATCH = ${JSON.stringify(watch)}; // @watch`);
 }
 
@@ -221,7 +221,7 @@ export async function startReceiver(o: { token: string | null; onBatch: (b: Stre
       if (o.token && !verifySignature(o.token, req.headers, body)) return reply(401, "bad signature");
       let batch: StreamBatch | null;
       try { batch = normalizeBatch(JSON.parse(body)); } catch { return reply(400, "bad json"); }
-      if (!batch) return reply(400, "not a Copycat batch");
+      if (!batch) return reply(400, "not an observer batch");
       batches++;
       reply(200, "ok");
       o.onBatch(batch);
