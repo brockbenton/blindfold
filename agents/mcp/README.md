@@ -25,11 +25,11 @@ These are the same as the agent's LLM loop ([agent design](../../docs/design/05-
 | Session budget | 50¢ per server process | `BUDGET_CENTS` |
 | Reserve check | Before the first paid call and every 10 paid calls | `RESERVE_CHECK_EVERY` |
 
-A failed reserve check refuses the purchase and runs again on the next attempt. The per-call cap defaults to 30¢, higher than the CLI agent's 10¢, so that the 25¢ premium signals reach the approval prompt instead of being refused outright.
+A failed reserve check refuses the purchase and runs again on the next attempt. `buy_data` also refuses any URL that isn't on a registered provider's origin (`provider_not_allowed`) without contacting it; the token lock enforces the same at the mint. At start-up the server checks that the mint knows the token file's keyset. If it doesn't (the file was funded through a different mint at the same URL), purchases are refused as `tokens_unusable` and `get_balance` carries a warning: fund a new token file through the running mint. The per-call cap defaults to 30¢, higher than the CLI agent's 10¢, so that the 25¢ premium signals reach the approval prompt instead of being refused outright.
 
 ### Owner approval
 
-A purchase above the threshold asks the owner through **MCP elicitation**: the client shows an approve/deny form, and only an explicit approval pays. A decline, a closed form, an error or no answer before `APPROVAL_TIMEOUT_S` is a denial.
+A purchase above the threshold asks the owner through **MCP elicitation**: the client shows an approve/deny form. **Accept** pays (the "approve" box starts ticked; untick it to deny). Decline, a closed form, an error or no answer before `APPROVAL_TIMEOUT_S` is a denial.
 
 If the client doesn't support elicitation, every purchase above the threshold is refused (`approval_denied`), and purchases at or below it still go through. Your Claude Desktop version may not support elicitation yet. If the approval form never appears, that is the reason. To allow larger purchases without a prompt, raise `APPROVAL_OVER_CENTS`, but note that this removes the human check.
 

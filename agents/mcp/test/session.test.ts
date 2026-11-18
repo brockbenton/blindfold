@@ -22,16 +22,18 @@ function fakeWallet(start: number, price: number, fail?: () => Error) {
 
 const okReserves = async (): Promise<ReserveCheckResult> => ({ ok: true, vaultCents: 100, outstandingCents: 50 });
 
-function session(o: { start?: number; price?: number; budget?: number; every?: number; fail?: () => Error; reserves?: () => Promise<ReserveCheckResult> } = {}) {
+function session(o: { start?: number; price?: number; budget?: number; every?: number; fail?: () => Error; reserves?: () => Promise<ReserveCheckResult>; tokenProblem?: string } = {}) {
   const w = fakeWallet(o.start ?? 100, o.price ?? 5, o.fail);
   let checks = 0;
   const s = new Session({
     wallet: w.wallet,
     budgetCents: o.budget ?? 50,
     reserveEvery: o.every ?? 10,
+    tokenProblem: o.tokenProblem ?? null,
     listProviders: async () => [
       { provider_id: 0, pubkey: "02".padEnd(66, "a"), name: "feed", url: "http://feed", price_cents: 5, topics: ["sol"], active: true },
       { provider_id: 1, pubkey: "03".padEnd(66, "b"), name: "gone", url: "http://gone", price_cents: 5, topics: [], active: false },
+      { provider_id: 2, pubkey: "03".padEnd(66, "c"), name: null, url: null, price_cents: null, topics: [], active: true } as never,
     ],
     checkReserves: async () => { checks++; return (o.reserves ?? okReserves)(); },
   });
@@ -86,7 +88,7 @@ describe("Session", () => {
   it("wallet refusals come back as results; owner denials say not to retry", async () => {
     let reason: "provider_not_allowed" | "approval_denied" | "approval_timeout" | "over_cap" = "provider_not_allowed";
     const { s, w } = session({ fail: () => new PaymentRefused(reason) });
-    expect(await s.buy("http://evil/steal")).toEqual({ refused: "provider_not_allowed", detail: "the wallet refused to pay; nothing was spent" });
+    expect(await s.buy("http://feed/v1/data/sol")).toEqual({ refused: "provider_not_allowed", detail: "the wallet refused to pay; nothing was spent" });
     reason = "approval_denied";
     const denied = await s.buy("http://feed/v1/data/sol/signals");
     expect(denied).toMatchObject({ refused: "approval_denied" });
@@ -102,9 +104,24 @@ describe("Session", () => {
   it("payment failures and unexpected errors are errors, not crashes", async () => {
     let e: Error = new PaymentFailed(402, "redeem failed", { returned: 0, dropped: 0 });
     const { s } = session({ fail: () => e });
-    expect(await s.buy("http://feed/a")).toEqual({ error: "payment failed: HTTP 402" });
+    expect(await s.buy("http://feed/a")).toEqual({ error: "payment failed: the provider rejected the token (HTTP 402); its redeem at the mint failed" });
     e = new Error("socket hang up");
     expect(await s.buy("http://feed/a")).toEqual({ error: "socket hang up" });
+  });
+
+  it("refuses unregistered and inactive servers without contacting them", async () => {
+    const { s, w } = session();
+    for (const u of ["http://127.0.0.1:9999/v1/data/sol", "http://gone/v1/data/sol", "https://feed/v1/data/sol"]) {
+      expect(await s.buy(u)).toMatchObject({ refused: "provider_not_allowed" });
+    }
+    expect(w.urls).toHaveLength(0);
+  });
+
+  it("refuses to spend tokens the mint can't redeem, and says why in the balance", async () => {
+    const { s, w } = session({ tokenProblem: "the token file was issued under another keyset" });
+    expect(await s.buy("http://feed/v1/data/sol")).toMatchObject({ refused: "tokens_unusable" });
+    expect(s.balance().warning).toMatch(/another keyset/);
+    expect(w.urls).toHaveLength(0);
   });
 
   it("rejects non-http URLs before anything else", async () => {

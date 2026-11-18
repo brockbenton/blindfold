@@ -38,13 +38,14 @@ export function elicitationApprover(server: McpServer): Approver {
         message: `Blindfold: approve paying ${req.cents} cents for ${req.url}? This is over your ${req.thresholdCents}-cent approval limit. No answer in ${Math.round(req.timeoutMs / 1000)} s counts as a denial.`,
         requestedSchema: {
           type: "object",
-          properties: { approve: { type: "boolean", title: "Approve this purchase", default: false } },
+          properties: { approve: { type: "boolean", title: "Approve this purchase (untick to deny)", default: true } },
           required: ["approve"],
         },
       },
       { signal, timeout: req.timeoutMs },
     );
-    return r.action === "accept" && r.content?.approve === true;
+    // Accept means approve unless the owner unticked the box; decline, cancel or no answer is a denial.
+    return r.action === "accept" && r.content?.approve !== false;
   };
 }
 
