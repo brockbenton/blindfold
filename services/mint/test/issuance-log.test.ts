@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { base58 } from "../src/chain/settleSender.js";
-import { isUnsupported } from "../src/jobs/issuanceLog.js";
+import { isUnsupported, syncIssuanceLog } from "../src/jobs/issuanceLog.js";
 import { addProvider, issue, newQuote, redeem, setupMint, sign, type Harness } from "./helpers.js";
 
 let h: Harness;
@@ -65,6 +65,20 @@ describe("onchain issuance log", () => {
     expect(await state()).toBeUndefined();
   });
 
+  it("keeps settlement out until an outstanding log initialization is resolved", async () => {
+    const A = await addProvider(h);
+    const proofs = await issue(h, [A.pubkey], [8]);
+    await redeem(h, sign(proofs, A.sk));
+    h.sender.dropNextLog = true;
+    expect(await result()).toBe("pending");
+    expect((await settle()).status).toBe(409);
+    expect(h.sender.sends).toBe(0);
+    h.sender.advance(101);
+    expect(await result()).toBe("initialized");
+    expect((await settle()).status).toBe(200);
+    expect(cents(h.vault.issuanceLog?.settled)).toBe(8);
+  });
+
   it("joins a log another mint created, adding only its net issuance", async () => {
     // This mint issued 40 and settled 8 before the log existed; another mint then created it.
     const A = await addProvider(h);
@@ -76,6 +90,43 @@ describe("onchain issuance log", () => {
     // +32: its 32 cents still outstanding. Its earlier 8-cent batch is in neither total.
     expect(cents(h.vault.issuanceLog?.issued)).toBe(532);
     expect(cents(h.vault.issuanceLog?.settled)).toBe(200);
+  });
+
+  it("does not subtract payouts already counted by the chain when joining", async () => {
+    const A = await addProvider(h);
+    const proofs = await issue(h, [A.pubkey], [32, 8]);
+    h.vault.issuanceLog = { issued: 100n * 10_000n, settled: 0n, seq: 0n, updatedSlot: 1n, updatedAt: 1n, bump: 255 };
+    await redeem(h, sign(proofs.filter((p) => p.amount.toNumber() === 8), A.sk));
+    expect((await settle()).status).toBe(200);
+    expect(await result()).toBe("logged");
+    expect(cents(h.vault.issuanceLog!.issued - h.vault.issuanceLog!.settled)).toBe(132);
+  });
+
+  it("serializes independent sync callers and excludes settlement while a log baseline is pending", async () => {
+    const A = await addProvider(h);
+    const proofs = await issue(h, [A.pubkey], [8]);
+    await redeem(h, sign(proofs, A.sk));
+    const d = { db: h.db, vault: h.vault, writer: h.sender };
+    const prepare = h.sender.prepareInitIssuanceLog.bind(h.sender);
+    let resume!: () => void;
+    let notifyEntered!: () => void;
+    const waiting = new Promise<void>((resolve) => { resume = resolve; });
+    const entered = new Promise<void>((resolve) => { notifyEntered = resolve; });
+    h.sender.prepareInitIssuanceLog = async (...args) => {
+      notifyEntered();
+      await waiting;
+      return prepare(...args);
+    };
+    const first = syncIssuanceLog(d);
+    await entered;
+    try {
+      expect(await syncIssuanceLog(d)).toBe("deferred");
+      expect((await settle()).status).toBe(409);
+    } finally {
+      resume();
+      await first;
+    }
+    expect(h.sender.logWrites).toBe(1);
   });
 
   it("adds are atomic: another mint's adds in between are kept", async () => {
@@ -118,7 +169,7 @@ describe("onchain issuance log", () => {
   it("reports an old program without the instructions as unsupported, and clears the attempt", async () => {
     h.sender.issuanceUnsupported = true;
     expect(await result()).toBe("unsupported");
-    expect(await state()).toMatchObject({ pending_sig: null });
+    expect(await state()).toBeUndefined();
     expect(isUnsupported({ logs: ["Program log: AnchorError occurred. Error Code: InstructionFallbackNotFound. Error Number: 101."] })).toBe(true);
     expect(isUnsupported(new Error("Transaction simulation failed: custom program error: 0x65"))).toBe(true);
     expect(isUnsupported(new Error("custom program error: 0x1770"))).toBe(false);

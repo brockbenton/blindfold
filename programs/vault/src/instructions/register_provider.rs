@@ -40,6 +40,7 @@ pub fn handle_register_provider(
     require!(cashu_pubkey[0] == 2 || cashu_pubkey[0] == 3, VaultError::InvalidPubkey);
 
     let config = &mut ctx.accounts.config;
+    require_keys_neq!(payout_token, config.vault_token, VaultError::PayoutAccountMismatch);
     let provider_id = config.provider_count;
     config.provider_count = provider_id.checked_add(1).ok_or(VaultError::MathOverflow)?;
 

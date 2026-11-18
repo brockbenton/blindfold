@@ -1,4 +1,4 @@
-// Settlement state machine (02-mint.md, Settlement recovery). Retry safety comes from Config.last_batch_id onchain.
+// Settlement state machine (02-mint.md, Settlement recovery). Each attempt is tracked by its signed transaction.
 import { BASE_UNITS_PER_CENT, MAX_PAYOUTS_PER_BATCH, type AdminSettleResponse } from "@blindfold/protocol";
 import { tx as dbTx, type Db } from "../db.js";
 import { MintError } from "../errors.js";
@@ -27,7 +27,7 @@ interface StoredPayout {
 interface Row {
   id: number;
   batch_id: number;
-  status: "pending" | "submitted";
+  signed_before_send: boolean;
   payouts: StoredPayout[];
   tx_sig: string | null;
   last_valid: number | null;
@@ -53,8 +53,12 @@ export async function runSettlement(deps: SettlementDeps, opts: { sync?: boolean
 
 async function run(d: SettlementDeps): Promise<AdminSettleResponse> {
   // 1. Recover first. One recovery per run: a failed batch is reported, the next run starts fresh.
-  const open = await d.db.query<Row>("select id, batch_id, status, payouts, tx_sig, last_valid from settlements where status in ('pending','submitted') order by id limit 1");
+  const open = await d.db.query<Row>("select id, batch_id, signed_before_send, payouts, tx_sig, last_valid from settlements where status in ('pending','submitted') order by id limit 1");
   if (open.rows.length) return recover(d, open.rows[0]);
+
+  // An init can still land after the issuance job releases its lock. Keep its baseline stable.
+  const init = await d.db.query("select 1 from issuance_log_state where id = 1 and pending_kind = 'init'");
+  if (init.rowCount) throw new MintError(70011, "issuance log initialization is still in flight", 409);
 
   // 2. Create the batch. Balances are debited here, under the row lock.
   const chain = (await d.vault.getConfig()).lastBatchId;
@@ -85,10 +89,10 @@ async function run(d: SettlementDeps): Promise<AdminSettleResponse> {
       await c.query("update provider_balances set balance = balance - $2 where provider_id = $1", [p.provider_id, p.amount_cents]);
     }
     const ins = await c.query<{ id: number }>(
-      "insert into settlements (batch_id, status, payouts) values ($1, 'pending', $2) returning id",
+      "insert into settlements (batch_id, status, payouts, signed_before_send) values ($1, 'pending', $2, true) returning id",
       [batchId, JSON.stringify(payouts)],
     );
-    return { id: ins.rows[0].id, batch_id: batchId, status: "pending" as const, payouts, tx_sig: null, last_valid: null };
+    return { id: ins.rows[0].id, batch_id: batchId, signed_before_send: true, payouts, tx_sig: null, last_valid: null };
   });
   if (!row) return { batch_id: null };
   return submit(d, row);
@@ -120,36 +124,47 @@ async function markFailed(d: SettlementDeps, row: Row, error: string): Promise<n
 }
 
 async function recover(d: SettlementDeps, row: Row): Promise<AdminSettleResponse> {
-  const chain = (await d.vault.getConfig()).lastBatchId;
-  if (chain >= BigInt(row.batch_id)) return markConfirmed(d, row); // landed: never resend
-  if (row.status === "submitted" && row.tx_sig) {
+  if (row.tx_sig) {
     const st = await d.sender.confirm(row.tx_sig);
     if (st === "confirmed") return markConfirmed(d, row);
     if (st === "failed") return markFailed(d, row, "transaction failed onchain");
-    if (row.last_valid !== null && !(await d.sender.isExpired(row.last_valid))) {
+    if (row.last_valid === null || !(await d.sender.isExpired(row.last_valid))) {
       throw new MintError(70011, `settlement batch ${row.batch_id} is still in flight`, 409);
     }
+    // A signature can become visible between the status and finalized-height reads.
+    const finalStatus = await d.sender.confirm(row.tx_sig);
+    if (finalStatus === "confirmed") return markConfirmed(d, row);
+    if (finalStatus === "failed") return markFailed(d, row, "transaction failed onchain");
+    if ((await d.vault.getConfig()).lastBatchId >= BigInt(row.batch_id)) {
+      // A missing status can also mean pruned or lagging RPC history. Advancing the batch ID alone
+      // cannot prove whether this attempt paid. Leave the row for reconciliation.
+      throw new MintError(70011, `settlement batch ${row.batch_id}: reconcile signature ${row.tx_sig} before retrying`, 409);
+    }
+  } else if (!row.signed_before_send) {
+    // A legacy writer may have sent before recording the signature.
+    throw new MintError(70011, `settlement batch ${row.batch_id}: reconcile legacy pending payout before retrying`, 409);
   }
-  return submit(d, row); // never sent, or expired without landing
+  return submit(d, row);
 }
 
 async function submit(d: SettlementDeps, row: Row): Promise<AdminSettleResponse> {
   const payouts: SettlePayout[] = row.payouts.map((p) => ({ providerId: p.provider_id, payoutToken: p.payout_token, amountBase: BigInt(p.amount_base) }));
-  let sent: { tx: string; validUntil: number };
-  try {
-    sent = await d.sender.submit(BigInt(row.batch_id), payouts);
-  } catch (e) {
-    if (e instanceof ProgramError) {
-      if (e.program === "BadBatchId" && (await d.vault.getConfig()).lastBatchId >= BigInt(row.batch_id)) return markConfirmed(d, row);
-      return markFailed(d, row, e.program);
-    }
-    throw e; // transient: the row stays pending and the next run recovers it
+  if ((await d.vault.getConfig()).lastBatchId >= BigInt(row.batch_id)) {
+    return markFailed(d, row, "batch ID was taken by another writer");
   }
-  await d.db.query("update settlements set status = 'submitted', tx_sig = $2, last_valid = $3, updated_at = now() where id = $1", [row.id, sent.tx, sent.validUntil]);
+  const sent = await d.sender.prepareSettlement(BigInt(row.batch_id), payouts);
+  await d.db.query("update settlements set status = 'submitted', tx_sig = $2, last_valid = $3, issuance_accounted = $4, updated_at = now() where id = $1",
+    [row.id, sent.sig, sent.validUntil, sent.withIssuanceLog]);
+  try {
+    await sent.send();
+  } catch (e) {
+    if (e instanceof ProgramError) return markFailed(d, row, e.program);
+    throw e; // The signed attempt may have landed. Recover by signature.
+  }
   const deadline = Date.now() + (d.confirmTimeoutMs ?? 30_000);
   for (;;) {
-    const st = await d.sender.confirm(sent.tx);
-    if (st === "confirmed") return markConfirmed(d, row, sent.tx);
+    const st = await d.sender.confirm(sent.sig);
+    if (st === "confirmed") return markConfirmed(d, row, sent.sig);
     if (st === "failed") return markFailed(d, row, "transaction failed onchain");
     if (Date.now() >= deadline) throw new MintError(70011, `settlement batch ${row.batch_id} submitted, awaiting confirmation`, 409);
     await sleep(Math.max(1, Math.min(400, deadline - Date.now())));

@@ -74,9 +74,9 @@ pending -> submitted -> confirmed
 ```
 
 1. Lock positive balances of active providers and compute each payable amount ([settlement privacy](#46-settlement-privacy)). Take up to eight, largest first. Debit those amounts and persist the planned batch/payouts in one transaction. New redemptions add to the remaining balances.
-2. Submit `settle_batch`, then persist its signature and last-valid block height. `SettleSender` exposes `submit`, `confirm` and `isExpired`; it is not a single send-and-forget method.
-3. On recovery, `Config.last_batch_id >= batch_id` means the batch landed; do not resend. Otherwise confirm the known transaction, wait while it can still land, or resubmit after expiry.
-4. A deterministic program failure marks the attempt failed and restores balances atomically. Signature-status errors are terminal only at `confirmed` or `finalized` commitment; a `processed` error stays pending because its fork can disappear. A transient error leaves it open for recovery. Batch IDs prevent duplicate payouts, assuming this database is the sole settlement writer for the vault.
+2. Sign `settle_batch` with a unique memo, persist its signature and last-valid block height, and submit the signed transaction.
+3. On recovery, confirm by signature. Wait while the transaction can still land. After expiry, retry if the batch ID is still available. A missing signature status after the ID advances, or a legacy pending row without a signature, requires operator reconciliation.
+4. A deterministic program failure marks the attempt failed and restores balances atomically. Signature-status errors are terminal only at `confirmed` or `finalized` commitment; a `processed` error stays pending because its fork can disappear. A transient error leaves it open for recovery. Batch IDs prevent two transactions from settling the same batch. The signature identifies which writer paid.
 
 A submitted batch may need more than one job tick or admin call to finish. HTTP 409 codes `70010` and `70011` mean a run is busy/in flight; HTTP 502 `70012` means an attempt failed and its balances were restored.
 
@@ -126,11 +126,11 @@ The mint tests create isolated PostgreSQL schemas. They cover issuance replay, c
 
 1. A pending transaction is resolved first from its signature status: confirmed moves its cents into `logged_cents`; failed or expired clears it; otherwise the run returns `pending` and sends nothing.
 2. No log onchain: if a settlement is `pending` or `submitted`, return `deferred` (a batch sent before the log exists cannot add itself to it). Otherwise send `init_issuance_log(issued, confirmed settled)`.
-3. A log this mint has no state for (another mint created it on the same vault): also deferred while a batch is in flight; otherwise set `logged_cents` to this mint's confirmed settled total, so it adds only its net issuance (its earlier batches are not in the log's settled total).
+3. A log this mint has no state for (another mint created it on the same vault): also deferred while a batch is in flight; otherwise set `logged_cents` to the confirmed payouts known to have omitted the log. Legacy rows with unknown coverage remain in the liability calculation.
 4. Send `log_issuance(add = issued - logged_cents)` when positive; otherwise `unchanged`. The program adds, so two mints logging at once never overwrite each other.
 5. Every transaction is signed, recorded as pending with its signature and expiry, then sent. A preflight rejection clears it; a lost response is resolved from the chain. A program without the instructions returns `unsupported`, and the timer warns once.
 
-`SolanaSettleSender` adds the log as the trailing `settle_batch` account whenever it exists, so `settled` is advanced by the program, not reported by the mint. One sync runs at a time (the timer and the admin route share it).
+`SolanaSettleSender` adds the log as the trailing `settle_batch` account whenever it exists, so `settled` is advanced by the program, not reported by the mint. The sync and settlement jobs share a per-schema PostgreSQL lock. A pending initialization also defers settlement until its baseline is confirmed or the attempt expires.
 
 ## Deposit poll hints
 

@@ -18,7 +18,7 @@ export function isUnsupported(e: unknown): boolean {
 
 /** A preflight (simulation) rejection: the transaction never reached the chain, so its pending record can go. */
 function rejectedBeforeSending(e: unknown): boolean {
-  return Array.isArray((e as { logs?: unknown })?.logs) || /simulation failed|Error Code:|custom program error/i.test((e as Error)?.message ?? "");
+  return /(?:Transaction )?simulation failed/i.test((e as Error)?.message ?? "");
 }
 
 interface State {
@@ -46,6 +46,21 @@ export interface IssuanceSyncDeps {
  * this mint's unlogged issuance.
  */
 export async function syncIssuanceLog(d: IssuanceSyncDeps): Promise<IssuanceSyncResult> {
+  const lock = await d.db.connect();
+  try {
+    // Use the settlement lock too, so a same-schema payout cannot cross the baseline snapshot.
+    if (!(await lock.query("select pg_try_advisory_lock(hashtext(current_schema()), 42) as ok")).rows[0].ok) return "deferred";
+    try {
+      return await syncLog(d);
+    } finally {
+      await lock.query("select pg_advisory_unlock(hashtext(current_schema()), 42)");
+    }
+  } finally {
+    lock.release();
+  }
+}
+
+async function syncLog(d: IssuanceSyncDeps): Promise<IssuanceSyncResult> {
   const { db, vault, writer } = d;
   const load = async () => (await db.query<State>("select * from issuance_log_state where id = 1")).rows[0] as State | undefined;
   let state = await load();
@@ -71,7 +86,7 @@ export async function syncIssuanceLog(d: IssuanceSyncDeps): Promise<IssuanceSync
     // Another mint created the log. Join it: this mint's earlier settlements are not in the log's settled total,
     // so count them as already logged and add only the net (issued minus settled) from here on.
     if (await inflightSettlement(db)) return "deferred";
-    await db.query("insert into issuance_log_state (id, logged_cents) values (1, $1) on conflict (id) do nothing", [await one(db, SETTLED_SQL)]);
+    await joinLog(db);
     state = (await load())!;
   }
 
@@ -95,7 +110,7 @@ async function send(d: IssuanceSyncDeps, kind: "init" | "add", cents: number, pr
   } catch (e) {
     // Rejected in preflight: it never landed. Anything else (a lost response) is resolved from the chain below.
     if (rejectedBeforeSending(e)) {
-      await clearPending(db);
+      await discardAttempt(db, kind, tx.sig);
       if (isUnsupported(e)) return "unsupported";
       throw e;
     }
@@ -111,17 +126,20 @@ async function send(d: IssuanceSyncDeps, kind: "init" | "add", cents: number, pr
 async function resolvePending(d: IssuanceSyncDeps, s: State, waitMs = 0): Promise<"confirmed" | "failed" | "pending"> {
   const deadline = Date.now() + waitMs;
   for (;;) {
-    const status = await d.writer.confirm(s.pending_sig!);
+    let status = await d.writer.confirm(s.pending_sig!);
+    const expired = status === "pending" && await d.writer.isExpired(s.pending_valid_until!);
+    if (expired) status = await d.writer.confirm(s.pending_sig!);
     if (status === "confirmed") {
       // For an init, the log now holds exactly this mint's issuance at the time; for an add, the added cents.
       await d.db.query(
         `update issuance_log_state set logged_cents = case when pending_kind = 'init' then pending_cents else logged_cents + pending_cents end,
-         pending_kind = null, pending_cents = null, pending_sig = null, pending_valid_until = null, updated_at = now() where id = 1`,
+         pending_kind = null, pending_cents = null, pending_sig = null, pending_valid_until = null, updated_at = now() where id = 1 and pending_sig = $1`,
+        [s.pending_sig],
       );
       return "confirmed";
     }
-    if (status === "failed" || (await d.writer.isExpired(s.pending_valid_until!))) {
-      await clearPending(d.db);
+    if (status === "failed" || expired) {
+      await discardAttempt(d.db, s.pending_kind!, s.pending_sig!);
       return "failed";
     }
     if (Date.now() >= deadline) return "pending";
@@ -129,5 +147,14 @@ async function resolvePending(d: IssuanceSyncDeps, s: State, waitMs = 0): Promis
   }
 }
 
-const clearPending = (db: Db) =>
-  db.query("update issuance_log_state set pending_kind = null, pending_cents = null, pending_sig = null, pending_valid_until = null, updated_at = now() where id = 1");
+function discardAttempt(db: Db, kind: "init" | "add", sig: string) {
+  // If another mint won initialization, the next run must join its log with a fresh baseline.
+  return kind === "init"
+    ? db.query("delete from issuance_log_state where id = 1 and pending_sig = $1", [sig])
+    : db.query("update issuance_log_state set pending_kind = null, pending_cents = null, pending_sig = null, pending_valid_until = null, updated_at = now() where id = 1 and pending_sig = $1", [sig]);
+}
+
+async function joinLog(db: Db): Promise<void> {
+  const unloggedSettlements = await one(db, SETTLED_SQL + " and s.issuance_accounted = false");
+  await db.query("insert into issuance_log_state (id, logged_cents) values (1, $1) on conflict (id) do nothing", [unloggedSettlements]);
+}

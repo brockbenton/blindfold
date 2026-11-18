@@ -62,6 +62,7 @@ pub fn handle_settle_batch<'info>(
         require_keys_eq!(expected, record_info.key(), VaultError::ProviderMismatch);
         require!(record.active, VaultError::ProviderInactive);
         require_keys_eq!(payout_info.key(), record.payout_token, VaultError::PayoutAccountMismatch);
+        require_keys_neq!(payout_info.key(), ctx.accounts.vault_token.key(), VaultError::PayoutAccountMismatch);
         require!(payout_info.is_writable, VaultError::PayoutAccountMismatch);
         let token_account = Account::<TokenAccount>::try_from(payout_info)
             .map_err(|_| error!(VaultError::WrongMint))?;

@@ -84,6 +84,16 @@ export interface IssuanceLogAccount {
 
 const big = (x: { toString(): string }) => BigInt(x.toString());
 
+/** A system-owned, empty PDA may have lamports before Anchor initializes it. */
+export function readIssuanceLog(
+  info: { owner: PublicKey; data: Uint8Array } | null | undefined,
+  programId: PublicKey,
+): IssuanceLogAccount | null {
+  if (!info || (info.owner.equals(SystemProgram.programId) && !info.data.length)) return null;
+  if (!info.owner.equals(programId)) throw new Error("issuance log is not owned by the vault program");
+  return decodeIssuanceLog(info.data);
+}
+
 export function decodeIssuanceLog(data: Uint8Array): IssuanceLogAccount {
   const a = accountsCoder.decode("IssuanceLog", Buffer.from(data));
   return {

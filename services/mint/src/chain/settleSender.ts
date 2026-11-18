@@ -1,6 +1,7 @@
-import { PublicKey, Transaction, Keypair, type Connection, type TransactionInstruction } from "@solana/web3.js";
+import { randomBytes } from "node:crypto";
+import { PublicKey, Transaction, Keypair, TransactionInstruction, type Connection } from "@solana/web3.js";
 import {
-  SOLANA_COMMITMENT, VAULT_IDL, buildInitIssuanceLogIx, buildLogIssuanceIx, buildSettleBatchIx, issuancePda,
+  SOLANA_COMMITMENT, VAULT_IDL, buildInitIssuanceLogIx, buildLogIssuanceIx, buildSettleBatchIx, issuancePda, readIssuanceLog,
 } from "@blindfold/protocol";
 
 export interface SettlePayout {
@@ -20,8 +21,8 @@ export class ProgramError extends Error {
 export type ConfirmStatus = "confirmed" | "pending" | "failed";
 
 export interface SettleSender {
-  /** Sends `settle_batch`. Returns the tx signature and a validity bound for `isExpired`. Throws ProgramError on a program rejection; any other throw is transient. */
-  submit(batchId: bigint, payouts: SettlePayout[]): Promise<{ tx: string; validUntil: number }>;
+  /** Signs a unique settlement so recovery can identify this writer's payout. */
+  prepareSettlement(batchId: bigint, payouts: SettlePayout[]): Promise<PreparedTx & { withIssuanceLog: boolean }>;
   confirm(tx: string): Promise<ConfirmStatus>;
   /** True once the transaction can no longer land. */
   isExpired(validUntil: number): Promise<boolean>;
@@ -87,9 +88,10 @@ export class SolanaSettleSender implements SettleSender, IssuanceWriter {
     private authority: Keypair,
   ) {}
 
-  async submit(batchId: bigint, payouts: SettlePayout[]) {
+  async prepareSettlement(batchId: bigint, payouts: SettlePayout[]) {
     // With the issuance log present, the program adds this batch to the log's settled total.
-    const withIssuanceLog = !!(await this.connection.getAccountInfo(issuancePda(this.programId), SOLANA_COMMITMENT));
+    const log = await this.connection.getAccountInfo(issuancePda(this.programId), SOLANA_COMMITMENT);
+    const withIssuanceLog = readIssuanceLog(log, this.programId) !== null;
     const ix = buildSettleBatchIx({
       programId: this.programId,
       mintAuthority: this.authority.publicKey,
@@ -98,15 +100,14 @@ export class SolanaSettleSender implements SettleSender, IssuanceWriter {
       payouts: payouts.map((p) => ({ providerId: p.providerId, amount: p.amountBase, payoutToken: new PublicKey(p.payoutToken) })),
       withIssuanceLog,
     });
-    const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash(SOLANA_COMMITMENT);
-    const tx = new Transaction({ feePayer: this.authority.publicKey, blockhash, lastValidBlockHeight }).add(ix);
-    tx.sign(this.authority);
-    try {
-      const tx_sig = await this.connection.sendRawTransaction(tx.serialize(), { skipPreflight: false, preflightCommitment: SOLANA_COMMITMENT });
-      return { tx: tx_sig, validUntil: lastValidBlockHeight };
-    } catch (e) {
-      throw programErrorFrom(e) ?? e;
-    }
+    const tx = await this.prepare(ix);
+    return { ...tx, withIssuanceLog, send: async () => {
+      try {
+        await tx.send();
+      } catch (e) {
+        throw programErrorFrom(e) ?? e;
+      }
+    } };
   }
 
   prepareInitIssuanceLog(issuedBase: bigint, settledBase: bigint) {
@@ -119,7 +120,12 @@ export class SolanaSettleSender implements SettleSender, IssuanceWriter {
 
   private async prepare(ix: TransactionInstruction): Promise<PreparedTx> {
     const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash(SOLANA_COMMITMENT);
-    const tx = new Transaction({ feePayer: this.authority.publicKey, blockhash, lastValidBlockHeight }).add(ix);
+    // Independent mints can sign identical instructions against the same blockhash and authority.
+    const nonce = new TransactionInstruction({
+      programId: new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
+      keys: [], data: Buffer.from(randomBytes(16).toString("hex")),
+    });
+    const tx = new Transaction({ feePayer: this.authority.publicKey, blockhash, lastValidBlockHeight }).add(ix, nonce);
     tx.sign(this.authority);
     const raw = tx.serialize();
     return {
@@ -141,6 +147,6 @@ export class SolanaSettleSender implements SettleSender, IssuanceWriter {
   }
 
   async isExpired(validUntil: number): Promise<boolean> {
-    return (await this.connection.getBlockHeight(SOLANA_COMMITMENT)) > validUntil;
+    return (await this.connection.getBlockHeight("finalized")) > validUntil;
   }
 }

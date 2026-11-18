@@ -542,6 +542,32 @@ fn register_provider_payout_arg_mismatch() {
     assert_vault_err(&env.send_ix(ix, &admin), VaultError::PayoutAccountMismatch);
 }
 
+#[test]
+fn vault_token_cannot_be_a_payout_account() {
+    let mut env = setup();
+    let admin = env.admin.insecure_clone();
+    let key = [2u8; 33];
+    let vault_token = env.vault_token;
+    let ix = env.register_ix(&admin.pubkey(), 0, key, vault_token, vault_token);
+    assert_vault_err(&env.send_ix(ix, &admin), VaultError::PayoutAccountMismatch);
+
+    env.register();
+    env.fund_vault(10);
+    env.init_log(10 * USDC, 0).unwrap();
+    // A record created before the upgrade may already name the vault as its payout.
+    let record = provider_pda(0);
+    let mut account = env.svm.get_account(&record).unwrap();
+    account.data[45..77].copy_from_slice(vault_token.as_ref());
+    env.svm.set_account(record, account).unwrap();
+    env.providers[0].token = vault_token;
+    assert_vault_err(
+        &env.settle_with_log(1, vec![p(0, USDC)], AccountMeta::new(issuance_pda(), false)),
+        VaultError::PayoutAccountMismatch,
+    );
+    assert_eq!(env.issuance().settled, 0);
+    assert_eq!(env.cfg().last_batch_id, 0);
+}
+
 // -------------------------------------------------------- deactivate_provider
 
 #[test]
@@ -960,15 +986,16 @@ fn settle_with_issuance_log_advances_settled() {
     assert_eq!(env.cfg().last_batch_id, 2);
     env.settle_with_log(3, vec![p(0, 6 * USDC)], AccountMeta::new(issuance_pda(), false)).unwrap();
     assert_eq!(env.issuance().settled, 9 * USDC);
-    // Settled may run ahead of a lagging issued claim; the next add must then cover it.
+    // Contributions can catch up incrementally when settlement runs ahead of issuance.
     let mut env2 = setup();
     env2.register();
     env2.fund_vault(10);
     env2.init_log(USDC, 0).unwrap();
     env2.settle_with_log(1, vec![p(0, 2 * USDC)], AccountMeta::new(issuance_pda(), false)).unwrap();
     assert_eq!(env2.issuance().settled, 2 * USDC);
-    assert_vault_err(&env2.log(0), VaultError::IssuanceBelowSettled);
-    env2.log(USDC).unwrap();
+    env2.log(USDC / 2).unwrap();
+    assert_eq!(env2.issuance().issued, 3 * USDC / 2);
+    env2.log(USDC / 2).unwrap();
     assert_eq!(env2.issuance().issued, 2 * USDC);
 }
 
