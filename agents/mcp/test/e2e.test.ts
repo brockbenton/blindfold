@@ -93,10 +93,19 @@ async function world(o: { elicit?: Answer; vault?: number; env?: Record<string, 
 }
 
 describe("MCP server end to end", () => {
-  it("exposes exactly the four tools, none of which can change a limit", async () => {
+  it("quotes a route's exact price from the 402 challenge without paying", async () => {
+    const w = await world();
+    const before = w.balance();
+    expect((await w.call("quote", { url: `${w.apiUrl}/v1/data/sol/signals` })).body).toMatchObject({ price_cents: 25 });
+    expect((await w.call("quote", { url: `${w.apiUrl}/v1/data/sol` })).body).toMatchObject({ price_cents: 5 });
+    expect((await w.call("quote", { url: "http://127.0.0.1:9/v1/data/sol" })).body).toMatchObject({ refused: "provider_not_allowed" });
+    expect(w.balance()).toBe(before);
+  });
+
+  it("exposes exactly these tools, none of which can change a limit", async () => {
     const w = await world();
     const { tools } = await w.client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(["buy_data", "check_reserves", "get_balance", "list_providers"]);
+    expect(tools.map((t) => t.name).sort()).toEqual(["buy_data", "check_reserves", "get_balance", "list_providers", "quote"]);
     expect(tools.find((t) => t.name === "buy_data")!.description).toMatch(/untrusted/i);
   });
 
