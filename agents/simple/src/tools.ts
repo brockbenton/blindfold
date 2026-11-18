@@ -1,6 +1,6 @@
 import type { Connection, PublicKey } from "@solana/web3.js";
 import { decodePaymentResponseHeader } from "@x402/fetch";
-import { checkReserves, type ProviderInfo } from "@blindfold/protocol";
+import { checkReserves, type ProviderInfo, type ReserveCheckResult } from "@blindfold/protocol";
 import { PaymentFailed, type AgentWallet } from "@blindfold/wallet";
 import { HttpError, NetworkError } from "./errors.js";
 import type { Reporter } from "./reporter.js";
@@ -11,7 +11,7 @@ export interface Tools {
   list_providers(): Promise<ProviderInfo[]>;
   call_paid_api(a: { url: string; method?: "GET" | "POST"; body?: unknown }): Promise<{ status: number; data: unknown; paidCents: number; redemptionId?: string }>;
   /** `verified`: liabilities came from the vault's onchain issuance log, not only the mint's report. */
-  check_reserves(): Promise<{ ok: boolean; vaultCents: number; outstandingCents: number; verified?: boolean; note?: string; reason?: string }>;
+  check_reserves(): Promise<ReserveCheckResult>;
   report(a: { summary: string; data?: unknown }): Promise<void>;
   // No approval tool: owner approval for large purchases is enforced inside the wallet (AgentWallet `approve`),
   // where the price is known and no caller can skip it.

@@ -20,7 +20,7 @@ export function classify(e: unknown): { exit: number; report: ErrorReport } {
   const message = (e as Error)?.message ?? String(e);
   if (e instanceof ConfigError) return { exit: 2, report: { kind: "config", message } };
   if (e instanceof PaymentRefused) return { exit: 3, report: { kind: "payment_refused", message, reason: e.reason } };
-  if (e instanceof ReservesFailedError) return { exit: 7, report: { kind: "reserves_failed", message, reason: e.reason } };
+  if (e instanceof ReservesFailedError) return { exit: 7, report: { kind: "reserves_failed", message, reason: message, reserves: e.reserves } };
   if (e instanceof NoProviderError) return { exit: 6, report: { kind: "no_provider", message } };
   if (e instanceof HttpError) return { exit: 5, report: { kind: "http", message, status: e.status } };
   if (e instanceof PaymentFailed) return { exit: 5, report: { kind: "http", message, status: e.status } };

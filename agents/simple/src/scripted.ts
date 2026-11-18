@@ -33,7 +33,7 @@ export async function runScripted(tools: Tools, o: ScriptedOptions): Promise<Run
   for (let i = 0; i < o.calls; i++) {
     if (i % o.reserveEvery === 0) {
       reserves = await tools.check_reserves();
-      if (!reserves.ok) throw new ReservesFailedError(reserves.reason ?? "reserve check failed", reserves.vaultCents, reserves.outstandingCents);
+      if (!reserves.ok) throw new ReservesFailedError(reserves);
     }
     const r = await tools.call_paid_api({ url });
     calls.push({ status: r.status, paidCents: r.paidCents, data: r.data, ...(r.redemptionId ? { redemptionId: r.redemptionId } : {}) });

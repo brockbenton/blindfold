@@ -1,15 +1,7 @@
-import type { ProviderInfo } from "@blindfold/protocol";
+import type { ProviderInfo, ReserveCheckResult } from "@blindfold/protocol";
 import type { LlmRunResult } from "./llm.js";
 
-export interface ReserveSummary {
-  ok: boolean;
-  vaultCents: number;
-  outstandingCents: number;
-  /** True when liabilities came from the vault's onchain issuance log. */
-  verified?: boolean;
-  note?: string;
-  reason?: string;
-}
+export type ReserveSummary = ReserveCheckResult;
 
 export interface CallResult {
   status: number;
@@ -34,6 +26,7 @@ export interface ErrorReport {
   message: string;
   reason?: string;
   status?: number;
+  reserves?: ReserveSummary;
 }
 
 /** Where the agent's output goes. JSON mode keeps stdout to exactly one line. */
