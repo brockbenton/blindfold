@@ -18,6 +18,8 @@ export interface SessionDeps {
   budgetCents: number;
   /** Reserve check before the first paid call and every N paid calls after (00 section 7.6). */
   reserveEvery: number;
+  /** Set when the token file can't be spent at this mint (e.g. issued under a keyset the mint doesn't know). */
+  tokenProblem?: string | null;
 }
 
 export type BuyResult =
@@ -39,18 +41,28 @@ export class Session {
     return this.spent;
   }
 
-  balance(): { balance_cents: number; spent_cents: number; budget_cents: number; budget_left_cents: number } {
+  balance(): { balance_cents: number; spent_cents: number; budget_cents: number; budget_left_cents: number; warning?: string } {
     return {
       balance_cents: this.d.wallet.balance(),
       spent_cents: this.spent,
       budget_cents: this.d.budgetCents,
       budget_left_cents: Math.max(0, this.d.budgetCents - this.spent),
+      ...(this.d.tokenProblem ? { warning: this.d.tokenProblem } : {}),
     };
   }
 
+  private cached: { at: number; list: ProviderInfo[] } | null = null;
+
+  /** Active providers with a name and URL (records without metadata can't be bought from), cached for 30 s. */
+  private async activeProviders(): Promise<ProviderInfo[]> {
+    if (!this.cached || Date.now() - this.cached.at > 30_000) {
+      this.cached = { at: Date.now(), list: (await this.d.listProviders()).filter((p) => p.active && p.url && p.name) };
+    }
+    return this.cached.list;
+  }
+
   async providers(): Promise<Pick<ProviderInfo, "name" | "url" | "price_cents" | "topics">[]> {
-    const ps = await this.d.listProviders();
-    return ps.filter((p) => p.active).map((p) => ({ name: p.name, url: p.url, price_cents: p.price_cents, topics: p.topics }));
+    return (await this.activeProviders()).map((p) => ({ name: p.name, url: p.url, price_cents: p.price_cents, topics: p.topics }));
   }
 
   async reserves(): Promise<ReserveCheckResult> {
@@ -67,6 +79,19 @@ export class Session {
     }
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return { refused: "invalid_url", detail: "url must be an absolute http(s) URL; nothing was spent" };
+    }
+    if (this.d.tokenProblem) {
+      return { refused: "tokens_unusable", detail: `${this.d.tokenProblem}; nothing was spent` };
+    }
+    // Refuse unregistered servers up front, with no network call. The token lock still enforces this at the mint.
+    let registered: ProviderInfo[];
+    try {
+      registered = await this.activeProviders();
+    } catch (e) {
+      return { refused: "providers_unavailable", detail: `cannot read the provider registry (${(e as Error).message}); nothing was spent` };
+    }
+    if (!registered.some((p) => sameOrigin(p.url, parsed))) {
+      return { refused: "provider_not_allowed", detail: `${parsed.origin} is not a registered provider; your tokens can only pay registered providers. Nothing was spent` };
     }
     if (this.spent >= this.d.budgetCents) {
       return { refused: "budget_exhausted", detail: `spent ${this.spent} of the ${this.d.budgetCents}-cent session budget; nothing was spent` };
@@ -90,7 +115,7 @@ export class Session {
           detail: owner ? "the owner did not approve this purchase; nothing was spent. Do not retry it." : "the wallet refused to pay; nothing was spent",
         };
       }
-      if (e instanceof PaymentFailed) return { error: `payment failed: HTTP ${e.status}` };
+      if (e instanceof PaymentFailed) return { error: `payment failed: the provider rejected the token (HTTP ${e.status}); its redeem at the mint failed` };
       return { error: (e as Error).message.slice(0, 200) };
     }
     const paid = before - this.d.wallet.balance();
@@ -103,5 +128,13 @@ export class Session {
       data = JSON.parse(text);
     } catch { /* keep text */ }
     return { ok: true, paid_cents: paid, balance_cents: this.d.wallet.balance(), status: res.status, data };
+  }
+}
+
+function sameOrigin(providerUrl: string | null | undefined, u: URL): boolean {
+  try {
+    return !!providerUrl && new URL(providerUrl).origin === u.origin;
+  } catch {
+    return false;
   }
 }

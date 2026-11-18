@@ -24,7 +24,8 @@ export async function start(
   const server = createServer();
   const f = o.fetch ?? fetch;
   // The mint that issued the tokens; MINT_URL only overrides where providers and reserves are read.
-  const fileMint = (JSON.parse(readFileSync(cfg.tokenFile, "utf8")) as { mint?: string }).mint;
+  const file = JSON.parse(readFileSync(cfg.tokenFile, "utf8")) as { mint?: string; proofs?: { id: string }[] };
+  const fileMint = file.mint;
   const mintUrl = cfg.mintUrl ?? fileMint;
   if (!mintUrl) throw new Error(`${cfg.tokenFile} records no mint; set MINT_URL`);
   const wallet = await AgentWallet.open({
@@ -38,8 +39,11 @@ export async function start(
   });
   const connection = o.connection ?? new Connection(cfg.rpcUrl, "confirmed");
   const mint = mintUrl.replace(/\/+$/, "");
+  const tokenProblem = await keysetProblem(f, mint, file.proofs ?? []);
+  if (tokenProblem) console.error(`blindfold-mcp: ${tokenProblem}`);
   const session = new Session({
     wallet,
+    tokenProblem,
     budgetCents: cfg.budgetCents,
     reserveEvery: cfg.reserveEvery,
     async listProviders() {
@@ -57,4 +61,22 @@ export async function start(
       wallet.close();
     },
   };
+}
+
+/**
+ * Tokens signed under a keyset this mint doesn't know can't be redeemed here: typically a token file funded through
+ * another mint that once ran at the same URL. Returns null when they match or the mint can't be reached.
+ */
+async function keysetProblem(f: typeof fetch, mint: string, proofs: { id: string }[]): Promise<string | null> {
+  if (!proofs.length) return null;
+  try {
+    const res = await f(`${mint}/v1/keysets`, { signal: AbortSignal.timeout(5_000) });
+    if (!res.ok) return null;
+    const known = new Set(((await res.json()) as { keysets?: { id: string }[] }).keysets?.map((k) => k.id) ?? []);
+    const unknown = [...new Set(proofs.map((p) => p.id))].filter((id) => !known.has(id));
+    if (!unknown.length) return null;
+    return `the token file was issued under keyset ${unknown[0].slice(0, 12)}…, which the mint at ${mint} doesn't know, so providers can't redeem it. Fund a new token file through this mint`;
+  } catch {
+    return null;
+  }
 }
