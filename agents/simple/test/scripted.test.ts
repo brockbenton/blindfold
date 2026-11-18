@@ -51,7 +51,9 @@ describe("exit codes", () => {
   it("7: reserves not ok, nothing paid, reason printed", async () => {
     const r = await cli(["--json"], { FAKE_RESERVES_FAIL: "1" });
     expect(r.code).toBe(7);
-    expect(JSON.parse(r.stdout).error).toMatchObject({ kind: "reserves_failed", reason: "vault_below_outstanding" });
+    expect(JSON.parse(r.stdout).error).toMatchObject({
+      kind: "reserves_failed", reason: "vault_below_outstanding", reserves: { ok: false },
+    });
     const h = await cli([], { FAKE_RESERVES_FAIL: "1" });
     expect(h.stderr).toContain("error: reserves_failed: vault_below_outstanding");
   });

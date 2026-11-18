@@ -1,3 +1,5 @@
+import type { ReserveCheckResult } from "@blindfold/protocol";
+
 export class NetworkError extends Error {
   constructor(message: string, public cause?: unknown) {
     super(message);
@@ -24,8 +26,8 @@ export class ConfigError extends Error {
 }
 /** The reserve gate failed: nothing was paid. */
 export class ReservesFailedError extends Error {
-  constructor(public reason: string, public vaultCents: number, public outstandingCents: number) {
-    super(reason);
+  constructor(public reserves: ReserveCheckResult) {
+    super(reserves.reason ?? "reserve check failed");
     this.name = "ReservesFailedError";
   }
 }

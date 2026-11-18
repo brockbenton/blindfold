@@ -34,7 +34,7 @@ import {
 } from "@solana/spl-token";
 import {
   DEFAULT_VAULT_PROGRAM_ID, MAX_DEPOSIT_CENTS, SOLANA_COMMITMENT, USDC_DEVNET_MINT, buildInitializeIx, buildRegisterProviderIx,
-  centsToBaseUnits, configPda, decodeConfig, decodeProviderRecord, providerPda, vaultAta,
+  centsToBaseUnits, configPda, decodeConfig, decodeProviderRecord, issuancePda, providerPda, vaultAta, type ReserveCheckResult,
 } from "@blindfold/protocol";
 import { AgentWallet, PaymentRefused, SolanaDepositor, anyApprover, approvalBroker, ownerFund, terminalApprover, type Approver } from "@blindfold/wallet";
 import { getPubKeyFromPrivKey } from "@cashu/cashu-ts";
@@ -47,6 +47,7 @@ import type { AppConfig } from "../services/mint/src/config.js";
 import { createPool } from "../services/mint/src/db.js";
 import { createMint as createMintServer } from "../services/mint/src/mint.js";
 import { runMain } from "../agents/simple/src/main.js";
+import type { ErrorReport, RunResult } from "../agents/simple/src/reporter.js";
 import { DEFAULT_LLM_MODEL, GEMINI_OPENAI_BASE_URL, openAiChat, runLlm } from "../agents/simple/src/llm.js";
 import { makeTools } from "../agents/simple/src/tools.js";
 import { ReservesFailedError } from "../agents/simple/src/errors.js";
@@ -332,6 +333,7 @@ async function main() {
   const cast = localnet ? await localCast() : await devnetCast();
   const { rpc, connection, programId, usdcMint } = cast;
   const vaultToken = vaultAta(usdcMint, programId);
+  const issuanceUrl = explorerAddress(issuancePda(programId).toBase58(), localnet ? rpc : "devnet");
 
   // Mint and mock API in this process, on the standard local ports when they are free.
   const dbUrl = databaseUrl();
@@ -356,11 +358,11 @@ async function main() {
     depositPollMs: localnet ? 1000 : 2000, settleIntervalS: WINDOW_S, settleHoldS: WINDOW_S, settleUnitCents: UNIT_CENTS, devFakeChain: false,
   };
   step("starting the mint");
-  const { app: mintApp, start } = await createMintServer({
+  const { app: mintApp, ctx: mint, start } = await createMintServer({
     db, cfg, vault: new SolanaVaultReader(connection, programId, usdcMint),
     sender: new SolanaSettleSender(connection, programId, usdcMint, cast.authority), confirmTimeoutMs: 90_000,
   });
-  let stopJobs = start(["deposits", "providers", "issuance"]);
+  let stopJobs = start(["deposits", "providers"]);
   cleanups.push(() => stopJobs());
   const stop = (s: ReturnType<typeof serve>) => new Promise<void>((r) => { (s as any).closeAllConnections?.(); s.close(() => r()); });
   const mintServer = serve({ fetch: mintApp.fetch, port: mintPort, hostname: "127.0.0.1" });
@@ -412,7 +414,7 @@ async function main() {
   const agent = async (args: string[], url?: string) => {
     let stdout = "";
     const code = await runMain(["--json", ...args], agentEnv(url), { stdout: (s) => (stdout += s), stderr: () => undefined });
-    return { code, out: JSON.parse(stdout) as any };
+    return { code, out: JSON.parse(stdout) as RunResult | { ok: false; error: ErrorReport } };
   };
   const startSlot = await connection.getSlot(SOLANA_COMMITMENT);
   const vaultStart = await tokenBalance(connection, vaultToken);
@@ -433,6 +435,21 @@ async function main() {
     cleanups.push(() => dash!.close());
   }
   const emit = (e: DashboardEvent) => dash?.emit(e);
+  const showReserves = (check: ReserveCheckResult, refusal?: string) => {
+    const verified = check.verified === true;
+    const text = verified ? "verified against the onchain issuance log" : "unverified: mint's report only";
+    const amount = (cents: number) => usd(centsToBaseUnits(cents));
+    const reported = check.mintOutstandingCents;
+    const logged = check.onchainOutstandingCents;
+    const liabilities = logged === undefined
+      ? `mint reports ${amount(check.outstandingCents)} outstanding`
+      : `onchain outstanding ${amount(logged)} (issued − settled)${reported !== undefined && reported !== logged ? `, mint reports ${amount(reported)}` : ""}`;
+    const detail = refusal ?? `vault holds ${amount(check.vaultCents)}, ${liabilities}`;
+    (check.ok && verified ? ok : warn)(`Reserve check · ${text}`);
+    say(detail);
+    if (verified) link("IssuanceLog", issuanceUrl);
+    emit({ type: "reserve", ok: check.ok, verified, text, detail, ...(verified ? { url: issuanceUrl } : {}) });
+  };
   const tagged = (o: Observation) => o.kind === "direct_payment" ? "exact" : "blindfold";
   let balancing: Promise<void> | null = null;
   const refreshBalances = () => {
@@ -565,6 +582,8 @@ async function main() {
   // Deposit polling and provider sync are no longer needed; stopping them spares a rate-limited public RPC. From
   // here the mint's settlement timer runs on its own fixed windows, like a real deployment.
   stopJobs();
+  // Publish this run's issuance before the agent checks liabilities. Older vaults return "unsupported".
+  await mint.syncIssuance?.();
   stopJobs = start(["settlement", "issuance"]);
   ok(`agent holds ${walletCents()} cents in ${funded.proofs} tokens, and no Solana key`);
   link("deposit", explorerTx(funded.depositTx, rpc));
@@ -579,20 +598,22 @@ async function main() {
   await pause(pausing);
 
   // Act 3: buy with Blindfold.
-  scene(3, `The same research, paid with Blindfold`, `Same agent, same feed, same ${CALLS} whale-flow reads on ${TOPIC.toUpperCase()}, plus ${NEWS_CALLS} headline reads from ${NEWS}. Before paying, the agent checks the vault's USDC on Solana against the mint's liabilities.`);
+  scene(3, `The same research, paid with Blindfold`, `Same agent, same feed, same ${CALLS} whale-flow reads on ${TOPIC.toUpperCase()}, plus ${NEWS_CALLS} headline reads from ${NEWS}. Before paying, the agent checks the vault's USDC against outstanding tokens on Solana.`);
   const before = walletCents();
   const knownBefore = watcher.observations.length;
   const r1 = await agent(["--topic", TOPIC, "--calls", String(CALLS)]);
-  if (r1.code !== 0) fail(`agent failed: ${JSON.stringify(r1.out)}`);
-  ok(`reserve check: vault holds ${usd(centsToBaseUnits(r1.out.reserves.vaultCents))}, mint owes ${usd(centsToBaseUnits(r1.out.reserves.outstandingCents))}`);
-  for (const [i, c] of (r1.out.calls as any[]).entries()) {
+  if (r1.code !== 0 || !r1.out.ok || !r1.out.reserves?.ok) fail(`agent failed: ${JSON.stringify(r1.out)}`);
+  showReserves(r1.out.reserves);
+  if (r1.out.reserves.verified) explorerLinks.push(["Onchain IssuanceLog", issuanceUrl]);
+  for (const [i, c] of r1.out.calls.entries()) {
     ok(`call ${i + 1}: paid ${c.paidCents} cents, ${TOPIC.toUpperCase()} ${flow(c.data)}  ${dim(`(redemption ${String(c.redemptionId).slice(0, 8)})`)}`);
     emit({ type: "call", side: "blindfold", n: i + 1, cents: c.paidCents, label: `whale flow ${TOPIC.toUpperCase()}`, ok: c.status === 200 });
   }
   const rn = await agent(["--topic", TOPIC, "--provider", "news-wire", "--calls", String(NEWS_CALLS)]);
-  if (rn.code !== 0) fail(`agent failed on ${NEWS}: ${JSON.stringify(rn.out)}`);
-  for (const [i, c] of (rn.out.calls as any[]).entries()) {
-    ok(`${NEWS} call ${i + 1}: paid ${c.paidCents} cents, ${c.data?.headline ?? "headline"}  ${dim(`(redemption ${String(c.redemptionId).slice(0, 8)})`)}`);
+  if (rn.code !== 0 || !rn.out.ok) fail(`agent failed on ${NEWS}: ${JSON.stringify(rn.out)}`);
+  for (const [i, c] of rn.out.calls.entries()) {
+    const data = c.data as { headline?: string } | null;
+    ok(`${NEWS} call ${i + 1}: paid ${c.paidCents} cents, ${data?.headline ?? "headline"}  ${dim(`(redemption ${String(c.redemptionId).slice(0, 8)})`)}`);
     emit({ type: "call", side: "blindfold", n: CALLS + i + 1, cents: c.paidCents, label: `${NEWS} ${TOPIC.toUpperCase()}`, ok: c.status === 200 });
   }
   const lastCallAt = Date.now();
@@ -823,11 +844,18 @@ async function main() {
   cleanups.push(() => stop(proxyServer));
   const kept = walletCents();
   const r2 = await agent(["--topic", TOPIC], `http://127.0.0.1:${proxyPort}`);
-  if (r2.code !== 7) fail(`agent did not refuse: ${JSON.stringify(r2.out)}`);
-  ok(`agent stopped before paying: ${r2.out.error.reason} (exit code 7)`);
-  ok(`tokens untouched: still ${kept} cents`);
-  emit({ type: "note", side: "blindfold", tone: "warn", text: "Overstated reserves refused, nothing paid" });
-  say("The agent verifies the vault itself instead of trusting the mint's word. If the numbers don't add up, it pays nothing.");
+  if (r2.code !== 7 || r2.out.ok || r2.out.error.kind !== "reserves_failed") fail(`agent did not refuse: ${JSON.stringify(r2.out)}`);
+  const refused = r2.out.error.reserves;
+  if (!refused || refused.ok || refused.mintOutstandingCents === undefined || refused.vaultCents >= refused.mintOutstandingCents) {
+    fail(`the lying-mint check did not establish a vault shortfall: ${JSON.stringify(r2.out)}`);
+  }
+  if (walletCents() !== kept) fail("the agent spent tokens after the reserve check failed");
+  const claim = usd(centsToBaseUnits(refused.mintOutstandingCents));
+  const vault = usd(centsToBaseUnits(refused.vaultCents));
+  const logged = refused.onchainOutstandingCents;
+  const onchain = logged === undefined ? "" : ` The onchain log shows ${usd(centsToBaseUnits(logged))} outstanding.`;
+  showReserves(refused, `Agent refused before paying. The vault's ${vault} could not cover the mint's ${claim} claim.${onchain}`);
+  ok(`tokens untouched: still ${kept} cents (agent exit code 7)`);
   await pause(pausing, "Press Enter for the summary");
 
   // Summary.

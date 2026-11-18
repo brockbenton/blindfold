@@ -24,7 +24,7 @@ const MARKUP = `
     <span>agent wallet<b data-ref="b-exact">-</b></span>
     <span>agent tokens<b data-ref="b-tokens">-</b></span>
     <span>feeds earned<b data-ref="b-provider">-</b></span>
-    <span>vault<b data-ref="b-vault">-</b></span>
+    <span>vault balance<b data-ref="b-vault">-</b></span>
     <span>watcher reads<b data-ref="b-source">RPC polling</b></span>
   </footer>
 </div>`;
@@ -162,6 +162,14 @@ export function mountDashboard(root, { interactive = true } = {}) {
       ref("b-tokens").textContent = "$" + (e.agentTokensCents / 100).toFixed(2);
       ref("b-provider").textContent = usd(BigInt(e.providerDirectBase) + BigInt(e.providerSettledBase) + BigInt(e.providerOwedCents) * 10000n);
       ref("b-vault").textContent = usd(e.vaultBase);
+    },
+    reserve(e) {
+      const status = e.url
+        ? '<a href="' + esc(e.url) + '" target="_blank" rel="noopener" title="IssuanceLog on Solana Explorer">' + esc(e.text) + '</a>'
+        : esc(e.text);
+      const tone = e.ok && e.verified ? "" : " warn";
+      sideEl("blindfold").querySelector(".notes").insertAdjacentHTML("beforeend",
+        '<div class="note reserve' + tone + '">Reserve check · ' + status + '<div class="reserve-detail">' + esc(e.detail) + '</div></div>');
     },
     source(e) { ref("b-source").textContent = e.text; },
     note(e) { note(e.side, e.text); },

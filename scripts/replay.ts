@@ -4,7 +4,7 @@
 //   pnpm replay [file]             preview the site at http://localhost:5174, with `file` in place of the published
 //                                  recording of its demo
 //   pnpm replay --site DIR [file]  write the static site that GitHub Pages serves
-//   pnpm replay:publish [--calls N]
+//   pnpm replay:publish [--main] [--calls N]
 //                                  record a devnet run of pnpm demo, check it, commit it as the published recording
 //                                  and push; the Pages workflow redeploys when it reaches main
 //   pnpm replay:publish --crowd [--agents N]
@@ -36,18 +36,23 @@ const git = (...args: string[]) => {
 if (argv[0] === "publish") {
   const args = argv.slice(1);
   const crowd = args.includes("--crowd");
+  const pushMain = args.includes("--main");
   const demo: Demo = crowd ? "crowd" : "single";
   // The crowd demo runs on a local validator only; the single-agent demo is published from devnet.
   const mode = crowd ? "localnet" : "devnet";
   const dir = mkdtempSync(join(tmpdir(), "bf-recording-"));
   const file = join(dir, "recording.json");
   const script = fileURLToPath(new URL(crowd ? "crowd.ts" : "demo.ts", import.meta.url));
-  const run = spawnSync(process.execPath, [...process.execArgv, script, "--no-pause", "--record", file, ...args.filter((a) => a !== "--crowd")], { stdio: "inherit" });
+  const run = spawnSync(process.execPath, [...process.execArgv, script, "--no-pause", "--record", file, ...args.filter((a) => a !== "--crowd" && a !== "--main")], { stdio: "inherit" });
   if (run.status !== 0 || !existsSync(file)) {
     console.error(`\nThe demo did not finish, so nothing was published.${existsSync(file) ? ` Its recording: ${file}` : ""}`);
     process.exit(1);
   }
-  const problems = recordingProblems(JSON.parse(readFileSync(file, "utf8")) as Recording, { mode, demo });
+  const recording = JSON.parse(readFileSync(file, "utf8")) as Recording;
+  const problems = recordingProblems(recording, { mode, demo });
+  if (!crowd && !recording.events.some(({ event }) => event.type === "reserve" && event.ok === true && event.verified === true && event.url)) {
+    problems.push("no successful reserve check linked to the onchain issuance log");
+  }
   if (problems.length) {
     console.error(`\nNot publishing ${file}: ${problems.join("; ")}`);
     process.exit(1);
@@ -57,9 +62,11 @@ if (argv[0] === "publish") {
   git("add", rel);
   git("commit", "-m", `replay: new ${crowd ? "crowd" : "devnet"} recording`, "--", rel);
   const branch = git("rev-parse", "--abbrev-ref", "HEAD");
-  git("push", "-u", "origin", branch);
-  console.log(`\nCommitted ${rel} and pushed ${branch}.`);
-  console.log(branch === "main"
+  if (pushMain) git("push", "origin", "HEAD:main");
+  else git("push", "-u", "origin", branch);
+  const publishedBranch = pushMain ? "main" : branch;
+  console.log(`\nCommitted ${rel} and pushed ${publishedBranch}.`);
+  console.log(publishedBranch === "main"
     ? "The pages workflow is redeploying the replay; it is live in a minute or two."
     : "The pages workflow redeploys the replay once this reaches main.");
 } else {

@@ -198,7 +198,7 @@ export async function runLlm(tools: Tools, o: LlmOptions): Promise<LlmRunResult>
         // The reserve gate is code, not a tool the model may skip: a failed check ends the run before paying.
         if (paidCalls % o.reserveEvery === 0) {
           reserves = await tools.check_reserves();
-          if (!reserves.ok) throw new ReservesFailedError(reserves.reason ?? "reserve check failed", reserves.vaultCents, reserves.outstandingCents);
+          if (!reserves.ok) throw new ReservesFailedError(reserves);
         }
         try {
           const r = await tools.call_paid_api({ url });
