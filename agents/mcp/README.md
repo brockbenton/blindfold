@@ -8,6 +8,7 @@ An [MCP](https://modelcontextprotocol.io) server that lets Claude Desktop, or an
 |---|---|
 | `list_providers` | Name, base URL, price and topics of the registered data providers |
 | `get_balance` | Remaining tokens, plus this session's spend and budget, in cents |
+| `quote(url)` | The exact price of one call to that URL, read from the provider's unpaid 402 challenge. Spends nothing |
 | `buy_data(url)` | The paid response, or `{ refused: reason }` when a limit, the wallet or the owner says no. Nothing is spent on a refusal. |
 | `check_reserves` | The vault's USDC balance on Solana compared with the mint's outstanding liabilities. Report only: `buy_data` runs the check itself. |
 

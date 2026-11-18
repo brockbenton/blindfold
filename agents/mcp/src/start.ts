@@ -44,6 +44,7 @@ export async function start(
   const session = new Session({
     wallet,
     tokenProblem,
+    fetch: f,
     budgetCents: cfg.budgetCents,
     reserveEvery: cfg.reserveEvery,
     async listProviders() {

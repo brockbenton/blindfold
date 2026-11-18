@@ -54,7 +54,7 @@ export function registerTools(server: McpServer, session: Session): void {
     "list_providers",
     {
       title: "List data providers",
-      description: "List the registered data providers you can buy from: name, base URL, price in cents and topics.",
+      description: "List the registered data providers you can buy from: name, base URL, base price in cents and topics. Routes can cost more than the base price; call quote(url) for a route's exact price.",
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async () => {
@@ -93,13 +93,27 @@ export function registerTools(server: McpServer, session: Session): void {
   );
 
   server.registerTool(
+    "quote",
+    {
+      title: "Price of a URL",
+      description: "The exact price in cents of one buy_data call to this URL, read from the provider's unpaid HTTP 402 challenge. Spends nothing. Use it before buying anything that may cost more than the provider's base price.",
+      inputSchema: { url: z.string().describe("Full URL on a provider from list_providers") },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ url }) => {
+      const r = await session.quote(url);
+      return json(r, "error" in r);
+    },
+  );
+
+  server.registerTool(
     "buy_data",
     {
       title: "Buy data privately",
       description: [
         "Buy one data response with a paid HTTP GET, paid with a Blindfold token (no onchain transaction).",
         "Routes on a provider's base URL: whale flow <url>/v1/data/<token>, order-book depth <url>/v1/data/<token>/depth,",
-        "premium trade signals <url>/v1/data/<token>/signals.",
+        "premium trade signals <url>/v1/data/<token>/signals. Prices differ by route: call quote(url) first when unsure.",
         "Returns {refused: reason} when a limit, the wallet or the owner says no; nothing is spent then.",
         UNTRUSTED_NOTE,
       ].join(" "),

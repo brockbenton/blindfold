@@ -6,7 +6,7 @@
 //   - the wallet: provider lock / allowlist, asset and mint, exact amount, per-call cap, owner approval
 // Refusals and errors come back as results, never as exceptions, so a refused hijack attempt costs nothing.
 import { PaymentFailed, PaymentRefused, type AgentWallet } from "@blindfold/wallet";
-import type { ProviderInfo, ReserveCheckResult } from "@blindfold/protocol";
+import { BLINDFOLD_SCHEME, type ProviderInfo, type ReserveCheckResult } from "@blindfold/protocol";
 
 export type WalletLike = Pick<AgentWallet, "balance" | "payFetch">;
 
@@ -18,9 +18,16 @@ export interface SessionDeps {
   budgetCents: number;
   /** Reserve check before the first paid call and every N paid calls after (00 section 7.6). */
   reserveEvery: number;
+  /** Used by `quote` to read a provider's unpaid 402 challenge. Defaults to the global fetch. */
+  fetch?: typeof fetch;
   /** Set when the token file can't be spent at this mint (e.g. issued under a keyset the mint doesn't know). */
   tokenProblem?: string | null;
 }
+
+export type QuoteResult =
+  | { url: string; price_cents: number; description?: string }
+  | { refused: string; detail: string }
+  | { error: string };
 
 export type BuyResult =
   | { ok: true; paid_cents: number; balance_cents: number; status: number; data: unknown }
@@ -70,7 +77,8 @@ export class Session {
     return this.lastReserves;
   }
 
-  async buy(url: string): Promise<BuyResult> {
+  /** Parses the URL and refuses anything that isn't on a registered provider, with no network call to it. */
+  private async registeredUrl(url: string): Promise<URL | { refused: string; detail: string }> {
     let parsed: URL;
     try {
       parsed = new URL(url);
@@ -80,10 +88,7 @@ export class Session {
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return { refused: "invalid_url", detail: "url must be an absolute http(s) URL; nothing was spent" };
     }
-    if (this.d.tokenProblem) {
-      return { refused: "tokens_unusable", detail: `${this.d.tokenProblem}; nothing was spent` };
-    }
-    // Refuse unregistered servers up front, with no network call. The token lock still enforces this at the mint.
+    // The token lock still enforces this at the mint; checking here avoids contacting unregistered servers at all.
     let registered: ProviderInfo[];
     try {
       registered = await this.activeProviders();
@@ -92,6 +97,37 @@ export class Session {
     }
     if (!registered.some((p) => sameOrigin(p.url, parsed))) {
       return { refused: "provider_not_allowed", detail: `${parsed.origin} is not a registered provider; your tokens can only pay registered providers. Nothing was spent` };
+    }
+    return parsed;
+  }
+
+  /** The exact price of a URL, read from the provider's unpaid HTTP 402 challenge. Spends nothing. */
+  async quote(url: string): Promise<QuoteResult> {
+    const parsed = await this.registeredUrl(url);
+    if (!(parsed instanceof URL)) return parsed;
+    try {
+      const res = await (this.d.fetch ?? fetch)(parsed.toString(), { signal: AbortSignal.timeout(10_000) });
+      await res.body?.cancel().catch(() => undefined);
+      if (res.status !== 402) return res.ok ? { url: parsed.toString(), price_cents: 0 } : { error: `HTTP ${res.status}` };
+      const header = res.headers.get("payment-required");
+      if (!header) return { error: "the provider sent no PAYMENT-REQUIRED header" };
+      const pr = JSON.parse(Buffer.from(header, "base64").toString("utf8")) as {
+        resource?: { description?: string }; accepts?: { scheme: string; amount: string }[];
+      };
+      const offer = pr.accepts?.find((a) => a.scheme === BLINDFOLD_SCHEME);
+      if (!offer) return { error: "the provider does not accept Blindfold tokens at this URL" };
+      return { url: parsed.toString(), price_cents: Number(BigInt(offer.amount) / 10_000n), ...(pr.resource?.description ? { description: pr.resource.description } : {}) };
+    } catch (e) {
+      return { error: `cannot read the price: ${(e as Error).message.slice(0, 160)}` };
+    }
+  }
+
+  async buy(url: string): Promise<BuyResult> {
+    const checked = await this.registeredUrl(url);
+    if (!(checked instanceof URL)) return checked;
+    const parsed = checked;
+    if (this.d.tokenProblem) {
+      return { refused: "tokens_unusable", detail: `${this.d.tokenProblem}; nothing was spent` };
     }
     if (this.spent >= this.d.budgetCents) {
       return { refused: "budget_exhausted", detail: `spent ${this.spent} of the ${this.d.budgetCents}-cent session budget; nothing was spent` };
