@@ -63,7 +63,7 @@ describe("live market source", () => {
     const { fetcher, calls } = fakeCoinbase();
     const src = liveMarketSource({ fetcher, now: () => t, cacheMs: 20_000 });
     await src.whaleFlow("sol");
-    await src.signals("sol");
+    await src.signals("SOL");
     expect(calls).toHaveLength(2);
     t += 20_001;
     await src.whaleFlow("sol");
@@ -78,6 +78,16 @@ describe("live market source", () => {
     expect(net).toMatchObject({ source: "mock", fallback_reason: "ECONNRESET" });
     const bad = await liveMarketSource({ fetcher: fakeCoinbase().fetcher }).whaleFlow("../x");
     expect(bad.source).toBe("mock");
+  });
+
+  it("labels incomplete or non-numeric upstream data as a fallback", async () => {
+    const { fetcher } = fakeCoinbase({
+      stats: { open: "70", last: "74", volume: "unknown" },
+      book: { bids: [["nan", "10"]], asks: [["74", "10"]] },
+    });
+    const src = liveMarketSource({ fetcher });
+    expect(await src.whaleFlow("sol")).toMatchObject({ source: "mock" });
+    expect(await src.depth("sol")).toMatchObject({ source: "mock" });
   });
 
   it("does not cache failures", async () => {

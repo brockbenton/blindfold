@@ -22,12 +22,12 @@ export interface UpstreamResult {
 }
 
 /** `fetch` that pays x402 `exact` from the gateway wallet, refusing any payment above `maxBase`. */
-export type PayFetchFactory = (maxBase: bigint) => typeof fetch;
+export type PayFetchFactory = (maxBase: bigint, payTo: string) => typeof fetch;
 
 export type UpstreamFailure = "upstream_unavailable" | "upstream_not_x402" | "upstream_price_too_high" | "upstream_payment_failed" | "upstream_error";
 
 export class UpstreamError extends Error {
-  constructor(readonly reason: UpstreamFailure, detail: string, readonly retryable = false) {
+  constructor(readonly reason: UpstreamFailure, detail: string) {
     super(`${reason}: ${detail}`);
   }
 }
@@ -52,7 +52,6 @@ export class UpstreamClient {
   private timeoutMs: number;
   private ttl: number;
   private now: () => number;
-  private payFetches = new Map<bigint, typeof fetch>();
 
   constructor(private o: UpstreamClientOptions) {
     this.fetchImpl = o.fetch ?? fetch;
@@ -62,17 +61,17 @@ export class UpstreamClient {
   }
 
   /** The vendor's current `exact` price for `url`, from its unpaid 402 challenge. Cached for `quoteTtlMs`. */
-  async quote(url: string): Promise<UpstreamQuote> {
+  async quote(url: string, fresh = false): Promise<UpstreamQuote> {
     const hit = this.quotes.get(url);
-    if (hit && this.now() - hit.at < this.ttl) return hit.quote;
+    if (!fresh && hit && this.now() - hit.at < this.ttl) return hit.quote;
     let res: Response;
     try {
-      res = await this.fetchImpl(url, { headers: UPSTREAM_HEADERS, signal: AbortSignal.timeout(this.timeoutMs) });
+      res = await this.fetchImpl(url, { headers: UPSTREAM_HEADERS, redirect: "error", signal: AbortSignal.timeout(this.timeoutMs) });
     } catch (e) {
-      throw new UpstreamError("upstream_unavailable", String((e as Error)?.message ?? e), true);
+      throw new UpstreamError("upstream_unavailable", String((e as Error)?.message ?? e));
     }
-    await res.body?.cancel();
-    if (res.status !== 402) throw new UpstreamError(res.status >= 500 ? "upstream_unavailable" : "upstream_not_x402", `HTTP ${res.status} to an unpaid request`, res.status >= 500);
+    await res.body?.cancel().catch(() => undefined);
+    if (res.status !== 402) throw new UpstreamError(res.status >= 500 ? "upstream_unavailable" : "upstream_not_x402", `HTTP ${res.status} to an unpaid request`);
     const header = res.headers.get("PAYMENT-REQUIRED");
     let accepts: { scheme?: string; network?: string; asset?: string; amount?: string; payTo?: string }[];
     try {
@@ -81,40 +80,57 @@ export class UpstreamClient {
     } catch {
       throw new UpstreamError("upstream_not_x402", "402 without a readable PAYMENT-REQUIRED header");
     }
-    const exact = accepts.find((a) => a.scheme === "exact" && a.network === this.o.network && a.asset === this.o.asset);
-    if (!exact || !/^\d+$/.test(exact.amount ?? "") || typeof exact.payTo !== "string") {
+    const exact = accepts.find((a) => a?.scheme === "exact" && a.network === this.o.network && a.asset === this.o.asset);
+    if (!exact || typeof exact.amount !== "string" || !/^\d{1,20}$/.test(exact.amount) || BigInt(exact.amount) <= 0n || typeof exact.payTo !== "string") {
       throw new UpstreamError("upstream_not_x402", `no exact offer in ${this.o.asset} on ${this.o.network}`);
     }
     const quote = { amountBase: BigInt(exact.amount!), payTo: exact.payTo };
+    // Unpaid callers can vary the route URL, so cap the number of retained quotes.
+    if (this.quotes.size >= 256) this.quotes.delete(this.quotes.keys().next().value!);
     this.quotes.set(url, { quote, at: this.now() });
     return quote;
   }
 
   /** Buys `url` from the vendor, paying at most `maxBase`. The wallet refuses anything above it. */
-  async buy(url: string, maxBase: bigint): Promise<UpstreamResult> {
-    let pay = this.payFetches.get(maxBase);
-    if (!pay) this.payFetches.set(maxBase, (pay = this.o.payFetch(maxBase)));
+  async buy(url: string, quote: UpstreamQuote): Promise<UpstreamResult> {
+    const pay = this.o.payFetch(quote.amountBase, quote.payTo);
     let res: Response;
     try {
-      res = await pay(url, { headers: UPSTREAM_HEADERS, signal: AbortSignal.timeout(this.timeoutMs) });
+      res = await pay(url, { headers: UPSTREAM_HEADERS, redirect: "error", signal: AbortSignal.timeout(this.timeoutMs) });
     } catch (e) {
       this.quotes.delete(url);
-      throw new UpstreamError("upstream_payment_failed", String((e as Error)?.message ?? e), true);
+      throw new UpstreamError("upstream_payment_failed", String((e as Error)?.message ?? e));
     }
-    const body = new Uint8Array(await res.arrayBuffer());
     if (res.status === 402) {
+      await res.body?.cancel().catch(() => undefined);
       this.quotes.delete(url);
       throw new UpstreamError("upstream_payment_failed", "vendor refused the payment (HTTP 402)");
     }
-    if (res.status >= 400) {
+    if (!res.ok || res.status === 204 || res.status === 205) {
+      await res.body?.cancel().catch(() => undefined);
       this.quotes.delete(url);
-      throw new UpstreamError("upstream_error", `HTTP ${res.status}`, res.status >= 500);
+      throw new UpstreamError("upstream_error", `HTTP ${res.status}`);
+    }
+    // The timeout covers the body as well as the headers. Bound buffering on the paid path.
+    let body: Uint8Array;
+    try {
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      if (res.body) for await (const chunk of res.body) {
+        size += chunk.byteLength;
+        if (size > 4 * 1024 * 1024) throw new Error("vendor response exceeds 4 MiB");
+        chunks.push(chunk);
+      }
+      body = Buffer.concat(chunks, size);
+    } catch (e) {
+      throw new UpstreamError("upstream_error", (e as Error).message);
     }
     let transaction: string | undefined;
     const pr = res.headers.get("PAYMENT-RESPONSE");
     if (pr) {
       try {
-        transaction = decode(pr).transaction || undefined;
+        const sig = decode(pr)?.transaction;
+        if (typeof sig === "string" && /^[A-Za-z0-9]{1,100}$/.test(sig)) transaction = sig;
       } catch {
         // A vendor that served the data but sent an unreadable receipt still delivered.
       }

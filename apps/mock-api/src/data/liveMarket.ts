@@ -75,6 +75,7 @@ export function liveMarketSource(o: LiveOptions = {}): MarketSource {
     const hit = cache.get(key);
     if (hit && now() - hit.at < cacheMs) return hit.value as Promise<T>;
     const value = load();
+    if (cache.size >= 128) cache.delete(cache.keys().next().value!);
     cache.set(key, { at: now(), value });
     value.catch(() => { if (cache.get(key)?.value === value) cache.delete(key); });
     return value;
@@ -90,9 +91,9 @@ export function liveMarketSource(o: LiveOptions = {}): MarketSource {
     if (!/^[a-z0-9]{1,16}$/i.test(topic)) throw new Error(`not a token symbol: ${topic}`);
     return `${topic.toUpperCase()}-USD`;
   };
-  const stats = (topic: string) => cached(`stats/${topic}`, () => get<Stats>(`/products/${product(topic)}/stats`));
-  const trades = (topic: string) => cached(`trades/${topic}`, () => get<Trade[]>(`/products/${product(topic)}/trades?limit=1000`));
-  const book = (topic: string) => cached(`book/${topic}`, () => get<Book>(`/products/${product(topic)}/book?level=2`));
+  const stats = (topic: string) => cached(`stats/${topic.toUpperCase()}`, () => get<Stats>(`/products/${product(topic)}/stats`));
+  const trades = (topic: string) => cached(`trades/${topic.toUpperCase()}`, () => get<Trade[]>(`/products/${product(topic)}/trades?limit=1000`));
+  const book = (topic: string) => cached(`book/${topic.toUpperCase()}`, () => get<Book>(`/products/${product(topic)}/book?level=2`));
 
   const reason = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 120);
 
@@ -100,9 +101,17 @@ export function liveMarketSource(o: LiveOptions = {}): MarketSource {
     const [s, ts] = await Promise.all([stats(topic), trades(topic)]);
     const price = Number(s.last);
     const open = Number(s.open);
-    if (!(price > 0) || !(open > 0) || !Array.isArray(ts) || ts.length === 0) throw new Error("coinbase: incomplete market data");
+    const volumeUsd = Number(s.volume) * price;
+    if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(open) || open <= 0 ||
+        !Number.isFinite(volumeUsd) || volumeUsd < 0 || !Array.isArray(ts) || ts.length === 0) {
+      throw new Error("coinbase: incomplete market data");
+    }
     // Coinbase reports the maker's side; the taker (the aggressor) did the opposite.
-    const fills = ts.map((t) => ({ usd: Number(t.size) * Number(t.price), takerBuy: t.side === "sell", at: Date.parse(t.time) }));
+    const fills = ts.map((t) => {
+      const usd = Number(t.size) * Number(t.price);
+      if (!Number.isFinite(usd) || usd <= 0 || (t.side !== "buy" && t.side !== "sell")) throw new Error("coinbase: invalid trade");
+      return { usd, takerBuy: t.side === "sell", at: Date.parse(t.time) };
+    });
     // Whales: the largest 10% of recent trades by notional.
     const cutoff = [...fills].sort((a, b) => b.usd - a.usd)[Math.max(0, Math.floor(fills.length * 0.1) - 1)].usd;
     const whales = fills.filter((f) => f.usd >= cutoff);
@@ -111,7 +120,7 @@ export function liveMarketSource(o: LiveOptions = {}): MarketSource {
     const times = fills.map((f) => f.at).filter(Number.isFinite);
     return {
       topic, feed: "whale-flow", price: roundPrice(price), change_24h_pct: round(((price - open) / open) * 100, 1),
-      volume_24h: Math.floor(Number(s.volume) * price), whale_netflow: Math.round(sum(buys) - sum(whales.filter((f) => !f.takerBuy))),
+      volume_24h: Math.floor(volumeUsd), whale_netflow: Math.round(sum(buys) - sum(whales.filter((f) => !f.takerBuy))),
       window: "recent", whale_buys: buys.length, whale_sells: whales.length - buys.length,
       largest_trade_usd: Math.floor(Math.max(...fills.map((f) => f.usd))), as_of: Math.floor(now() / 1000),
       source: "live", venue: "coinbase", trades_window_s: times.length ? Math.round((Math.max(...times) - Math.min(...times)) / 1000) : 0,
@@ -120,7 +129,11 @@ export function liveMarketSource(o: LiveOptions = {}): MarketSource {
 
   async function liveDepth(topic: string): Promise<Depth> {
     const b = await book(topic);
-    const side = (xs: Book["bids"]) => xs.slice(0, 5).map(([p, q]) => ({ price: roundPrice(Number(p)), size: round(Number(q), 4) }));
+    const side = (xs: Book["bids"]) => xs.slice(0, 5).map(([p, q]) => {
+      const price = Number(p), size = Number(q);
+      if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(size) || size <= 0) throw new Error("coinbase: invalid book level");
+      return { price: roundPrice(price), size: round(size, 4) };
+    });
     const bids = side(b.bids ?? []);
     const asks = side(b.asks ?? []);
     if (!bids.length || !asks.length) throw new Error("coinbase: empty order book");

@@ -1,4 +1,4 @@
-import { mkdtempSync, existsSync, writeFileSync } from "node:fs";
+import { mkdtempSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -11,7 +11,8 @@ describe("settlement writer lock", () => {
     const d = dir();
     const release = acquireSettleLock(d, "pnpm serve");
     expect(existsSync(lockPath(d))).toBe(true);
-    expect(lockHolder(d)).toBeNull(); // our own lock never blocks us
+    expect(lockHolder(d)?.pid).toBe(process.pid);
+    expect(() => acquireSettleLock(d, "pnpm demo")).toThrow(/pnpm serve .* already settling/);
     release();
     expect(existsSync(lockPath(d))).toBe(false);
   });
@@ -23,11 +24,12 @@ describe("settlement writer lock", () => {
     expect(() => acquireSettleLock(d, "pnpm serve")).toThrow(/pnpm demo .* already settling/);
   });
 
-  it("takes over a stale lock", () => {
+  it("preserves a stale lock until an operator verifies it", () => {
     const d = dir();
     writeFileSync(lockPath(d), JSON.stringify({ pid: 2 ** 22 + 12345, what: "pnpm demo", started: "2026-11-17T00:00:00Z" }));
     expect(lockHolder(d)).toBeNull();
-    const release = acquireSettleLock(d, "pnpm serve");
-    release();
+    const before = readFileSync(lockPath(d), "utf8");
+    expect(() => acquireSettleLock(d, "pnpm serve")).toThrow(/Verify its owner has stopped/);
+    expect(readFileSync(lockPath(d), "utf8")).toBe(before);
   });
 });
