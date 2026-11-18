@@ -44,9 +44,9 @@ h1 { margin: 0; font: 500 24px/32px var(--sans); }
 .empty { color: var(--muted); }
 
 .sides { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-.side { display: grid; align-content: start; gap: 12px; }
+.side { display: grid; align-content: start; gap: 8px; }
 .side + .side { padding-left: 24px; border-left: 1px solid var(--line); }
-.side-name { color: var(--muted); }
+.side-name { font: 500 18px/24px var(--sans); color: var(--text); }
 [data-readings] { display: grid; gap: 16px; }
 .reading { display: grid; gap: 4px; animation: enter 300ms var(--ease) both; }
 .reading .action { font: 500 32px/40px var(--sans); color: var(--muted); }

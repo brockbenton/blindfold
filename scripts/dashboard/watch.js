@@ -24,7 +24,6 @@ export function mountWatch(root) {
         <div class="stat" data-stat="payout"><div class="k">Vault payouts</div><div class="v">0</div></div>
       </section>
       <section class="panel copycat">
-        <div class="title">Copycat</div>
         <div class="sides">
           <div class="side"><div class="side-name">Standard x402</div><div data-readings="exact"></div></div>
           <div class="side"><div class="side-name">Blindfold</div><div data-readings="blind"></div></div>
