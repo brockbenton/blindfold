@@ -16,7 +16,7 @@ The reserve check validates the vault-owned `Config`, configured mint and expect
 
 ## LLM decision loop
 
-`runLlm` (`src/llm.ts`) talks to any OpenAI-compatible chat completions endpoint with plain `fetch`. The default is Gemini's (`gemini-3.5-flash-lite`, falling back to `gemini-flash-latest` when a model is overloaded). The model sees four tools:
+`runLlm` (`src/llm.ts`) talks to any OpenAI-compatible chat completions endpoint with plain `fetch`. The default is Gemini's endpoint. It starts with `gemini-3.5-flash-lite` and falls back to `gemini-flash-latest` on HTTP 503 or 404. The model sees four tools:
 
 | Tool | What the model gets |
 |---|---|
@@ -31,10 +31,10 @@ Each turn:
 2. For `buy_data`, code runs these checks in order before any payment:
    - **Budget:** refuse with `budget_exhausted` once the session has spent `--budget` cents (default 30). One purchase can cross the line by at most the per-call cap.
    - **Reserve gate:** before the first paid call and every `RESERVE_CHECK_EVERY` paid calls, check reserves. A failure ends the run with exit 7 before paying. The model cannot skip this; it is not a tool.
-   - **Wallet policy:** the wallet pays only providers in the token lock's signer set (or `WALLET_ALLOWLIST`), only the configured asset and mint, only exact amounts up to `--max-per-call`.
+   - **Wallet policy:** the wallet pays only providers in the token lock's signer set, subject to `WALLET_ALLOWLIST`, only the configured asset and mint, only exact amounts up to `--max-per-call`.
    - **Owner approval:** a price above `--approve-over` (default 20 cents) waits for the owner ([below](#owner-approval)). A denial or no answer refuses with `approval_denied` or `approval_timeout`, and the model is told not to retry.
 3. Return the result to the model as a tool message. Refusals and HTTP errors are results, not crashes, so a refused hijack attempt or a denied purchase costs nothing and the run continues.
-4. Stop after `final_answer`, or with HOLD after 10 model turns.
+4. Stop after `final_answer`, a response without tool calls, or ten model turns. The turn limit returns HOLD.
 
 Provider responses are untrusted input and go to the model unchanged; this is where a prompt injection arrives. The limits above do not depend on the model following instructions. `pnpm demo` Act 6 poisons a feed response with an injection that points the agent at an attacker's server ([demo](../DEMO.md)).
 
@@ -52,7 +52,7 @@ Provider responses are untrusted input and go to the model unchanged; this is wh
 The track asks for three guardrails: budgets, allowlists and human approval for large transactions. Approval is enforced by the wallet, not by the model and not by an agent tool:
 
 - **The price is only known from the 402 challenge.** The model sees a URL; the provider's `PAYMENT-REQUIRED` header sets the amount. The wallet's x402 payment hook (`createPaymentPayload`) is the first place that knows the exact price, the provider key and the asset together.
-- **Every payment passes through it.** The scripted loop, the LLM loop and any other caller of `payFetch` reach the same hook, so nothing can pay around it. A tool the agent calls to ask permission would be opt-in, and a manipulated model could skip it. The reserve gate is not a tool for the same reason.
+- **Every payment passes through it.** The scripted loop, the LLM loop and any other caller of `payFetch` reach the same hook, so nothing can pay around it. A tool the agent calls to ask permission would be opt-in, and a manipulated model could skip it. The CLI model has no reserve-reporting tool. The MCP server exposes a read-only report and applies the gate inside `buy_data`.
 - **Last check, before any proof leaves.** The hook asks only after the mint, provider, cap and exact-balance checks pass, so the owner is never asked about a payment the wallet would refuse, and a denial leaves the token file unchanged.
 
 The wallet takes a pluggable `Approver` ([wallet](04-wallet-sdk.md#owner-approval)) and enforces the deadline itself: a late answer, an error or a missing approver is a refusal. The CLI prompts on the terminal when stdin is a TTY (`y` approves) and otherwise refuses above the threshold. `pnpm demo` races the dashboard's Approve/Deny buttons against the terminal prompt ([demo](../DEMO.md)).
@@ -95,11 +95,11 @@ Flags override their corresponding environment values. The agent requires explic
 
 `list_providers` has a 10-second fetch timeout. Payment and reserve operations do not have a general agent-level timeout or retry policy; callers needing deadlines must provide them through their clients. Calls are sequential, so `paidCents` can be measured from wallet balance deltas. `call_paid_api` parses JSON or preserves text, rejects non-2xx responses and optionally includes the x402 redemption ID.
 
-Human output reports provider, topic, calls, balance and reserves. `--json` emits one result object on stdout, with logs on stderr. A success contains `ok`, `provider`, `topic`, `calls`, `balanceBefore`, `balanceAfter`, `paidCents` and `reserves`; each call includes status, paid cents, data and optional `redemptionId`. Failure contains `{ok: false, error: {kind, message, reason?, status?}}`.
+Human output reports provider, topic, calls, balance and reserves. `--json` emits one result object on stdout, with logs on stderr. A success contains `ok`, `provider`, `topic`, `calls`, `balanceBefore`, `balanceAfter`, `paidCents` and `reserves`; each call includes status, paid cents, data and optional `redemptionId`. Failure contains `{ok: false, error: {kind, message, reason?, status?, reserves?}}`. A reserve failure includes the reserve check result.
 
 | Exit | Meaning |
 |---|---|
-| 0 | All calls succeeded |
+| 0 | Scripted calls succeeded or the LLM loop returned a decision |
 | 1 | Unexpected/internal error |
 | 2 | Bad configuration, flags or unreadable token file |
 | 3 | Wallet refusal, such as cap, provider, exact-balance failure or an owner denial (`approval_denied`, `approval_timeout`) |
@@ -129,4 +129,4 @@ The reserve gate is enforced by `runScripted` and `runLlm` around paid calls, no
 
 `scripted.test.ts` covers decisions, gate cadence, refusals and exit reporting. `e2e-local.test.ts` uses wallet/provider/mint fakes. `tests/integration/test/real-mint.test.ts` uses the actual mint and mock API with PostgreSQL and an injected fake chain. The separate real-vault acceptance script validates onchain reserve and settlement behavior; [historical deployment notes](01-vault.md#10-implementation-notes-and-decisions) record a November 16, 2026 pass.
 
-`llm.test.ts` covers the gate before the first purchase, budget refusal, a refused hijack, an owner's denial, the step limit and the chat client. The wallet's `approval.test.ts` covers the threshold, approve, deny, timeout, a missing approver and the approvers themselves. The `exact` baseline client and Copycat, the competitor bot, live in `scripts/` ([demo](../DEMO.md)). The LLM loop uses no SDK; any OpenAI-compatible endpoint works.
+`llm.test.ts` covers the gate before the first purchase, budget refusal, a refused hijack, an owner's denial, the step limit and the chat client. The wallet's `approval.test.ts` covers the threshold, approve, deny, timeout, a missing approver and the approvers themselves. The `exact` baseline client and Copycat, the competitor bot, live in `scripts/` ([demo](../DEMO.md)). The LLM loop uses plain HTTP and requires a chat-completions endpoint that supports tool calls.

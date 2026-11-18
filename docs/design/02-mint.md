@@ -8,7 +8,7 @@ Node 22+, PostgreSQL, `@cashu/cashu-ts` 4.13.1 and the shared protocol package. 
 
 Required settings: `DATABASE_URL`, `MINT_SEED` (32-byte hex), `MINT_AUTHORITY_KEYPAIR` and `MINT_ADMIN_TOKEN`. Protocol defaults supply `SOLANA_RPC_URL`, `VAULT_PROGRAM_ID`, `USDC_MINT`, `MINT_URL` and port 3338; real deployments must verify those values match their vault. The authority key must match `Config.mint_authority` and have SOL for settlement fees.
 
-Optional settings: `PROVIDERS_FILE`, `DEPOSIT_POLL_MS` (2000), `SETTLE_INTERVAL_S` (600), `SETTLE_HOLD_S` (defaults to the interval), `SETTLE_UNIT_CENTS` (10), and `MINT_DEV_FAKE_CHAIN=1`. Provider metadata is read at boot from `config/providers.json` unless overridden.
+Optional settings: `PROVIDERS_FILE`, `DEPOSIT_POLL_MS` (2000), `SETTLE_INTERVAL_S` (600), `SETTLE_HOLD_S` (defaults to the interval), `SETTLE_UNIT_CENTS` (10), `ISSUANCE_LOG_MS` (5000), and `MINT_DEV_FAKE_CHAIN=1`. Provider metadata is read at boot from `config/providers.json` unless overridden.
 
 ## 2. Supported scope
 
@@ -20,7 +20,7 @@ Supported Cashu pieces: keys/keysets, signed quotes, minting with DLEQ, restrict
 
 ## 3. Boot and jobs
 
-`loadConfig` validates environment and provider metadata. `createMint` runs migrations, loads the keyset and syncs providers. `start()` installs non-overlapping timers for deposit polling, provider sync (30 seconds) and settlement; `start(["settlement"])` starts only the named jobs. `index.ts` then serves the Hono app. The Solana reader rejects a Config whose mint or vault account disagrees with the configured deployment, so mismatched backing cannot silently reach issuance.
+`loadConfig` validates environment and provider metadata. `createMint` runs migrations, loads the keyset and syncs providers. `start()` installs non-overlapping timers for deposit polling, provider sync (30 seconds), settlement and issuance logging when supported; `start(["settlement"])` starts only the named jobs. `index.ts` then serves the Hono app. The Solana reader rejects a Config whose mint or vault account disagrees with the configured deployment, so mismatched backing cannot silently reach issuance.
 
 Jobs log errors and try again on later ticks. Deposit polling and provider sync are relative to process startup. Settlement runs at UTC multiples of `SETTLE_INTERVAL_S`, so every deployment with the same interval settles at the same wall-clock moments ([settlement privacy](#46-settlement-privacy)). `createMint` also returns the app and context for in-process tests.
 
@@ -36,7 +36,8 @@ The schema starts at [`migrations/001_init.sql`](../../services/mint/migrations/
 | `issued_signatures` | Unique `b_`, quote/request IDs, output sequence, amount, `c_` and DLEQ; supports identical-response replay |
 | `providers`, `provider_balances` | Cached registry plus metadata; provider pubkey unique among active rows, and nonnegative unsettled balances |
 | `spent_proofs`, `redemptions` | Unique `y`; proof spending and provider credit commit together |
-| `settlements` | Batch ID, status, payouts, transaction signature, last-valid block height and error; partial unique batch ID excludes failed attempts |
+| `settlements` | Batch ID, status, payouts, transaction signature, last-valid block height and error. Partial unique batch ID excludes failed attempts |
+| `issuance_log_state` | Logged issuance and at most one pending log transaction. See [issuance log](#issuance-log) |
 
 ### 4.1 Deposit polling
 
@@ -95,19 +96,21 @@ Admin settlement applies the same policy. `createMint` callers that omit `settle
 
 `GET /v1/blindfold/reserves` reads issuance and confirmed settlements in one repeatable-read transaction: `outstanding = issued - settled`. This includes unredeemed tokens and redeemed, unpaid balances. It is mint-reported accounting, not proof of total liabilities.
 
+The reserve check also reads the issuance log. See [reserve check](00-interfaces.md#76-agent-reserve-check-bf).
+
 The admin reconciliation endpoint additionally reads the vault, deposits and redemptions. It is a diagnostic assembled from separate reads, not an atomic chain/database snapshot. `vault_balance == deposited - settled` is expected in an isolated test after polling and confirmation, without direct transfers.
 
 ## 5. Source map
 
 | Path under `services/mint/` | Responsibility |
 |---|---|
-| `src/index.ts`, `config.ts`, `mint.ts` | Process configuration, adapters, migration and job startup |
-| `src/app.ts`, `db.ts`, `errors.ts` | Hono routing, database helpers and error handling |
+| `src/index.ts`, `src/config.ts`, `src/mint.ts` | Process configuration, adapters, migration and job startup |
+| `src/app.ts`, `src/db.ts`, `src/errors.ts` | Hono routing, database helpers and error handling |
 | `src/crypto/` | Keysets, blind signatures, DLEQ and P2PK checks |
 | `src/routes/info.ts` | Info, keys/keysets, providers, checkstate and reserves |
-| `src/routes/quote.ts`, `mint.ts`, `redeem.ts`, `admin.ts` | Payment and admin routes |
-| `src/chain/vaultReader.ts`, `settleSender.ts`, `memory.ts` | Solana adapters and development fakes |
-| `src/jobs/` | Polling, provider sync, settlement and timer guard |
+| `src/routes/quote.ts`, `src/routes/mint.ts`, `src/routes/redeem.ts`, `src/routes/admin.ts` | Payment and admin routes |
+| `src/chain/vaultReader.ts`, `src/chain/settleSender.ts`, `src/chain/memory.ts` | Solana adapters and development fakes |
+| `src/jobs/` | Polling, provider sync, settlement, issuance logging and timers |
 | `test/` | PostgreSQL-backed tests and mocked Solana connections |
 | `scripts/` | Local PostgreSQL helpers and mint HTTP smoke test |
 
@@ -119,7 +122,7 @@ The mint tests create isolated PostgreSQL schemas. They cover issuance replay, c
 
 ## Issuance log
 
-`jobs/issuanceLog.ts`, every `ISSUANCE_LOG_MS` (default 5000; 0 disables) and on `POST /v1/blindfold/admin/log-issuance`. State lives in `issuance_log_state`: `logged_cents` (how much of this mint's issuance is in the log) and at most one pending transaction.
+`src/jobs/issuanceLog.ts` runs every `ISSUANCE_LOG_MS` (default 5000) and on `POST /v1/blindfold/admin/log-issuance`. Set the interval to zero to disable the timer. State lives in `issuance_log_state`: `logged_cents` (how much of this mint's issuance is in the log) and at most one pending transaction.
 
 1. A pending transaction is resolved first from its signature status: confirmed moves its cents into `logged_cents`; failed or expired clears it; otherwise the run returns `pending` and sends nothing.
 2. No log onchain: if a settlement is `pending` or `submitted`, return `deferred` (a batch sent before the log exists cannot add itself to it). Otherwise send `init_issuance_log(issued, confirmed settled)`.

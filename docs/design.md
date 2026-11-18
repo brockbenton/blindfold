@@ -9,17 +9,21 @@ flowchart LR
     Owner[Owner] -->|deposit USDC| Vault[Solana vault]
     Owner <-->|blinded outputs / signatures| Mint[Mint]
     Owner -->|locked tokens| Agent[Agent wallet]
-    Agent -->|x402 cashu payment| Provider[Provider]
+    Agent -->|reserve check| Vault
+    Agent -->|read liabilities| Log["IssuanceLog PDA"]
+    Mint -->|publish issued total| Log
+    Vault -->|advance settled total| Log
+    Agent -->|x402 blindfold payment| Provider[Provider]
     Provider -->|sign and redeem| Mint
     Mint -->|settle_batch| Vault
     Vault -->|USDC| Payout[Registered payout account]
 ```
 
-1. **Deposit.** The owner obtains a quote with a random `deposit_ref` and deposits whole-cent USDC into the vault. The mint polls `Config.deposit_count` and the program's `DepositRecord` accounts; it does not infer payment from raw transaction instructions.
+1. **Deposit.** The owner obtains a quote with a random `deposit_ref` and deposits whole-cent USDC into the vault. The mint polls `Config.deposit_count` and the program's `DepositRecord` accounts. A Stream event can prompt the same poll.
 2. **Issue.** The owner builds secrets locked 1-of-N to all active provider keys, blinds them and obtains mint signatures. NUT-20 binds mint requests to the owner's quote key. The owner unblinds, checks DLEQ proofs and writes the tokens to the agent's file.
 3. **Pay.** The provider offers x402 v2 scheme `blindfold`. The wallet checks mint, unit, asset, provider and price, selects an exact amount and persists it as pending before sending it.
 4. **Redeem.** The provider signs the proofs. The mint verifies signatures and locks, atomically marks proofs spent and credits that provider. The provider serves data only after successful redemption. This includes cryptographic verification and a database transaction; no latency bound is guaranteed.
-5. **Settle.** At fixed UTC windows (default every 10 minutes), or on admin request, the mint pays up to eight active providers per batch. It pays only cents redeemed before the hold (default one window), rounded down to 10 cents, so payout time and amount do not track individual calls ([settlement privacy](design/02-mint.md#46-settlement-privacy)).
+5. **Settle.** At fixed UTC windows (default every 10 minutes), or on admin request, the mint pays up to eight active providers per batch. It pays only cents redeemed before the hold (default one window), rounded down to 10 cents, which weakens timing and amount correlations ([settlement privacy](design/02-mint.md#46-settlement-privacy)).
 
 ## Blind signatures and compatibility
 
@@ -35,12 +39,13 @@ The provider acts as an in-process x402 facilitator. Its successful x402 `transa
 
 | Control | Enforcement and limit |
 |---|---|
-| Budget | Agent can spend the tokens it holds; it can waste all of them at allowed providers |
+| Budget | Token balance bounds total value. The LLM and MCP sessions also stop further purchases once their spend threshold is reached |
 | Provider lock | Owner-created 1-of-N P2PK lock includes active registered providers at funding time; mint credits the key that signed |
 | Narrower allowlist | `WALLET_ALLOWLIST` is wallet policy, not an additional token restriction |
 | Per-call price cap | Wallet and x402 spend controls; not encoded in tokens |
+| Owner approval | Wallet asks above the threshold after checking the cap and exact amount |
 | Exact amount | No change or swap; wallet must find proofs summing to the price |
-| Reserve gate | Agent reads the vault and compares it with the liabilities in the vault's onchain issuance log (or the mint's report, when larger or when no log exists); errors stop payment |
+| Reserve gate | Agent reads the vault and compares it with the liabilities in the vault's onchain issuance log (or the mint's report, when larger or when no log exists). See [reserve check failures](design/00-interfaces.md#76-agent-reserve-check-bf) |
 
 The mint cannot inspect a blinded secret at issuance. It validates its lock at redemption. The owner must build and verify the lock correctly. New providers do not acquire access to old tokens, and deactivated providers cannot redeem after the mint syncs their status.
 
@@ -48,9 +53,9 @@ The mint cannot inspect a blinded secret at issuance. It validates its lock at r
 
 The vault holds a configured classic SPL mint; the deployment must choose the intended six-decimal USDC mint. It pays only registered payout accounts, but the mint authority chooses amounts. A compromised mint can drain reserves to those accounts. The admin controls registration and deactivation; the upgrade authority can change program behavior. `initialize` is first-caller-wins and is not restricted to the deployer.
 
-`outstanding = issued - settled` includes both unredeemed tokens and redeemed balances awaiting payout. Issuance and settlement accounting come from the mint's database. The agent rounds the public vault balance down to whole cents so a direct sub-cent transfer cannot disable the check, but that does not prove the reported liabilities are complete. Reads of RPC state and database state are not an atomic snapshot, so a concurrent payout can also cause a conservative refusal.
+`outstanding = issued - settled` includes both unredeemed tokens and redeemed balances awaiting payout. The mint reports issuance and confirmed settlements from its database. The vault's `IssuanceLog` publishes cumulative issuance and tracks payouts that include the log account. The reserve check uses the larger outstanding amount. The agent rounds the public vault balance down to whole cents so a direct sub-cent transfer cannot disable the check, but that does not prove the reported liabilities are complete. Reads of RPC state and database state are not an atomic snapshot, so a concurrent payout can also cause a conservative refusal.
 
-The admin reconciliation endpoint reports `vault_balance`, `deposited`, `issued`, `redeemed` and `settled`. In an isolated test with no direct transfers, `vault_balance == deposited - settled`. Direct transfers, unprocessed deposits or pending confirmations can break that identity without proving theft. There is no public onchain issuance log yet.
+The admin reconciliation endpoint reports `vault_balance`, `deposited`, `issued`, `redeemed` and `settled`. In an isolated test with no direct transfers, `vault_balance == deposited - settled`. Direct transfers, unprocessed deposits or pending confirmations can break that identity without proving theft. The [public vault history](https://brockbenton.github.io/blindfold/vault/) shows onchain activity and issuance totals. The complete mint ledger remains private.
 
 ## Privacy and failure limits
 
@@ -59,9 +64,9 @@ The admin reconciliation endpoint reports `vault_balance`, `deposited`, `issued`
 | Public chain | Shows depositor, amount, deposit reference and registered provider payouts; no per-call onchain payment. Payouts land at fixed windows after a hold, in rounded amounts |
 | Provider | Sees query and token proofs; can also observe client network metadata |
 | Mint | Sees deposits, issuance amounts, provider redemptions and timing; blinding hides the direct issuance-to-proof link |
-| One depositor in a window | Its deposit and the next payout are linked: the owner paid that provider, though not for which token or calls |
+| One depositor funding a payout | If that deposit is the only source of the payout, it links the owner to the paid provider. The token and calls stay private |
 | Several equal depositors, one payout | No single depositor can be attributed from amounts; Copycat's `attributeVault` reports `CANNOT ATTRIBUTE` |
-| Distinctive amounts, shared funding, repeated timing | Can attribute or link depositors: odd amounts fingerprint, a deposit too small for a payout is ruled out, a common funding wallet links owners; privacy is not guaranteed |
+| Distinctive amounts, shared funding, repeated timing | Can link owners and narrow possible contributors. If all other deposits together are too small to cover a payout, the large depositor must have contributed under the model |
 | Leaked tokens | Anyone holding them can submit payments to allowed providers; locks prevent arbitrary-recipient redemption, not budget theft through allowed services |
 | Double spend | Online redemption and a unique spent-proof key prevent double credit |
 | Lost redemption response | Provider may be paid without serving data; wallet uses checkstate to drop spent proofs or recover unspent ones |
@@ -75,10 +80,9 @@ The mock API can also accept the standard x402 `exact` scheme on the same routes
 
 ## Planned work
 
-See [MVP and add-ons](mvp.md#add-ons) for priority. These are design options, not current features:
+See [planned scope](mvp.md#planned-or-deferred).
 
-- QuickNode Stream events as a trigger for deposit polling. The Stream feeds Copycat today; the mint polls without a webhook.
 - Protocol-level owner approval through a second, co-signed reserve pocket. The wallet already asks the owner above a threshold ([agent](design/05-agent.md#owner-approval)), but that runs in agent code. Current locks accept only 1-of-N and reject refund/time-lock tags; this requires protocol changes.
 - Temporal for durable top-ups. Workflow randomness and signing would run in activities; existing persisted funding checkpoints still have recovery limits.
-- An external reconciliation view (the onchain issuance log is implemented).
-- Hiding which provider was paid, through fresh payout accounts. An onchain check of the provider's approval reveals the provider; no check lets the mint pay anyone. Settlement already decouples payout timing and amounts from calls; which providers earned remains public.
+- A public view of the mint's full reconciliation.
+- Hiding which provider was paid, through fresh payout accounts. An onchain check of the provider's approval reveals the provider; no check lets the mint pay anyone. Settlement windows, holds and rounding weaken timing and amount correlations. Provider payout accounts remain public.

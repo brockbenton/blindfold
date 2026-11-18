@@ -1,6 +1,6 @@
 # Run it locally
 
-Run commands from the repository root unless a step says otherwise. Use Node 22+ (Node 24 is also supported), pnpm **10.33.0** from `package.json`, and PostgreSQL. Solana tools are needed only for the real-vault checks in section 7.
+Run commands from the repository root unless a step says otherwise. Use Node 22+ (Node 24 is also supported), pnpm **10.33.0** from `package.json`, and PostgreSQL. Solana tools are needed for the vault build, local validator runs and deployment. The devnet demo and live stack use the deployed program.
 
 ## 1. Install and build
 
@@ -11,7 +11,7 @@ npx --yes pnpm@10.33.0 -r build
 
 Workspace packages resolve through `dist/`, so build before tests and rebuild after source changes. On a cloud machine with a read-only home directory, set `npm_config_cache` to a writable path such as `/workspace/.cache/npm` before using `npx`.
 
-The programs read process environment variables; they do not automatically load `.env`. `.env.example` lists the settings, with development placeholders. Export the values you need in each terminal, or load a local `.env` explicitly (`set -a; . ./.env; set +a`). Replace placeholder secrets and key paths for real-vault use. Use `.keys/` for local key files; that directory is ignored by Git.
+The programs read process environment variables; they do not automatically load `.env`. [`.env.example`](../.env.example) lists baseline settings and development placeholders. Export the values you need in each terminal, or load a local `.env` explicitly (`set -a; . ./.env; set +a`). Replace placeholder secrets and key paths for real-vault use. Use `.keys/` for local key files; that directory is ignored by Git.
 
 ## 2. PostgreSQL
 
@@ -102,12 +102,12 @@ node packages/wallet/dist/cli.js balance
 node packages/wallet/dist/cli.js providers
 ```
 
-For a real vault, omit `--dev-deposit` and set `OWNER_KEYPAIR`, `SOLANA_RPC_URL`, `VAULT_PROGRAM_ID` and `USDC_MINT`. The owner needs SOL and USDC. Fund only while the agent using that token file is stopped.
+For the devnet vault, omit `--dev-deposit` and set `OWNER_KEYPAIR`. The owner CLI supplies devnet RPC, program and USDC defaults. Set `SOLANA_RPC_URL`, `VAULT_PROGRAM_ID` and `USDC_MINT` together for another deployment. The owner needs SOL and USDC. Fund only while the agent using that token file is stopped.
 
-On interruption, inspect the saved state in the selected directory. Resume with its filename's quote pubkey:
+On interruption, inspect the saved state in the selected directory. Set `QUOTE_PUBKEY` to the saved filename without `.json`, then resume:
 
 ```sh
-node packages/wallet/dist/cli.js resume <quote-pubkey> --state-dir .keys/owner-state --dev-deposit
+node packages/wallet/dist/cli.js resume "$QUOTE_PUBKEY" --state-dir .keys/owner-state --dev-deposit
 ```
 
 Use `--dev-deposit` only for a fake-chain mint. See [recovery limits](design/04-wallet-sdk.md#recovery-limits) before resuming an uncertain real deposit; a persisted checkpoint is not an exactly-once guarantee.
@@ -123,11 +123,12 @@ node agents/simple/dist/main.js --fake --json
 The real agent checks the vault on Solana even when talking to a fake-chain mint. To run against a real localnet or devnet vault, export matching settings and fund the token file first:
 
 ```sh
-# TOKEN_FILE, MINT_URL, SOLANA_RPC_URL, VAULT_PROGRAM_ID and USDC_MINT must be set.
+# Export TOKEN_FILE, SOLANA_RPC_URL, VAULT_PROGRAM_ID and USDC_MINT.
+# Set MINT_URL if the mint is away from http://localhost:3338.
 node agents/simple/dist/main.js --topic sol --calls 3 --json
 ```
 
-There is no CLI switch to bypass reserves for the fake-chain mint. The PostgreSQL integration suite injects a chain stand-in for that workflow. Exit codes: 2 configuration, 3 payment refused, 4 network, 5 HTTP/payment failure, 6 no provider, 7 reserves failed; 1 is an unexpected error.
+There is no CLI switch to bypass reserves for the fake-chain mint. The PostgreSQL integration suite injects a chain stand-in for that workflow. For Claude clients, follow the [MCP setup](../agents/mcp/README.md#set-up). Exit codes: 2 configuration, 3 payment refused, 4 network, 5 HTTP/payment failure, 6 no provider, 7 reserves failed; 1 is an unexpected error.
 
 ## 6. Tests
 
@@ -163,7 +164,7 @@ Devnet acceptance:
 npx --yes pnpm@10.33.0 --filter @blindfold/scripts e2e
 ```
 
-Requires PostgreSQL, a deployed vault, `ADMIN_KEYPAIR`, `OWNER_KEYPAIR` (SOL and at least 1 USDC), and `MINT_AUTHORITY_KEYPAIR` (SOL, matching `Config.mint_authority`). The admin must control the vault to register the test provider. The script deactivates its temporary provider on exit. Set `EXACT_AGENT_KEYPAIR` (USDC) and `EXACT_FACILITATOR_KEYPAIR` (SOL) to include the `exact` baseline section. This spends devnet funds; it is separate from the default test suite.
+Use this while other settlement writers for the same vault are stopped. The script shares the deployed vault and reconciles its balance change. It requires PostgreSQL, `ADMIN_KEYPAIR`, `OWNER_KEYPAIR` (SOL and at least 1 USDC), and `MINT_AUTHORITY_KEYPAIR` (SOL, matching `Config.mint_authority`). The admin must control the vault to register the test provider. The script deactivates its temporary provider on exit. Set `EXACT_AGENT_KEYPAIR` (USDC) and `EXACT_FACILITATOR_KEYPAIR` (SOL) to include the `exact` baseline section. This spends devnet funds; it is separate from the default test suite.
 
 ## 8. Demo
 
@@ -171,18 +172,19 @@ Requires PostgreSQL, a deployed vault, `ADMIN_KEYPAIR`, `OWNER_KEYPAIR` (SOL and
 
 ## 9. Live stack (`pnpm serve`)
 
-`npx --yes pnpm@10.33.0 serve` runs Blindfold on this machine against the deployed devnet vault and keeps running until Ctrl-C: PostgreSQL (through `dev-pg.sh` unless `DATABASE_URL` is set), the mint in real chain mode with `.keys/mint-authority.json`, TokenFeed on port 4000 with the standard x402 `exact` baseline (when `.keys/provider-payout.json` and `facilitator.json` exist), NewsWire on 4001 (once `pnpm demo` has registered it), the [gateway](design/06-gateway.md) on 4100 (once `pnpm gateway:setup` has created its keys and registered it; its devnet stand-in vendor is TokenFeed's `exact` route), and a cloudflared quick tunnel for each so wallets elsewhere can reach them. It prints the public URLs and copy-paste commands to fund a token file and run the agent against them.
+`npx --yes pnpm@10.33.0 serve` runs Blindfold on this machine against the deployed devnet vault and keeps running until Ctrl-C: PostgreSQL (through `dev-pg.sh` unless `DATABASE_URL` is set), the mint in real chain mode with `.keys/mint-authority.json`, TokenFeed on port 4000 with the standard x402 `exact` baseline (when `.keys/provider-payout.json` and `.keys/facilitator.json` exist), NewsWire on 4001 (once `pnpm demo` has registered it), the [gateway](design/06-gateway.md) on 4100 (once `pnpm gateway:setup` has created its keys and registered it; its devnet stand-in vendor is TokenFeed's `exact` route), and a cloudflared quick tunnel for each so wallets elsewhere can reach them. It prints the public URLs and copy-paste commands to fund a token file and run the agent against them.
 
 Unlike `pnpm demo`, the mint is persistent. Its database lives in the `serve` schema and its seed in `.keys/serve-mint-seed.hex`, with the admin token in `.keys/serve-admin-token`; both files are created on first run, so add them to your key backup. Tokens funded through it keep redeeming across restarts, and settlement runs on the normal schedule (`--window`, default 600 seconds, with a hold of one window and 10-cent units).
 
 | Option | Effect |
 |---|---|
-| `--local` | No tunnels. Everything on `http://localhost`, so the mint URL, and the token files bound to it, stay the same across restarts. Use this for an agent or MCP client on the same machine |
-| `--window S` | Settlement window and hold in seconds (default 600) |
+| `--local` | Skips quick tunnels. Services advertise localhost unless a `SERVE_*_URL` is set. With a stable mint URL, the same token file works across restarts |
+| `--window S` | Settlement window and hold in seconds (10–86,400, default 600) |
+| `KEYS_DIR` | Key directory. Defaults to the repository's `.keys/` |
 | `SERVE_MINT_URL`, `SERVE_FEED_URL`, `SERVE_NEWS_URL`, `SERVE_GATEWAY_URL` | Your own stable public URLs (for example a named Cloudflare tunnel to ports 3338, 4000, 4001 and 4100); the quick tunnel for that service is skipped |
 
 Quick tunnel URLs change on every run, and a token file only pays the mint URL it was funded through. Use `--local` or `SERVE_MINT_URL` when token files need to outlive one run.
 
-**One settlement writer.** `pnpm serve` and a devnet `pnpm demo` both sign `settle_batch` with the same mint authority. Each takes a lock in `.keys/.settlement-writer.lock` and refuses to start while the other holds it; a lock left by a crashed process is taken over. Stop `pnpm serve` before running the demo.
+**One settlement writer.** `pnpm serve` and a devnet `pnpm demo` both sign `settle_batch` with the same mint authority. Both check for an existing local writer in `.keys/.settlement-writer.lock` (or under the shared `KEYS_DIR`). This file does not coordinate different machines or key directories. Coordinate devnet demo, serve and acceptance runs across the team.
 
-The [vault history page](../scripts/vault-history/index.html) shows the result over time: every deposit and settlement on the vault, read from devnet in the browser. Open it locally with any static server (`python3 -m http.server -d scripts/vault-history`) or at <https://brockbenton.github.io/blindfold/vault/>.
+The [public vault history](https://brockbenton.github.io/blindfold/vault/) reads deposits, settlements, provider changes and issuance totals from devnet RPC. To serve the page locally, run `python3 -m http.server -d scripts/vault-history` and open `http://localhost:8000`.

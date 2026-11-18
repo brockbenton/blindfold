@@ -14,12 +14,12 @@ The Anchor program that custodies deposited USDC and pays registered providers i
 | Emits `DepositMade`, `ProviderRegistered`, `ProviderDeactivated`, `BatchSettled`, `IssuanceLogged` | 00 §4.4 |
 | Returns the error enum | 00 §4.5 |
 | Constants `BASE_UNITS_PER_CENT`, `MAX_DEPOSIT_CENTS`, `MAX_PAYOUTS_PER_BATCH` | 00 §2 |
-| Calls | Token program only (`transfer_checked`, ATA creation) |
-| Used by | 02 mint (reads `Config`, `DepositRecord`, `ProviderRecord`; sends `settle_batch`), 04 wallet/owner CLI (`deposit`), `scripts/` (`initialize`, `register_provider`), `packages/protocol` `vault` module (IDL from `target/idl/vault.json`) |
+| Calls | SPL Token for transfers, Associated Token Account for vault account creation |
+| Used by | 02 mint (reads configuration, deposits, providers and the issuance log, and signs settlement and issuance transactions), 04 wallet/owner CLI (`deposit`), `scripts/` (`initialize`, `register_provider`), `packages/protocol` `vault` module (IDL from `target/idl/vault.json`) |
 
 ## 3. MVP scope
 
-- All seven instructions, five events, all 17 errors, exactly as in 00 §4. The issuance log (`init_issuance_log`, `log_issuance`, the `IssuanceLog` PDA and the optional trailing account on `settle_batch`) was added after the first devnet deployment, without changing any existing account layout or instruction (§10).
+- All seven instructions, five events, all 17 errors, exactly as in 00 §4. The issuance log (`init_issuance_log`, `log_issuance`, the `IssuanceLog` PDA and the optional trailing account on `settle_batch`) was added after the first devnet deployment, while preserving existing account layouts and support for settlement without the trailing account (§10).
 - Configured classic SPL mint (six-decimal USDC in the intended deployment), classic SPL Token program (`anchor_spl::token`, `transfer_checked`). `initialize` rejects a `usdc_mint` not owned by the SPL Token program, so Token-2022 mints are rejected.
 - Tests on a local validator or LiteSVM with a 6-decimal fake USDC mint, then a devnet deployment with Circle devnet USDC.
 - The Anchor IDL is the deliverable consumed by `packages/protocol`.
@@ -28,7 +28,7 @@ The Anchor program that custodies deposited USDC and pays registered providers i
 
 Later add-ons, not specified here:
 
-- Logging individual blinded values onchain (the implemented issuance log publishes cumulative totals only) and a public reconciliation view
+- Logging individual blinded values onchain (the implemented issuance log publishes cumulative totals only) and a public view of the mint's full reconciliation
 - Refunds of unmatched or unminted deposits
 - Hidden provider revenue and fresh payout addresses (this would remove the "only registered providers" guarantee in §5.5)
 - Provider reactivation (`deactivate_provider` is one way; register a new record instead)
@@ -47,8 +47,9 @@ Anchor discriminator is 8 bytes on every account. Field sizes: `Pubkey` 32, `u64
 | `Config` | 8 + 4x32 (`admin`, `mint_authority`, `usdc_mint`, `vault_token`) + 8 (`max_deposit`) + 8 (`deposit_count`) + 4 (`provider_count`) + 8 (`last_batch_id`) + 1 (`bump`) = 165 | **165** |
 | `DepositRecord` | 8 + 8 (`index`) + 32 (`depositor`) + 8 (`amount`) + 32 (`deposit_ref`) + 8 (`slot`) + 8 (`timestamp`) + 1 (`bump`) = 105 | **105** |
 | `ProviderRecord` | 8 + 4 (`provider_id`) + 33 (`cashu_pubkey`) + 32 (`payout_token`) + 1 (`active`) + 1 (`bump`) = 79 | **79** |
+| `IssuanceLog` | 8 + 5×8 (`issued`, `settled`, `seq`, `updated_slot`, `updated_at`) + 1 (`bump`) | **49** |
 
-Use `#[derive(InitSpace)]` and `space = 8 + Config::INIT_SPACE`, and assert the numbers above in a test. There is no reserved padding (00 §4.1): on devnet we redeploy instead of migrating.
+Use `#[derive(InitSpace)]` and `space = 8 + Config::INIT_SPACE`, and assert the numbers above in a test. Account layouts have no reserved padding.
 
 ### 5.2 PDA and signer seeds
 
@@ -57,6 +58,7 @@ Use `#[derive(InitSpace)]` and `space = 8 + Config::INIT_SPACE`, and assert the 
 | `Config` | `[b"config"]` | `Config.bump` |
 | `DepositRecord` | `[b"deposit", index.to_le_bytes()]` (u64, 8 bytes) | `bump` |
 | `ProviderRecord` | `[b"provider", id.to_le_bytes()]` (u32, 4 bytes) | `bump` |
+| `IssuanceLog` | `[b"issuance"]` | `bump` |
 
 The vault ATA is `get_associated_token_address_with_program_id(config, usdc_mint, token_program)`. Its authority is the `Config` PDA, so the only way USDC leaves is a CPI signed by `Config`:
 
@@ -101,7 +103,7 @@ Read the bump from the stored `Config.bump`, not by re-deriving it. In `settle_b
 1. `mint_authority.key() == config.mint_authority` else `Unauthorized`. `usdc_mint.key() == config.usdc_mint` else `WrongMint`; `vault_token.key() == config.vault_token` else `WrongVaultAccount`.
 2. `payouts.len() >= 1` else `EmptyBatch`; `<= 8` else `TooManyPayouts`.
 3. `batch_id == config.last_batch_id + 1` (checked add) else `BadBatchId`.
-4. `remaining_accounts.len() == 2 * payouts.len()` else `ProviderMismatch`.
+4. Require two accounts per payout and allow one trailing issuance log. Other account counts return `ProviderMismatch`.
 5. For each payout `i` with `provider_record = remaining[2i]`, `payout_token = remaining[2i+1]`:
    - `amount > 0` else `InvalidAmount`; `amount % 10_000 == 0` else `AmountNotWholeCents`
    - `provider_id` not seen earlier in this batch else `DuplicateProvider`
@@ -112,9 +114,12 @@ Read the bump from the stored `Config.bump`, not by re-deriving it. In `settle_b
    - `payout_token` is deserialized as `Account<TokenAccount>` with `mint == usdc_mint` else `WrongMint`, and is writable
    - `total = total.checked_add(amount).ok_or(MathOverflow)?`
    - `transfer_checked(vault_token -> payout_token, amount)` signed by `Config`
-6. Set `last_batch_id = batch_id`, emit `BatchSettled { batch_id, total, count: payouts.len() as u8 }`.
+6. Set `last_batch_id` and transfer after validating all payouts.
+7. If a trailing account is supplied, validate it as the writable `IssuanceLog` PDA and add the batch total to `settled`. An invalid log rolls back the transaction. Emit `BatchSettled`.
 
-Do all validation in a first loop and all transfers in a second, so that no CPI runs before every check passed (a failed tx reverts anyway, but this keeps the logic reviewable).
+**`init_issuance_log(issued, settled)` and `log_issuance(add)`**
+
+Only the mint authority can initialize the log or add to issuance. Inputs are in base units and must represent whole cents. Updates increment the sequence number and record the slot and time. Both instructions emit `IssuanceLogged`. See [instruction accounts](00-interfaces.md#43-instructions).
 
 ### 5.4 Errors
 
@@ -134,6 +139,8 @@ Do all validation in a first loop and all transfers in a second, so that no CPI 
 | `ProviderInactive` | `active == false` in `settle_batch` |
 | `PayoutAccountMismatch` | passed payout account differs from the registered one |
 | `MathOverflow` | any `checked_*` failure |
+| `IssuanceBelowSettled` | initialization or an issuance update would leave issued below settled |
+| `IssuanceLogMismatch` | invalid trailing issuance account on settlement |
 
 Not in the enum, left to the token program: insufficient vault balance in `settle_batch`, insufficient depositor balance, depositor token account not owned by the depositor.
 
@@ -149,13 +156,13 @@ Not in the enum, left to the token program: insufficient vault balance in `settl
 | Redirected payout | Payout token account must equal the address stored at registration by the admin |
 | Replay or double pay | See below |
 | Overflow | `checked_add` on counters, batch id and totals; no unchecked casts (`count` cast is safe as len <= 8) |
-| Reentrancy | Only CPI is to the token program; state (`last_batch_id`) is written before transfers or, equally safe, in the same tx |
+| Reentrancy | Settlement CPIs call the classic SPL Token program. The batch ID and transfers commit atomically |
 | Arbitrary signer | `mint_authority` and `admin` compared against `Config` fields, not just `Signer` |
 | Unauthorized `initialize` | Anyone can call it once (the PDA is a singleton, the first caller becomes admin). Initialize immediately after deployment. Deployment and initialization are separate; no script makes them atomic. Upgrade authority is not checked |
 
 Two deposits built against the same `deposit_count` collide on the `DepositRecord` seed; the second fails and the client rebuilds it with the new count and resends.
 
-**Why `batch_id` gives idempotency:** each batch must carry exactly `last_batch_id + 1`, and success increments it in the same transaction as the transfers. If the mint resends a batch after a timeout, either the first copy landed (retry fails with `BadBatchId`, nothing paid twice) or it did not (retry succeeds). The mint must persist its planned batch (id and payouts) before sending, and on `BadBatchId` read `Config.last_batch_id` to learn whether its batch landed.
+**Why `batch_id` gives idempotency:** each batch must carry exactly `last_batch_id + 1`, and success increments it in the same transaction as the transfers. If the mint resends a batch after a timeout, either the first copy landed (retry fails with `BadBatchId`, nothing paid twice) or it did not (retry succeeds). The mint must persist its planned batch (id and payouts) before sending, and check `Config.last_batch_id` on recovery. That check assumes a single settlement writer.
 
 **Why the mint authority can only pay registered providers:** a payout recipient is never chosen by the caller. The caller passes a `provider_id`; the program derives the `ProviderRecord` PDA, which only `register_provider` (admin-signed) can create, and pays only the `payout_token` stored in it. A compromised mint key can still drain the vault to registered providers' addresses (and to nobody else), and can inflate amounts: custodial trust in the mint remains, as in 00 / design.md.
 
@@ -165,11 +172,11 @@ Two deposits built against the same `deposit_count` collide on the `DepositRecor
 Anchor.toml                         (repo root; [programs.localnet|devnet] vault = <id>, [provider] cluster, wallet)
 Cargo.toml                          (workspace, members = ["programs/*"])
 programs/vault/Cargo.toml           (anchor-lang 1.2.2; anchor-spl 1.2.2 features token, associated_token; idl-build)
-programs/vault/src/lib.rs           declare_id!, #[program] with five thin handlers
-programs/vault/src/state.rs         Config, DepositRecord, ProviderRecord, Payout, constants
-programs/vault/src/errors.rs        VaultError (the 15 variants, in the 00 §4.5 order)
+programs/vault/src/lib.rs           declare_id!, #[program] with seven instruction handlers
+programs/vault/src/state.rs         Config, DepositRecord, ProviderRecord, IssuanceLog, Payout, constants
+programs/vault/src/errors.rs        VaultError (17 variants, in the 00 §4.5 order)
 programs/vault/src/events.rs        DepositMade, ProviderRegistered, ProviderDeactivated, BatchSettled, IssuanceLogged
-programs/vault/src/instructions/    mod.rs, initialize.rs, deposit.rs, register_provider.rs, deactivate_provider.rs, settle_batch.rs
+programs/vault/src/instructions/    mod.rs, initialize.rs, deposit.rs, register_provider.rs, deactivate_provider.rs, settle_batch.rs, issuance.rs
 programs/vault/tests/vault.rs       Rust LiteSVM tests (requires target/deploy/vault.so)
 scripts/devnet/initialize.ts        initialize vault
 scripts/devnet/register-provider.ts register provider
@@ -193,9 +200,9 @@ Nothing else needs to exist. The vault is testable alone.
 | Mint stub | The test's `mint_auth` keypair sends `settle_batch` directly |
 | IDL hand-off | After `anchor build`, compare `target/idl/vault.json` with `packages/protocol/src/idl.ts` and update the checked-in IDL when interfaces change (00 §8) |
 
-## 8. Done when
+## 8. Validation
 
-Local (all must pass, each failure asserts the exact error name from 00 §4.5):
+Local vault cases:
 
 | Test | Expect |
 |---|---|
@@ -225,7 +232,7 @@ Local (all must pass, each failure asserts the exact error name from 00 §4.5):
 | Payout token account not the registered one | `PayoutAccountMismatch` |
 | `provider_record` for a different id than the payout's | `ProviderMismatch` |
 | `provider_record` that is not a program account (for example a `DepositRecord` or system account) | `ProviderMismatch` |
-| Odd `remaining_accounts` count | `ProviderMismatch` |
+| Trailing accounts | One valid log succeeds. One invalid log returns `IssuanceLogMismatch`. Two extra accounts return `ProviderMismatch` |
 | Deactivate a provider, then settle a payout to it | `ProviderInactive`, balances unchanged |
 | Overflow: two payouts summing past `u64::MAX` | `MathOverflow` (runs before transfers; vault balance irrelevant) |
 | Vault short of funds | token program error, `last_batch_id` unchanged |
@@ -265,7 +272,7 @@ Devnet:
 - **Dependencies:** `anchor-spl 1.2.2` needs features `token`, `associated_token`, `token_2022`, `solana-v3`. `token_2022` is required only because anchor-spl's `idl-build` references `token_interface`; the program itself uses the classic token program only.
 - **`initialize` implementation:** `vault_token` is an `UncheckedAccount` (address constrained to the ATA of `config` and `usdc_mint`, else `WrongVaultAccount`) and the ATA is created by a CPI in the handler. With an ATA `init` constraint Anchor creates the ATA before field constraints run, so a Token-2022 mint failed inside the ATA program instead of returning `WrongMint`. The account list, order and flags are unchanged from 00 §4.3.
 - **Errors where 5.4 was silent:** `deposit` with a vault account that is not `config.vault_token` returns `WrongVaultAccount`; `register_provider` with `payout_token_account.key() != payout_token` returns `PayoutAccountMismatch`; a non-writable or undecodable payout account in `settle_batch` returns `PayoutAccountMismatch` / `WrongMint`. `deposit` with a foreign mint account returns `WrongMint` (the `usdc_mint` address constraint).
-- **Tests:** `programs/vault/tests/vault.rs`, 34 LiteSVM tests (`litesvm 0.15`, `litesvm-token =0.15.2`; 0.18.x needs a newer Rust than the pinned 1.89). `anchor build` first, then `cargo test --locked -p vault`. The Rust suite loads the SBF artifact; the default TypeScript suite does not run it.
+- **Tests:** `programs/vault/tests/vault.rs`, 40 LiteSVM tests (`litesvm 0.15`, `litesvm-token =0.15.2`; 0.18.x needs a newer Rust than the pinned 1.89). `anchor build` first, then `cargo test --locked -p vault`. The Rust suite loads the SBF artifact; the default TypeScript suite does not run it.
 - **IDL:** the generated IDL lists instructions alphabetically and adds `pda`, `relations` and `docs` metadata; keep names, arg types, account order and writable/signer flags aligned with the checked-in TypeScript IDL.
 
 ### Issuance log (added November 2026)
@@ -273,23 +280,23 @@ Devnet:
 The agent's reserve check used to trust the mint's HTTP report for liabilities. The vault now keeps an `IssuanceLog` PDA (`["issuance"]`):
 
 - `init_issuance_log(issued, settled)` and `log_issuance(add)`, both signed by `Config.mint_authority`. `log_issuance` adds to `issued` rather than setting it, so several mints sharing the vault (each devnet demo run starts one, and `pnpm serve` runs a long-lived one) cannot overwrite each other's claims, and `issued` can never go down. The total never drops below `settled` (`IssuanceBelowSettled`); amounts are whole cents.
-- `settle_batch` accepts the log as one extra trailing account (`2n + 1` remaining accounts) and adds the batch total to `settled` itself. `2n` still works, so old clients keep settling; leaving the log out only overstates liabilities, which makes agents refuse, so the mint has no reason to omit it. Any other trailing account is `IssuanceLogMismatch`.
+- `settle_batch` accepts the log as one extra trailing account (`2n + 1` remaining accounts) and adds the batch total to `settled` itself. `2n` still works, so old clients keep settling; leaving the log out only overstates liabilities, which makes agents refuse, so the mint has no reason to omit it. An invalid single trailing account is `IssuanceLogMismatch`. With more than one extra account, the program returns `ProviderMismatch`. Settlement advances `settled` even if issuance has yet to be logged. The reserve check refuses a snapshot with `settled > issued` until the log is consistent.
 - The `settled` baseline passed to `init_issuance_log` covers batches paid before the log existed. It is the one mint-supplied settled number; anyone can check it against past `BatchSettled` events.
-- No existing account or instruction changed, and errors were appended (codes 6015 and 6016), so upgrading the deployed program keeps `Config`, deposits and providers valid.
+- The upgrade preserved existing account layouts and settlement callers. It appended two errors (codes 6015 and 6016), so upgrading the deployed program keeps `Config`, deposits and providers valid.
 
-The mint (`services/mint/src/jobs/issuanceLog.ts`) creates the log when missing (waiting while a batch is in flight), then adds its new issuance within `ISSUANCE_LOG_MS` (default 5 s). A mint that finds a log another mint created joins it by adding only its net issuance (issued minus what it had settled before joining), since its earlier batches are not in the log's settled total. Each signed log transaction is recorded before it is sent and resolved from its signature status, so a crash or lost response cannot add the same cents twice. Against a program without the instructions it reports `unsupported` and agents fall back to the mint's report.
+The mint (`services/mint/src/jobs/issuanceLog.ts`) creates the log when missing (waiting while a batch is in flight), then attempts to add new issuance on its `ISSUANCE_LOG_MS` timer (default 5 s). A mint that finds a log another mint created joins it by adding only its net issuance (issued minus what it had settled before joining), since its earlier batches are not in the log's settled total. Each signed log transaction is recorded before it is sent and resolved from its signature status, so a crash or lost response cannot add the same cents twice. Against a program without the instructions it reports `unsupported` and agents fall back to the mint's report.
 
 LiteSVM tests: `issuance_log_init_and_raise`, `issuance_log_add_checks`, `issuance_log_init_checks`, `settle_with_issuance_log_advances_settled`, `settle_rejects_a_bad_issuance_log`, `issuance_log_space_matches_layout`, plus `settle_odd_remaining_count` for the `2n + 1` / `2n + 2` cases.
 
-Devnet: built and tested locally (LiteSVM and `e2e:localnet`), **not yet upgraded on devnet**. To upgrade at the same program id, with no demo running:
+To deploy a future upgrade at the same program ID, first stop settlement writers and rebuild:
 
 ```sh
-anchor build                                  # target/deploy/vault.so, 244,976 bytes (deployed: 218,656)
+anchor build
 solana program show EsB6NfKVPipU5kEVm2jq14cjopbE7w9hPEFZWVu8jtMo --url devnet --keypair .keys/deployer.json   # Authority must be the deployer
 solana program deploy target/deploy/vault.so --program-id EsB6NfKVPipU5kEVm2jq14cjopbE7w9hPEFZWVu8jtMo \
   --upgrade-authority .keys/deployer.json --keypair .keys/deployer.json --url devnet
 ```
 
-The CLI extends the program data account automatically (26,320 bytes more, roughly 0.19 SOL of rent) and needs about 1.7 SOL more while the buffer exists, refunded afterwards. The next mint run creates the log, paid by the mint authority. Any mint still on older code settles without the log, which overstates liabilities and makes agents refuse, so update all checkouts first.
+Use an issuance-aware mint with the upgraded program. Older clients can settle without passing the log, leaving its settled total stale.
 
 **Upgrade done, November 17, 2026.** The issuance-log build (`vault.so`, 244,976 bytes, sha256 `9b76eae6…7c0b`) was deployed in place in slot 523439535 ([tx](https://explorer.solana.com/tx/5b1Bk2sc6wFQHL5Et9jFyhC9Ti5AXggYxGDUi6vMd3PpBRVTtKiSzCPwR4WR6kBwQjt2SfkDe34sNtPrF14JyBDq?cluster=devnet)). The dumped program matches the build byte for byte, and the deployer spent 0.135 SOL. The first `pnpm serve` mint created the log at `AFxpScKmUwEnS58SSVnZ6KFwq6A7LPgbX3eRwy4HhwfZ`. A 10-cent funding then logged `issued = 100000` base units, and the agent's paid call reported `verified: true` (onchain and mint outstanding both 10 cents, vault $14.30).

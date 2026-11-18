@@ -104,7 +104,7 @@ Run built commands from the repository root, for example `node packages/wallet/d
 | `balance [--token-file F]` | Spendable/pending cents and count per denomination |
 | `providers` | List active and inactive providers known to the mint |
 
-For fake-chain resume, `MINT_URL` must still point to that session's mint so the development depositor reaches it. Real funding requires `OWNER_KEYPAIR`, RPC, program ID and USDC mint settings. Node processes do not load `.env` automatically. CLI errors exit nonzero with a one-line message.
+For fake-chain resume, `MINT_URL` must still point to that session's mint so the development depositor reaches it. Real funding requires `OWNER_KEYPAIR`. RPC, program ID and USDC mint default to the devnet deployment. Override them together for another vault. Node processes do not load `.env` automatically. CLI errors exit nonzero with a one-line message.
 
 ## Source and tests
 
