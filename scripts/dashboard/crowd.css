@@ -1,0 +1,39 @@
+/* Crowd dashboard styles, on top of dashboard.css. Shared by the live page (crowd.html) and the replay. */
+.crowd h1 .q { color: var(--text-2); font-weight: 400; margin-left: 16px; }
+
+.crowd .verdict .detail { min-height: 40px; }
+.crowd .verdict.alarm .action { color: var(--red); }
+.crowd .verdict.calm .action { color: var(--green); }
+.crowd .verdict.warn .action { color: var(--amber); }
+
+.crowd .rows { overflow-y: auto; scrollbar-width: none; }
+.crowd .rows::-webkit-scrollbar { display: none; }
+.crowd .row { height: 34px; }
+.crowd .exact .row { grid-template-columns: 64px 96px minmax(0, 1fr) 64px 72px; }
+.crowd .blind .row { grid-template-columns: 72px minmax(0, 1fr) minmax(0, 1fr) 64px; }
+.crowd .row > * { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crowd .row .agent, .crowd .row .token { color: var(--text); }
+.crowd .row .addr, .crowd .row .sig { color: var(--red); }
+.crowd .row .sig { text-align: right; }
+.crowd .row.payout .what { color: var(--text-2); }
+.crowd .row.forced { background: rgba(217, 162, 63, 0.08); }
+.crowd .row.forced .unknown { color: var(--amber); }
+.crowd .divider { color: var(--muted); border-top: 1px solid var(--line); padding: 12px 0 8px; animation: enter 400ms var(--ease) both; }
+
+.crowd .buys { display: grid; gap: 8px; }
+.crowd .lanes { display: grid; gap: 8px; }
+.crowd .lane { display: grid; grid-template-columns: 72px 1fr auto; gap: 16px; align-items: center; }
+.crowd .lane .who { color: var(--text-2); }
+.crowd .lane .where { color: var(--muted); }
+
+.crowd .app footer { flex-wrap: wrap; }
+
+@media (max-width: 960px) {
+  .crowd h1 .q { display: block; margin-left: 0; }
+  .crowd .row { height: auto; min-height: 34px; padding: 6px 0; }
+  .crowd .exact .row { grid-template-columns: 64px 1fr 72px; gap: 12px; }
+  .crowd .exact .row .calls, .crowd .exact .row .token { display: none; }
+  .crowd .blind .row { grid-template-columns: 72px 1fr 56px; gap: 12px; }
+  .crowd .blind .row .unknown { display: none; }
+  .crowd .rows { max-height: 320px; }
+}

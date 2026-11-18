@@ -7,7 +7,7 @@ import { startDashboard, type Dashboard } from "../lib/dashboard.js";
 import { recordingProblems, startRecorder, type Recording } from "../lib/recorder.js";
 import { buildSite } from "../lib/replaySite.js";
 // @ts-expect-error plain browser module, no types
-import { Player, actAt, buildTimeline, clock, formatLines, indexAt, parseRecording, shortUrl } from "../dashboard/replay-core.js";
+import { Player, actAt, buildTimeline, clock, formatLines, indexAt, isPublicUrl, parseRecording, shortUrl, stripLocalLinks } from "../dashboard/replay-core.js";
 
 const BAR = "=".repeat(80);
 const clockAt = (start = 0) => {
@@ -48,7 +48,7 @@ describe("recorder", () => {
   it("timestamps events and lines, strips colors, and gives each act its banner", () => {
     const { r } = fakeRun();
     const rec = r.snapshot();
-    expect(rec).toMatchObject({ format: "blindfold-recording", version: 1, mode: "localnet", columns: 40, durationMs: 65_100 });
+    expect(rec).toMatchObject({ format: "blindfold-recording", version: 1, demo: "single", mode: "localnet", columns: 40, durationMs: 65_100 });
     expect(rec.events.map((e) => [e.t, e.event.type])).toEqual([
       [4000, "setup"], [4000, "act"], [4500, "act"], [64_600, "chain"], [64_800, "act"], [65_100, "brand_new_event"], [65_100, "done"],
     ]);
@@ -78,6 +78,9 @@ describe("recorder", () => {
     const failed = { ...rec, events: rec.events.map((e) => (e.event.type === "done" ? { ...e, event: { ...e.event, ok: false } } : e)) } as Recording;
     expect(recordingProblems(failed)).toEqual(["the run stopped with an error"]);
     expect(recordingProblems({ ...rec, events: [] })).toEqual(["the run did not finish", "no acts recorded"]);
+    expect(recordingProblems(rec, { demo: "crowd" })).toEqual(["a single recording, expected crowd"]);
+    const { demo: _, ...old } = rec; // recordings from before the crowd replay have no demo field
+    expect(recordingProblems(old as Recording, { demo: "single" })).toEqual([]);
   });
 
   it("feeds the recorder from the live dashboard", async () => {
@@ -206,6 +209,20 @@ describe("narration formatting", () => {
       .toEqual(["Owner deposit into the vault", url, "Vault settlement batch", url]);
   });
 
+  it("tells links others can open from links into a local validator", () => {
+    const local = "https://explorer.solana.com/tx/abc?cluster=custom&customUrl=http%3A%2F%2F127.0.0.1%3A8899";
+    expect(isPublicUrl("https://explorer.solana.com/tx/abc?cluster=devnet")).toBe(true);
+    expect(isPublicUrl("https://explorer.solana.com/tx/abc?cluster=custom&customUrl=https%3A%2F%2Fexample.com")).toBe(true);
+    expect(isPublicUrl(local)).toBe(false);
+    expect(isPublicUrl("https://explorer.solana.com/tx/abc?cluster=custom&customUrl=http%3A%2F%2Flocalhost%3A8899")).toBe(false);
+    expect(isPublicUrl("http://localhost:5173")).toBe(false);
+    expect(isPublicUrl("not a url")).toBe(false);
+    const e = { type: "chain", url: local, amountBase: "1", links: { vault: local, ok: "https://explorer.solana.com/address/x?cluster=devnet" } };
+    expect(stripLocalLinks(e)).toEqual({ type: "chain", amountBase: "1", links: { ok: "https://explorer.solana.com/address/x?cluster=devnet" } });
+    expect(e.url).toBe(local); // the original is untouched
+    expect(stripLocalLinks({ type: "call", url: "https://explorer.solana.com/tx/a?cluster=devnet" }).url).toContain("cluster=devnet");
+  });
+
   it("labels Explorer links and formats the clock", () => {
     expect(shortUrl("https://explorer.solana.com/tx/5Kq3abcdefZt9f?cluster=devnet")).toBe("explorer tx 5Kq3…Zt9f");
     expect(shortUrl("https://example.com/a/b")).toBe("example.com/a/b");
@@ -215,17 +232,21 @@ describe("narration formatting", () => {
 });
 
 describe("replay site", () => {
-  it("contains the page, every file it loads and the recording", () => {
+  it("contains the landing page, both replays, every file they load and one recording per demo", () => {
     const { r, file } = fakeRun();
     r.save();
     const out = tmp();
-    const files = buildSite(out, file);
+    const files = buildSite(out, { single: file });
     for (const f of files) expect(existsSync(join(out, f))).toBe(true);
-    const html = readFileSync(join(out, "index.html"), "utf8");
-    const js = readFileSync(join(out, "replay.js"), "utf8");
-    const refs = [...html.matchAll(/(?:href|src)="([^":]+)"/g), ...js.matchAll(/from "\.\/([^"]+)"/g)].map((m) => m[1].replace(/^\.\//, ""));
-    expect(refs.length).toBeGreaterThan(2);
+    const read = (f: string) => readFileSync(join(out, f), "utf8");
+    const refs = ["index.html", "replay.html", "replay.js", "crowd.html"].filter((f) => files.includes(f)).flatMap((f) =>
+      [...(f.endsWith(".html") ? read(f).matchAll(/(?:href|src)="([^"]*)"/g) : []), ...read(f).matchAll(/from "\.\/([^"]+)"/g)].map((m) => m[1]))
+      .filter((u) => !/^[a-z]+:/.test(u) && u !== "./").map((u) => u.replace(/^\.\//, "").replace(/[?#].*$/, ""));
+    expect(refs).toEqual(expect.arrayContaining(["replay.html", "dashboard.css", "crowd.css", "replay.js", "dashboard.js", "crowd-dashboard.js", "replay-core.js"]));
     for (const ref of refs) expect(files).toContain(ref);
-    expect(JSON.parse(readFileSync(join(out, "recording.json"), "utf8")).format).toBe("blindfold-recording");
+    // The landing page links each card to its recording.
+    for (const m of read("index.html").matchAll(/data-src="([^"]+)"/g)) expect(files).toContain(m[1]);
+    expect(JSON.parse(read("recording.json")).recordedAt).toBe(r.snapshot().recordedAt);
+    expect(JSON.parse(read("crowd-recording.json"))).toMatchObject({ format: "blindfold-recording", demo: "crowd" });
   });
 });

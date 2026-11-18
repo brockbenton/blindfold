@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blindfold replays</title>
+<meta name="description" content="Recorded runs of Blindfold: private x402 payments for AI agents on Solana. Copycat, a bot reading public Solana data, front-runs standard x402 and sees nothing with Blindfold.">
+<meta property="og:title" content="Blindfold replays">
+<meta property="og:description" content="Watch recorded Solana runs: standard x402 leaks what your agent researches; Blindfold does not.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="dashboard.css">
+<style>
+  .home { display: flex; flex-direction: column; justify-content: center; min-height: 100vh; min-height: 100dvh; max-width: 960px; margin: 0 auto; padding: 48px 32px; }
+  .home h1 { margin: 0; font: 500 32px/40px var(--sans); letter-spacing: -0.01em; }
+  .home .lede { margin: 8px 0 40px; max-width: 640px; color: var(--text-2); font: 400 16px/24px var(--sans); }
+  .picks { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .pick {
+    display: flex; flex-direction: column; gap: 12px; padding: 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+    transition: background-color 150ms var(--ease), border-color 150ms var(--ease);
+  }
+  .pick:hover { background: var(--raised); border-color: rgba(237, 237, 237, 0.16); }
+  .pick:focus-visible { outline: 2px solid var(--text-2); outline-offset: 2px; }
+  .pick .kicker { color: var(--muted); }
+  .pick h2 { margin: 0; font: 500 24px/32px var(--sans); }
+  .pick p { margin: 0; color: var(--text-2); font: 400 15px/22px var(--sans); flex: 1; }
+  .pick .meta { display: flex; justify-content: space-between; gap: 16px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); }
+  .pick .go { color: var(--text); }
+  .home footer { margin-top: 32px; color: var(--muted); }
+  .home footer a { color: var(--text-2); border-bottom: 1px solid var(--line); }
+  .home footer a:hover { color: var(--text); }
+  @media (max-width: 720px) {
+    .home { justify-content: flex-start; padding: 32px 16px; }
+    .home h1 { font-size: 28px; line-height: 36px; }
+    .home .lede { margin-bottom: 24px; }
+    .picks { grid-template-columns: 1fr; gap: 16px; }
+    .pick { padding: 20px; }
+  }
+</style>
+<script>
+  // Links from before there were two replays (?act=3, ?speed=2, ...) went to the single-agent replay.
+  if (location.search) location.replace("replay.html" + location.search);
+</script>
+</head>
+<body>
+<div class="home">
+  <h1>Blindfold</h1>
+  <p class="lede">Private, pay-per-call data for AI agents on Solana. Watch a recorded run: Copycat, a bot that reads only public Solana data, against agents paying with standard x402 and with Blindfold.</p>
+  <div class="picks">
+    <a class="pick" href="replay.html" data-src="recording.json">
+      <span class="kicker">one agent, one owner</span>
+      <h2>Single agent</h2>
+      <p>A trading agent researches SOL. Standard x402 payments tell Copycat what it is about to buy; with Blindfold, Copycat sees one deposit and a batched payout. Then the safety acts: prompt injection, replay, a lying mint.</p>
+      <span class="meta"><span data-meta>recorded run</span><span class="go">Watch →</span></span>
+    </a>
+    <a class="pick" href="replay.html?demo=crowd" data-src="crowd-recording.json">
+      <span class="kicker">several agents, several owners</span>
+      <h2>Crowd</h2>
+      <p>Privacy needs other people. Several agents research different tokens through one vault. Copycat names every wallet under x402, cannot attribute anything with equal Blindfold deposits, and shows how odd amounts give a depositor away.</p>
+      <span class="meta"><span data-meta>recorded run</span><span class="go">Watch →</span></span>
+    </a>
+  </div>
+  <footer>Space plays and pauses, the arrow keys jump between acts. · <a href="https://github.com/brockbenton/blindfold" target="_blank" rel="noopener">source</a></footer>
+</div>
+<script type="module">
+import { buildTimeline, clock, parseRecording } from "./replay-core.js";
+
+// Each card shows where and when its run was recorded, and how long the replay plays.
+for (const card of document.querySelectorAll("[data-src]")) {
+  fetch(card.dataset.src, { cache: "no-cache" })
+    .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+    .then((json) => {
+      const rec = parseRecording(json);
+      const where = rec.mode === "devnet" ? "devnet" : rec.mode === "localnet" ? "local validator" : "recorded";
+      const date = rec.recordedAt ? new Date(rec.recordedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
+      card.querySelector("[data-meta]").textContent = [where, date, clock(buildTimeline(rec).duration)].filter(Boolean).join(" · ");
+    })
+    .catch(() => undefined);
+}
+</script>
+</body>
+</html>

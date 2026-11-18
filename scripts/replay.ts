@@ -1,10 +1,14 @@
-// The replay page: plays a recorded demo run through the dashboard (see docs/DEMO.md, "Recorded replay").
+// The replay site: plays recorded runs of pnpm demo and pnpm crowd through their dashboards (see docs/DEMO.md,
+// "Recorded replay"). A landing page picks one.
 //
-//   pnpm replay [file]             preview a recording (default: the published one) at http://localhost:5174
+//   pnpm replay [file]             preview the site at http://localhost:5174, with `file` in place of the published
+//                                  recording of its demo
 //   pnpm replay --site DIR [file]  write the static site that GitHub Pages serves
 //   pnpm replay:publish [--calls N]
-//                                  record a devnet run, check it, commit it as the published recording and push;
-//                                  the Pages workflow redeploys when it reaches main
+//                                  record a devnet run of pnpm demo, check it, commit it as the published recording
+//                                  and push; the Pages workflow redeploys when it reaches main
+//   pnpm replay:publish --crowd [--agents N]
+//                                  the same for pnpm crowd, which runs on a local validator
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,7 +18,7 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { serveAsset } from "./lib/dashboard.js";
 import { recordingProblems, type Recording } from "./lib/recorder.js";
-import { PUBLISHED_RECORDING, REPLAY_ASSETS, buildSite } from "./lib/replaySite.js";
+import { PUBLISHED_RECORDINGS, REPLAY_ASSETS, SITE_PATHS, buildSite, demoOf, type Demo } from "./lib/replaySite.js";
 
 const argv = process.argv.slice(2);
 const cwd = process.env.INIT_CWD ?? process.cwd(); // where the user ran pnpm
@@ -30,23 +34,28 @@ const git = (...args: string[]) => {
 };
 
 if (argv[0] === "publish") {
+  const args = argv.slice(1);
+  const crowd = args.includes("--crowd");
+  const demo: Demo = crowd ? "crowd" : "single";
+  // The crowd demo runs on a local validator only; the single-agent demo is published from devnet.
+  const mode = crowd ? "localnet" : "devnet";
   const dir = mkdtempSync(join(tmpdir(), "bf-recording-"));
   const file = join(dir, "recording.json");
-  const demo = fileURLToPath(new URL("demo.ts", import.meta.url));
-  const run = spawnSync(process.execPath, [...process.execArgv, demo, "--no-pause", "--record", file, ...argv.slice(1)], { stdio: "inherit" });
+  const script = fileURLToPath(new URL(crowd ? "crowd.ts" : "demo.ts", import.meta.url));
+  const run = spawnSync(process.execPath, [...process.execArgv, script, "--no-pause", "--record", file, ...args.filter((a) => a !== "--crowd")], { stdio: "inherit" });
   if (run.status !== 0 || !existsSync(file)) {
     console.error(`\nThe demo did not finish, so nothing was published.${existsSync(file) ? ` Its recording: ${file}` : ""}`);
     process.exit(1);
   }
-  const problems = recordingProblems(JSON.parse(readFileSync(file, "utf8")) as Recording, { mode: "devnet" });
+  const problems = recordingProblems(JSON.parse(readFileSync(file, "utf8")) as Recording, { mode, demo });
   if (problems.length) {
     console.error(`\nNot publishing ${file}: ${problems.join("; ")}`);
     process.exit(1);
   }
-  copyFileSync(file, PUBLISHED_RECORDING);
-  const rel = relative(ROOT, PUBLISHED_RECORDING);
+  copyFileSync(file, PUBLISHED_RECORDINGS[demo]);
+  const rel = relative(ROOT, PUBLISHED_RECORDINGS[demo]);
   git("add", rel);
-  git("commit", "-m", "replay: new devnet recording", "--", rel);
+  git("commit", "-m", `replay: new ${crowd ? "crowd" : "devnet"} recording`, "--", rel);
   const branch = git("rev-parse", "--abbrev-ref", "HEAD");
   git("push", "-u", "origin", branch);
   console.log(`\nCommitted ${rel} and pushed ${branch}.`);
@@ -55,19 +64,28 @@ if (argv[0] === "publish") {
     : "The pages workflow redeploys the replay once this reaches main.");
 } else {
   const site = flag("--site");
-  const recording = argv[0] ? resolve(cwd, argv[0]) : PUBLISHED_RECORDING;
-  if (!existsSync(recording)) throw new Error(`${recording} not found`);
+  const recordings = { ...PUBLISHED_RECORDINGS };
+  let shown: Demo | null = null;
+  if (argv[0]) {
+    const file = resolve(cwd, argv[0]);
+    if (!existsSync(file)) throw new Error(`${file} not found`);
+    shown = demoOf(file);
+    recordings[shown] = file;
+  }
+  for (const f of Object.values(recordings)) if (!existsSync(f)) throw new Error(`${f} not found`);
   if (site !== null) {
     if (!site) throw new Error("--site needs a directory");
     const out = resolve(cwd, site);
-    const files = buildSite(out, recording);
+    const files = buildSite(out, recordings);
     console.log(`Wrote ${files.length} files to ${out}`);
   } else {
     const app = new Hono();
-    serveAsset(app, "/", "replay.html");
+    serveAsset(app, "/", "home.html");
     for (const f of REPLAY_ASSETS) serveAsset(app, `/${f}`, f);
-    serveAsset(app, "/recording.json", pathToFileURL(recording));
+    for (const d of Object.keys(SITE_PATHS) as Demo[]) serveAsset(app, `/${SITE_PATHS[d].recording}`, pathToFileURL(recordings[d]));
     const port = Number(process.env.PORT ?? 5174);
-    serve({ fetch: app.fetch, port, hostname: "127.0.0.1" }, () => console.log(`Replaying ${relative(cwd, recording) || recording} at http://localhost:${port}  (Ctrl+C to stop)`));
+    const url = `http://localhost:${port}/${shown ? SITE_PATHS[shown].page : ""}`;
+    serve({ fetch: app.fetch, port, hostname: "127.0.0.1" }, () =>
+      console.log(`${shown ? `Replaying ${relative(cwd, recordings[shown]) || recordings[shown]}` : "Replays"} at ${url}  (Ctrl+C to stop)`));
   }
 }

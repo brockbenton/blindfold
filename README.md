@@ -12,7 +12,7 @@ Blindfold is an x402 payment scheme that lets agents buy data per request withou
 ![Anchor 1.2.2](https://img.shields.io/badge/Anchor-1.2.2-1E1E1E)
 ![Node 22+](https://img.shields.io/badge/Node-22%2B-339933?logo=nodedotjs&logoColor=white)
 
-**[▶ Watch a recorded devnet run](https://brockbenton.github.io/blindfold/)**: the demo's dashboard and narration in your browser, nothing to install.
+**[▶ Watch the recorded runs](https://brockbenton.github.io/blindfold/)** (single agent and crowd): the demos' dashboards and narration in your browser, nothing to install.
 
 [Quick start](#quick-start) · [Architecture](#architecture) · [Solana integration](#how-blindfold-uses-solana) · [Agent](#agent-decision-loop-and-safety-limits) · [Demo](docs/DEMO.md) · [Docs](#documentation)
 
@@ -316,7 +316,7 @@ Integration tests skip when `DATABASE_URL` is unset. Program tests: `anchor buil
 pnpm demo
 ```
 
-The demo uses the deployed vault, so it needs no Rust or Solana tools. It needs funded devnet keys in `.keys/`. Optional extras: an LLM key in `.keys/llm.key` for the AI-agent act, a private devnet RPC through `SOLANA_RPC_URL`, and a QuickNode API key in `.keys/quicknode.json` for Streams. See [Run the demo](docs/DEMO.md) for the full checklist and what each act shows. To watch without running anything, open the [recorded run](https://brockbenton.github.io/blindfold/).
+The demo uses the deployed vault, so it needs no Rust or Solana tools. It needs funded devnet keys in `.keys/`. Optional extras: an LLM key in `.keys/llm.key` for the AI-agent act, a private devnet RPC through `SOLANA_RPC_URL`, and a QuickNode API key in `.keys/quicknode.json` for Streams. See [Run the demo](docs/DEMO.md) for the full checklist and what each act shows. To watch without running anything, open the [recorded runs](https://brockbenton.github.io/blindfold/).
 
 To keep the mint and feeds running between demos, `pnpm serve` starts them on this machine with public tunnel URLs, and the [vault history](https://brockbenton.github.io/blindfold/vault/) page shows every deposit and settlement as it lands ([Run it locally › Live stack](docs/RUNNING.md#9-live-stack-pnpm-serve)).
 
