@@ -144,11 +144,49 @@ The MCP server exposes `list_providers`, `get_balance`, `quote`, `buy_data` and 
 | Provider lock and allowlist | Providers active at funding | Same | The mint requires a registered signer in the token's P2PK lock. `WALLET_ALLOWLIST` can narrow wallet spending. |
 | Per-call cap | 10¢ | 30¢ | The wallet refuses offers over `MAX_PER_CALL_CENTS`. The CLI also accepts `--max-per-call`. |
 | Owner approval | Above 20¢, 60 s timeout | Above 20¢, 120 s timeout | The wallet checks the cap first. The CLI prompts in the terminal, the demo also offers dashboard approval, and MCP uses elicitation. Denial, timeout or an MCP client without elicitation blocks the purchase. |
-| Session spend threshold | 30¢ with `--llm` | 50¢ per server process | `--budget` or `BUDGET_CENTS` blocks further purchases once the threshold is reached. One purchase can cross it by up to the per-call cap. |
+| Session budget | 30¢ with `--llm` | 50¢ per server process | `--budget` or `BUDGET_CENTS`. The wallet checks each validated price against the budget left, inside its payment lock, and refuses with `budget_exhausted` before any proof leaves, so no purchase crosses it. |
 | Reserve gate | Before call 1 and every 10 calls thereafter | Before the first and every 10 paid calls thereafter | `RESERVE_CHECK_EVERY` sets the interval. A failure stops the CLI with exit code 7. MCP refuses and checks again on the next attempt. |
 | Total funded value | Token file balance | Same | The wallet selects proofs for the exact price. The mint rejects spent proofs. |
 
 The CLI's default cap is below the approval threshold. The demo raises the cap so a 25¢ request reaches the approval hook. See [agent design](docs/design/05-agent.md#owner-approval) and [MCP limits](agents/mcp/README.md#limits).
+
+## Accepting Blindfold as an x402 provider
+
+A provider that already serves x402 adds Blindfold as one more entry in a route's `accepts` list. Clients pick the scheme they have registered: the Blindfold wallet pays `blindfold`, and a standard x402 client keeps paying `exact` on the same route. This is the wiring TokenFeed uses ([`apps/mock-api/src/app.ts`](apps/mock-api/src/app.ts)). The gateway uses the same wiring.
+
+```ts
+import { Hono } from "hono";
+import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
+import { SOLANA_DEVNET_CAIP2, USDC_DEVNET_MINT, centsToBaseUnits } from "@blindfold/protocol";
+import { BlindfoldFacilitator } from "mock-api/x402/blindfoldFacilitator";
+import { CashuServerScheme } from "mock-api/x402/cashuServerScheme";
+
+const facilitator = new BlindfoldFacilitator({ mintUrl: MINT_URL, providerSecretKey: PROVIDER_SECRET_HEX });
+const server = new x402ResourceServer([facilitator /*, your exact facilitator */])
+  .register(SOLANA_DEVNET_CAIP2, new CashuServerScheme({ mintUrl: MINT_URL, providerPubkey: facilitator.providerPubkey }));
+
+const app = new Hono();
+app.use(paymentMiddleware({
+  "GET /v1/data/:topic": {
+    accepts: [
+      { scheme: "blindfold", network: SOLANA_DEVNET_CAIP2, payTo: facilitator.providerPubkey,
+        price: { amount: String(centsToBaseUnits(5)), asset: USDC_DEVNET_MINT } },
+      // { scheme: "exact", ... } stays as it was
+    ],
+    description: "whale flow", mimeType: "application/json",
+  },
+} as never, server));
+app.get("/v1/data/:topic", (c) => c.json({ topic: c.req.param("topic") /* ... */ }));
+```
+
+What the provider does and doesn't do:
+
+- **Keys and registration.** It generates a secp256k1 provider key and keeps it. The vault admin registers the public key with a USDC payout account ([runbook](docs/RUNNING.md#4-mock-api-and-owner-cli)). Tokens are locked to registered keys, so an unregistered server cannot redeem them.
+- **Redemption before serving.** The facilitator signs the token's P2PK lock and redeems it at the mint before the handler runs. The mint rejects spent proofs, so a replayed payment gets a 402.
+- **Payout.** The mint credits redemptions and pays registered providers from the vault in batched settlements on fixed windows. Nothing goes onchain per call.
+- **No onchain work.** The provider doesn't need Solana RPC, a wallet or a facilitator service for Blindfold.
+
+The facilitator and scheme are workspace exports of `apps/mock-api`, not a published package yet. A standalone adapter is on the [roadmap](docs/roadmap.md#phase-4-recoverable-delivery-and-a-provider-adapter).
 
 ## QuickNode Streams configuration
 

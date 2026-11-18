@@ -16,10 +16,19 @@ export type DashboardEvent =
   | { type: "reserve"; ok: boolean; verified: boolean; text: string; detail: string; url?: string }
   | { type: "source"; text: string }
   | { type: "note"; side: "exact" | "blindfold"; tone: "ok" | "warn"; text: string }
+  // Act 5's attribution scoreboard (scripts/lib/attribution.ts). `text` is the whole board in one line, which a page
+  // without a `score` handler shows as a plain note.
+  | { type: "score"; text: string; visible: string; sides: Record<"exact" | "blindfold", ScoreView> }
   | { type: "approval"; id: string; cents: number; thresholdCents: number; label: string; timeoutS: number }
   | { type: "approval_done"; id: string; outcome: "approved" | "denied" | "timeout" }
   | { type: "done"; ok: boolean };
 // New event types are fine: the page ignores types it has no handler for (see scripts/dashboard/dashboard.js).
+
+/** One side of the scoreboard, as the page shows it. */
+export interface ScoreView {
+  purchases: number; transfers: number; correct: number; partial: number; incorrect: number; abstained: number;
+  complete: boolean; verdict: string; summary: string;
+}
 
 export interface Dashboard<E extends { type: string } = DashboardEvent> {
   url: string;

@@ -29,7 +29,7 @@ Each turn:
 
 1. Send the conversation and tools to the model. A reply without tool calls ends the run; BUY, SELL or HOLD is read from the text, defaulting to HOLD.
 2. For `buy_data`, code runs these checks in order before any payment:
-   - **Budget:** refuse with `budget_exhausted` once the session has spent `--budget` cents (default 30). One purchase can cross the line by at most the per-call cap.
+   - **Budget:** refuse with `budget_exhausted` once the session has spent `--budget` cents (default 30). The loop also passes the budget left and the URL's registered provider keys to the wallet, which refuses an offer priced above what is left before any proof leaves, so one purchase cannot cross the line.
    - **Reserve gate:** before the first paid call and every `RESERVE_CHECK_EVERY` paid calls, check reserves. A failure ends the run with exit 7 before paying. The model cannot skip this; it is not a tool.
    - **Wallet policy:** the wallet pays only providers in the token lock's signer set, subject to `WALLET_ALLOWLIST`, only the configured asset and mint, only exact amounts up to `--max-per-call`.
    - **Owner approval:** a price above `--approve-over` (default 20 cents) waits for the owner ([below](#owner-approval)). A denial or no answer refuses with `approval_denied` or `approval_timeout`, and the model is told not to retry.

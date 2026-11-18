@@ -173,6 +173,25 @@ export function mountDashboard(root, { interactive = true } = {}) {
     },
     source(e) { ref("b-source").textContent = e.text; },
     note(e) { note(e.side, e.text); },
+    /* Act 5: the attribution scoreboard, one block per side (recordings from before it simply have no score). */
+    score(e) {
+      for (const s of ["exact", "blindfold"]) {
+        const v = e.sides && e.sides[s];
+        if (!v) continue;
+        const stats = [
+          v.partial ? v.partial + "/" + v.purchases + " linked to wallet + feed only (topic unknown)" : "",
+          v.incorrect ? v.incorrect + " misattributed" : "",
+          v.transfers + " per-call transfer" + (v.transfers === 1 ? "" : "s"),
+          v.complete ? "coverage complete" : "coverage incomplete: inconclusive",
+        ].filter(Boolean).join(" · ");
+        // Amber when the side is not a clean result: an inconclusive scan, or a wallet still linked or misattributed.
+        const tone = !v.complete || v.partial || v.incorrect ? " warn" : "";
+        sideEl(s).querySelector(".notes").insertAdjacentHTML("beforeend",
+          '<div class="note score ' + esc(s) + tone + '"><span class="score-head"><b>' + esc(v.correct + "/" + v.purchases) + "</b> purchases attributed" +
+          ' <span class="score-def">wallet + feed + topic</span></span><div class="score-detail">' + esc(stats) + "</div></div>");
+      }
+      if (e.visible) note("blindfold", "Still visible onchain: " + e.visible, "other");
+    },
     approval(e) {
       approvals[e.id] = e;
       approvalId = e.id;

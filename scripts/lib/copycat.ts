@@ -2,6 +2,7 @@
 // the Blindfold vault, profiles every wallet that pays the provider directly, and turns purchase patterns into
 // trading signals. It has no access to the mint, the provider's logs or any wallet.
 import { Connection, PublicKey } from "@solana/web3.js";
+import { SOLANA_COMMITMENT } from "@blindfold/protocol";
 import { getParsed, getSignatures, toObservation, type Observation } from "./bot.js";
 
 /** Feed and token from a seller's x402 memo such as `whale-flow/SOL`; random nonce memos parse to null. */
@@ -144,6 +145,17 @@ export function describe(o: Observation, names: Record<string, string> = {}): st
   return `${short(o.from)} deposited ${usd} into the Blindfold vault. What it buys: unknown`;
 }
 
+/** An inclusive slot range. */
+export interface SlotRange { from: number; to: number }
+
+/** Signatures fetched per account per pass. */
+const SIG_LIMIT = 20;
+/**
+ * Slots below the head a pass vouches for. RPC signature history can trail the confirmed slot by a few seconds,
+ * so a pass only claims the slots it is sure the history already lists.
+ */
+export const COVERAGE_LAG_SLOTS = 16;
+
 /**
  * Polls token accounts for new transactions and reports each observation once. Only new signatures are fetched,
  * which keeps a rate-limited public RPC usable for the rest of the demo.
@@ -155,6 +167,8 @@ export class ChainWatcher {
   private readonly reported = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
   private scanning: Promise<void> | null = null;
+  /** Per account, the slot ranges whose transactions RPC passes have fully read (see `coverage`). */
+  private readonly covered = new Map<string, SlotRange[]>();
 
   constructor(private readonly o: {
     connection: Connection; accounts: PublicKey[]; usdcMint: PublicKey; vaultToken: PublicKey; sinceSlot?: number;
@@ -184,21 +198,50 @@ export class ChainWatcher {
   }
 
   private async doScan() {
+    // The head before reading history: every pass vouches only for slots up to it (minus the lag).
+    const head = await this.o.connection.getSlot(SOLANA_COMMITMENT).catch(() => null);
     for (const account of this.o.accounts) {
-      const sigs = await getSignatures(this.o.connection, account, 20);
+      const sigs = await getSignatures(this.o.connection, account, SIG_LIMIT);
+      let unread: number | null = null;
       // Oldest first, so live feeds show transactions in chain order.
-      for (const s of sigs.reverse()) {
+      for (const s of [...sigs].reverse()) {
         const key = `${account.toBase58()}:${s.signature}`;
         if (this.seen.has(key)) continue;
         if (s.err || (this.o.sinceSlot !== undefined && s.slot < this.o.sinceSlot)) { this.seen.add(key); continue; }
         const tx = await getParsed(this.o.connection, s.signature);
-        if (!tx) continue; // not visible yet at this commitment; retried next pass
+        if (!tx) { unread = Math.min(unread ?? s.slot, s.slot); continue; } // not visible yet at this commitment; retried next pass
         if (this.seen.has(key)) continue; // delivered by a Stream while this fetch was in flight
         this.seen.add(key);
         const ob = toObservation(tx, s, account, this.o.usdcMint, this.o.vaultToken);
         if (ob) this.ingest(account.toBase58(), { ...ob, via: "rpc" });
       }
+      if (head !== null) this.cover(account.toBase58(), sigs.map((s) => s.slot), Math.min(head - COVERAGE_LAG_SLOTS, unread === null ? Infinity : unread - 1));
     }
+  }
+
+  /**
+   * Records what one pass over `account` read: every transaction from its oldest returned signature up to `to`. A
+   * full page (SIG_LIMIT signatures) may have cut off older ones, so it joins the previous range only if it reaches
+   * back into it; otherwise a hole is left and coverage restarts after the oldest slot read.
+   */
+  private cover(account: string, slots: number[], to: number) {
+    const ranges = this.covered.get(account) ?? [];
+    this.covered.set(account, ranges);
+    const complete = slots.length < SIG_LIMIT; // the account's whole history fit in one page
+    const oldest = slots.length ? Math.min(...slots) : Infinity;
+    const last = ranges.at(-1);
+    if (last && (complete || oldest <= last.to)) { last.to = Math.max(last.to, to); return; }
+    const since = this.o.sinceSlot ?? 0;
+    const from = complete || (!last && oldest < since) ? since : oldest + 1;
+    if (to >= from) ranges.push({ from, to });
+  }
+
+  /**
+   * Slot ranges, per watched token account, in which RPC passes read every transaction. A gap means more
+   * transactions arrived between two passes than one page holds, so Copycat may have missed some there.
+   */
+  coverage(): Record<string, SlotRange[]> {
+    return Object.fromEntries([...this.covered].map(([a, r]) => [a, r.map((x) => ({ ...x }))]));
   }
 
   /**

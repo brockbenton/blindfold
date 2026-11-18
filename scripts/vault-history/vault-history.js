@@ -11,6 +11,10 @@ const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const ATA_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 const CACHE_KEY = `bf-vault-history:v3:${new URL(RPC).host}:${PROGRAM}:${USDC}`;
 const ISSUANCE_DISCRIMINATOR = "13609a201322caf1";
+const CONFIG_DISCRIMINATOR = "9b0caae01efacc82";
+const SYSTEM_PROGRAM = "11111111111111111111111111111111";
+/** USDC base units per cent. Coverage is compared in whole cents, as packages/protocol/src/reserves.ts does. */
+const BASE_PER_CENT = 10_000n;
 /** Minimum spacing between RPC requests; the public devnet RPC rate-limits bursts. */
 const GAP_MS = 300;
 const CONCURRENCY = 2;
@@ -211,6 +215,88 @@ function classify(s, providerByAccount) {
   return { kind: "other", label: "other", detail: "" };
 }
 
+// ------------------------------------------------------------------------------------------------ coverage verdict
+
+/**
+ * The onchain half of the agent reserve check (packages/protocol/src/reserves.ts), as a pure function of one
+ * getMultipleAccounts response for [config, vault token, issuance log]. Every account comes from the same RPC context,
+ * so the balance and the claim describe the same slot. Liabilities are the issuance log's `issued - settled`; vault
+ * and liabilities are each floored to whole cents and the vault covers them when vaultCents >= outstandingCents.
+ * Anything missing, malformed or unread gives "unknown", never "covered". Amounts are USDC base units as strings.
+ *
+ * @param {{ result?: { context: { slot: number }, value: unknown[] } | null, error?: string,
+ *   history?: { complete: boolean, error?: string }, addresses: { config: string, vault: string, issuance: string } }} input
+ */
+function reserveVerdict({ result, error, history, addresses }) {
+  const out = {
+    status: "unknown", reason: "", slot: null, vault: null, issued: null, settled: null, outstanding: null, margin: null,
+    compared: null, unit: "USDC base units (6 decimals)", program: PROGRAM, usdcMint: USDC,
+    accounts: { config: addresses.config, vault: addresses.vault, issuanceLog: addresses.issuance },
+    rule: "covered when floor(vault / 10^4) >= floor((issued - settled) / 10^4), as in packages/protocol/src/reserves.ts",
+    historyComplete: history ? history.complete && !history.error : false,
+  };
+  const unknown = (reason) => Object.assign(out, { status: "unknown", reason });
+  if (error) return unknown(`RPC read failed: ${error}`);
+  if (!result || !Array.isArray(result.value) || result.value.length !== 3 || !Number.isSafeInteger(result.context?.slot)) {
+    return unknown("RPC returned no account snapshot");
+  }
+  out.slot = result.context.slot;
+  const [cfgInfo, vaultInfo, logInfo] = result.value;
+  const bytes = (info) => b64bytes(info.data[0]);
+  const u64 = (b, o) => new DataView(b.buffer, b.byteOffset, b.byteLength).getBigUint64(o, true);
+  try {
+    if (!cfgInfo) return unknown("vault config account not found");
+    if (cfgInfo.owner !== PROGRAM) return unknown("config account is not owned by the vault program");
+    const cfg = bytes(cfgInfo);
+    if (cfg.length < 136 || hex(cfg.subarray(0, 8)) !== CONFIG_DISCRIMINATOR) return unknown("config account has unexpected data");
+    if (pk(cfg.subarray(72, 104)) !== USDC) return unknown("config usdc_mint does not match this page's USDC mint");
+    if (pk(cfg.subarray(104, 136)) !== addresses.vault) return unknown("config vault_token is not the expected vault account");
+
+    // SPL token account: mint 0..32, owner 32..64, amount 64..72, state at 108 (1 = initialized).
+    const tok = vaultInfo && vaultInfo.owner === TOKEN_PROGRAM ? bytes(vaultInfo) : null;
+    if (!tok || tok.length !== 165 || pk(tok.subarray(0, 32)) !== USDC || pk(tok.subarray(32, 64)) !== addresses.config || tok[108] !== 1) {
+      return unknown("invalid vault token account");
+    }
+    const vault = u64(tok, 64);
+    out.vault = vault.toString();
+
+    // A system-owned, empty PDA may hold lamports before the log is initialized (readIssuanceLog in vault.ts).
+    if (!logInfo || (logInfo.owner === SYSTEM_PROGRAM && !bytes(logInfo).length)) {
+      return unknown("the issuance log is not initialized, so there is no published claim to compare");
+    }
+    if (logInfo.owner !== PROGRAM) return unknown("issuance log is not owned by the vault program");
+    const log = bytes(logInfo);
+    if (log.length !== 49 || hex(log.subarray(0, 8)) !== ISSUANCE_DISCRIMINATOR) return unknown("issuance log has unexpected data");
+    const issued = u64(log, 8), settled = u64(log, 16);
+    out.issued = issued.toString();
+    out.settled = settled.toString();
+    if (settled > issued) return unknown("issuance log is inconsistent: settled exceeds issued (agents refuse to pay)");
+    const outstanding = issued - settled;
+    out.outstanding = outstanding.toString();
+    out.margin = (vault - outstanding).toString();
+    const vaultCents = vault / BASE_PER_CENT, outstandingCents = outstanding / BASE_PER_CENT;
+    out.compared = { vaultCents: vaultCents.toString(), outstandingCents: outstandingCents.toString(), marginCents: (vaultCents - outstandingCents).toString() };
+    if (vaultCents < outstandingCents) return Object.assign(out, { status: "not covered", reason: `vault is short of the published claims by ${usd(outstanding - vault)}` });
+  } catch (e) {
+    return unknown(`could not decode the accounts: ${e.message || e}`);
+  }
+  // The verdict needs only the three accounts at one slot: the log stores cumulative totals onchain. The transaction
+  // history below is context (deposits, payouts), so its read state is reported but does not gate the verdict.
+  const note = !history ? " (transaction history still loading)" : history.error ? " (transaction history unavailable)"
+    : !history.complete ? " (transaction history partly unavailable from RPC)" : "";
+  return Object.assign(out, { status: "covered", reason: `the vault holds at least the published outstanding claims${note}` });
+}
+
+/** [config, vault token, issuance log] in one RPC context. Never throws. */
+async function readSnapshot(addresses) {
+  try {
+    const result = await rpc("getMultipleAccounts", [[addresses.config, addresses.vault, addresses.issuance], { encoding: "base64", commitment: "confirmed" }]);
+    return { result };
+  } catch (e) {
+    return { error: e.message || String(e) };
+  }
+}
+
 // ------------------------------------------------------------------------------------------------ cache
 
 function loadCache() {
@@ -302,8 +388,29 @@ function renderChart(asc, current) {
   svg.addEventListener("pointerleave", () => { hover.setAttribute("visibility", "hidden"); tip.hidden = true; });
 }
 
-async function renderIssuance(issuancePda, list) {
-  const info = await rpc("getAccountInfo", [issuancePda, { encoding: "base64", commitment: "confirmed" }]).catch(() => null);
+/** The verdict last rendered, for the copy button and for tests. */
+let verdict = null;
+const verdictSnapshot = () => verdict;
+
+function renderVerdict(v) {
+  verdict = v;
+  const cls = { covered: "ok", "not covered": "bad", unknown: "unk" }[v.status];
+  $("verdict").className = `panel verdict v-${cls}`;
+  $("v-status").textContent = v.status;
+  $("v-reason").textContent = v.reason;
+  $("v-vault").textContent = v.vault === null ? "–" : usd(v.vault);
+  $("v-claims").textContent = v.outstanding === null ? "–" : usd(v.outstanding);
+  $("v-claims-n").textContent = v.issued === null ? "issuance log not read" : `issued ${usd(v.issued)} − settled ${usd(v.settled)}`;
+  $("v-margin").textContent = v.margin === null ? "–" : (BigInt(v.margin) > 0n ? `+${usd(v.margin)}` : usd(v.margin));
+  $("v-slot").textContent = v.slot === null ? "slot unknown" : `observed at slot ${v.slot.toLocaleString("en-US")}`;
+  const a = (label, addr) => `<span class="acct"><span class="k">${label}</span> <a href="${explorerAddr(addr)}" target="_blank" rel="noopener">${esc(short(addr))}</a></span>`;
+  $("v-accounts").innerHTML = [a("vault USDC", v.accounts.vault), a("issuance log", v.accounts.issuanceLog), a("config", v.accounts.config), a("program", v.program)].join("");
+  $("v-json").textContent = JSON.stringify(v, null, 2);
+}
+
+async function renderIssuance(issuancePda, list, snapshotInfo) {
+  const info = snapshotInfo !== undefined ? { value: snapshotInfo }
+    : await rpc("getAccountInfo", [issuancePda, { encoding: "base64", commitment: "confirmed" }]).catch(() => null);
   const account = info?.value;
   const bytes = account?.owner === PROGRAM ? b64bytes(account.data[0]) : null;
   const updates = list.filter((r) => r.c.label === "issuance log");
@@ -331,6 +438,7 @@ async function load() {
   $("refresh").disabled = true;
   const status = $("status");
   status.className = "";
+  let addresses = null, snap = null, history;
   try {
     if (typeof solanaWeb3 === "undefined") throw new Error("could not load @solana/web3.js from jsdelivr");
     const { PublicKey } = solanaWeb3;
@@ -341,6 +449,12 @@ async function load() {
     const issuancePda = PublicKey.findProgramAddressSync([enc("issuance")], program)[0].toBase58();
     $("vault").textContent = short(vaultToken);
     $("vault").href = explorerAddr(vaultToken);
+    addresses = { config: config.toBase58(), vault: vaultToken, issuance: issuancePda };
+
+    // The coverage snapshot first: it needs one request, and shows (as unknown) before the history finishes.
+    status.textContent = "reading reserves";
+    snap = await readSnapshot(addresses);
+    renderVerdict(reserveVerdict({ ...snap, addresses }));
 
     const cache = loadCache();
     status.textContent = "reading signatures";
@@ -381,12 +495,15 @@ async function load() {
     last = { asc, current };
     renderChart(asc, current);
     renderRows();
-    await renderIssuance(issuancePda, rows);
+    history = { complete: !incomplete };
+    await renderIssuance(issuancePda, rows, snap.result ? snap.result.value[2] : undefined);
     status.textContent = incomplete ? "Some transactions are still unavailable from RPC. Refresh to retry." : `updated ${new Date().toLocaleTimeString()}`;
   } catch (e) {
+    history = { complete: false, error: e.message || String(e) };
     status.className = "err";
     status.textContent = `${e.message || e}${/devnet\.solana/.test(RPC) ? " (the public RPC rate-limits; try again or add ?rpc=)" : ""}`;
   } finally {
+    if (addresses) renderVerdict(reserveVerdict({ ...(snap || { error: "not read" }), history, addresses }));
     busy = false;
     $("refresh").disabled = false;
   }
@@ -396,6 +513,16 @@ $("program").textContent = short(PROGRAM);
 $("program").href = explorerAddr(PROGRAM);
 $("network").textContent = /devnet/i.test(RPC) ? "Solana devnet" : new URL(RPC).host;
 $("refresh").addEventListener("click", load);
+$("v-copy").addEventListener("click", async () => {
+  if (!verdict) return;
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(verdict, null, 2));
+    $("v-copy").textContent = "copied";
+  } catch {
+    $("v-copy").textContent = "copy failed";
+  }
+  setTimeout(() => { $("v-copy").textContent = "copy JSON"; }, 1500);
+});
 for (const b of document.querySelectorAll(".filters button")) {
   b.addEventListener("click", () => {
     filter = b.dataset.f;

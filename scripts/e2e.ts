@@ -13,6 +13,11 @@
 //   EXACT_AGENT_KEYPAIR, EXACT_FACILITATOR_KEYPAIR  optional; enable step 7 (x402 `exact` baseline) on devnet.
 //                           The agent needs USDC, the facilitator SOL. Localnet always runs step 7 with fresh keys.
 // Run with --keep-validator to leave the localnet validator running.
+//
+// Strict reserves (default on): acceptance fails unless the target vault has an initialized onchain issuance log and
+// the agent's reserve check verified liabilities against it. `--no-strict-reserves` (or E2E_STRICT_RESERVES=0) lets
+// devnet acceptance pass on a program without the issuance log instructions, using only the mint's report. Localnet
+// always requires the log.
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
@@ -53,6 +58,7 @@ import { getPubKeyFromPrivKey, createRandomSecretKey } from "@cashu/cashu-ts";
 
 const localnet = process.argv.includes("--localnet");
 const keepValidator = process.argv.includes("--keep-validator");
+const strictReserves = localnet || !(process.argv.includes("--no-strict-reserves") || process.env.E2E_STRICT_RESERVES === "0");
 const PRICE = 5;
 const DEPOSIT_CENTS = 100;
 const ADMIN_TOKEN = "e2e-admin-token";
@@ -130,7 +136,7 @@ async function main() {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) throw new Error("DATABASE_URL is required (e.g. postgres://dragonite@127.0.0.1:54329/blindfold from services/mint/scripts/dev-pg.sh)");
 
-  log(`mode: ${localnet ? "localnet" : "devnet"}  rpc: ${rpc}  program: ${programId.toBase58()}`);
+  log(`mode: ${localnet ? "localnet" : "devnet"}  rpc: ${rpc}  program: ${programId.toBase58()}  reserves: ${strictReserves ? "strict" : "lenient (--no-strict-reserves)"}`);
   if (localnet) await startValidator(rpc, programId);
   const connection = new Connection(rpc, SOLANA_COMMITMENT);
 
@@ -271,7 +277,8 @@ async function main() {
   const logged = (await mintReq("/v1/blindfold/admin/log-issuance", { body: {}, auth: true })).json.result as string;
   if (localnet) check("local validator supports issuance logging", logged === "initialized");
   const withLog = logged !== "unsupported";
-  if (!withLog) log("  skip  the vault program has no issuance log instructions; agents use the mint's report");
+  if (strictReserves) check("vault program supports the issuance log (strict reserves)", withLog, { logged });
+  if (!withLog) log("  skip  the vault program has no issuance log instructions; agents use the mint's report (--no-strict-reserves)");
   else {
     const l = await readLog();
     check("issuance log covers this run's tokens", !!l && l.issued - l.settled >= centsToBaseUnits(DEPOSIT_CENTS), { logged, l });
@@ -285,6 +292,9 @@ async function main() {
   check("agent exit 0", r1.code === 0, r1.out);
   check("reserve check ok", r1.out.reserves?.ok === true, r1.out.reserves);
   if (withLog) check("liabilities verified against the onchain issuance log", r1.out.reserves?.verified === true, r1.out.reserves);
+  if (strictReserves) {
+    check("reserve check read the onchain issuance log (strict reserves)", Number.isSafeInteger(r1.out.reserves?.onchainOutstandingCents), r1.out.reserves);
+  }
   check("status 200 with a redemption id", r1.out.calls[0].status === 200 && !!r1.out.calls[0].redemptionId, r1.out.calls[0]);
   check("balance dropped by the price", walletCents() === DEPOSIT_CENTS - PRICE);
   check("provider credited at the mint", (await providerBalance()) === PRICE);

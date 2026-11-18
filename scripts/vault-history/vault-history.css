@@ -90,3 +90,29 @@ footer a { margin-left: 8px; }
   .panel { padding: 16px; }
   td.detail { min-width: 220px; }
 }
+
+/* Reserve coverage verdict. */
+.verdict { border-left: 3px solid var(--amber); }
+.verdict.v-ok { border-left-color: var(--green); }
+.verdict.v-bad { border-left-color: var(--red); }
+.v-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.v-status { font: 500 28px/36px var(--sans); letter-spacing: -0.01em; color: var(--amber); }
+.v-ok .v-status { color: var(--green); }
+.v-bad .v-status { color: var(--red); }
+.v-reason { color: var(--text-2); font-family: var(--sans); }
+.v-figs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 16px; }
+.v-figs .label { color: var(--muted); }
+.v-figs .value { font: 500 22px/28px var(--sans); margin-top: 4px; }
+.v-figs .note { color: var(--text-2); }
+.v-accounts { display: flex; flex-wrap: wrap; gap: 4px 24px; margin-top: 16px; color: var(--text-2); }
+.v-accounts .k { color: var(--muted); }
+.v-accounts .acct { white-space: nowrap; }
+.v-scope { margin: 12px 0 0; color: var(--muted); font-family: var(--sans); max-width: 96ch; }
+.v-details { margin-top: 12px; }
+.v-details summary { color: var(--text-2); cursor: pointer; }
+.v-json-bar { display: flex; justify-content: flex-end; margin-top: 8px; }
+.v-details pre { margin: 8px 0 0; padding: 12px; background: var(--raised); border-radius: 8px; overflow-x: auto; color: var(--text-2); font: 400 12px/18px var(--mono); }
+@media (max-width: 760px) {
+  .v-figs { grid-template-columns: 1fr; gap: 12px; }
+  .v-status { font-size: 22px; line-height: 28px; }
+}

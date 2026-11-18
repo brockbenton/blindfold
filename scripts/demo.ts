@@ -1,7 +1,7 @@
 // Narrated demo, "Copycat vs. your trading agent", on a real Solana vault. Starts the mint, a token data feed and
 // a live dashboard in this process, then: the agent researches SOL with standard x402 `exact` and Copycat (a bot
 // reading public Solana data) spots it -> the owner funds Blindfold tokens -> the same research with Blindfold ->
-// settlement in the next fixed window, to two feeds in one batch -> Copycat's report -> a replayed payment is refused -> the agent refuses a dishonest mint.
+// settlement in the next fixed window, to two feeds in one batch -> Copycat's attribution scoreboard -> a replayed payment is refused -> the agent refuses a dishonest mint.
 //
 //   pnpm demo                  devnet, the vault and keys in .keys/ (see docs/DEMO.md)
 //   pnpm demo --localnet       rehearsal on a throwaway local validator with fresh keys (no devnet funds)
@@ -54,9 +54,10 @@ import { ReservesFailedError } from "../agents/simple/src/errors.js";
 import { marketSourceFromEnv } from "../apps/mock-api/src/data/liveMarket.js";
 import type { Observation } from "./lib/bot.js";
 import { describe as describeTx, infer } from "./lib/copycat.js";
+import { describeScore, describeVisible, scoreAttribution, type Purchase, type Side } from "./lib/attribution.js";
 import { StreamWatcher } from "./lib/streamWatcher.js";
 import { loadApiKey } from "./lib/streams.js";
-import { startDashboard, type Dashboard, type DashboardEvent } from "./lib/dashboard.js";
+import { startDashboard, type Dashboard, type DashboardEvent, type ScoreView } from "./lib/dashboard.js";
 import { exactPayFetch, paymentResponse } from "./lib/exactClient.js";
 import { explorerAddress, explorerTx } from "./lib/explorer.js";
 import { startRecorder } from "./lib/recorder.js";
@@ -420,6 +421,11 @@ async function main() {
   const vaultStart = await tokenBalance(connection, vaultToken);
   const exactAta = getAssociatedTokenAddressSync(usdcMint, cast.exactAgent.publicKey);
   const exactAddress = cast.exactAgent.publicKey.toBase58();
+  // Ground truth for Act 5's scoreboard: what Acts 1 and 3 actually bought, and the slots they bought in. Written
+  // here as purchases happen; nothing Copycat runs reads it.
+  const truth: Purchase[] = [];
+  const windows = {} as Record<Side, { from: number; to: number }>;
+  const bought = (p: Omit<Purchase, "at">) => truth.push({ ...p, at: new Date().toISOString() });
 
   // The dashboard and Copycat. Copycat polls the feed's USDC account and the vault from this slot on, like any
   // outside observer; the dashboard shows each transaction as Copycat finds it.
@@ -494,7 +500,7 @@ async function main() {
   const agentSays = (text: string) => console.log(`  ${bold(cyan("Agent"))}    ${text}`);
   // The dashboard gets a short caption per act; the terminal keeps the full title.
   const captions = ["Ready", "Paying with standard x402", "Funding Blindfold tokens", "Paying with Blindfold", "Feeds paid in the next window",
-    "What the watcher learned", "AI agent meets a poisoned feed", "Replayed payment refused", "Dishonest mint refused", "Summary"];
+    "Attribution scoreboard", "AI agent meets a poisoned feed", "Replayed payment refused", "Dishonest mint refused", "Summary"];
   const scene = (n: number, title: string, subtitle: string) => {
     act(`${n}. ${title}`, subtitle);
     emit({ type: "act", n, title: captions[n] });
@@ -542,6 +548,7 @@ async function main() {
     }
   };
   const exactSigs: string[] = [];
+  const exactFrom = await connection.getSlot(SOLANA_COMMITMENT);
   for (let i = 0; i < CALLS; i++) {
     // Spaced so each payment gets a fresh blockhash (the memo is the same every call, so the bytes would match).
     if (i > 0) await sleep(localnet ? 1200 : 1500);
@@ -550,12 +557,14 @@ async function main() {
     if (res.status !== 200 || !pr?.transaction) fail(`exact call ${i + 1} failed: HTTP ${res.status} ${await res.text()}`);
     const body = await res.json();
     exactSigs.push(pr.transaction);
+    bought({ side: "exact", buyer: exactAddress, provider: FEED, route: `/v1/data/${TOPIC}`, topic: TOPIC, tx: pr.transaction });
     ok(`call ${i + 1}: paid ${PRICE} cents, ${TOPIC.toUpperCase()} ${flow(body)}`);
     link(`tx ${i + 1}`, explorerTx(pr.transaction, rpc));
     explorerLinks.push([`Standard x402 payment ${i + 1}`, explorerTx(pr.transaction, rpc)]);
     emit({ type: "call", side: "exact", n: i + 1, cents: PRICE, label: `whale flow ${TOPIC.toUpperCase()}`, ok: true, tx: pr.transaction, url: explorerTx(pr.transaction, rpc) });
     void refreshBalances();
   }
+  windows.exact = { from: exactFrom, to: await connection.getSlot(SOLANA_COMMITMENT) };
   say("Each call is its own public Solana transfer from the agent's wallet to the feed. Now Copycat reads the chain.");
   step("Copycat is scanning the feed's USDC account");
   await watcher.waitFor((o) => exactSigs.every((x) => o.some((y) => y.signature === x)), 90_000);
@@ -601,6 +610,9 @@ async function main() {
   scene(3, `The same research, paid with Blindfold`, `Same agent, same feed, same ${CALLS} whale-flow reads on ${TOPIC.toUpperCase()}, plus ${NEWS_CALLS} headline reads from ${NEWS}. Before paying, the agent checks the vault's USDC against outstanding tokens on Solana.`);
   const before = walletCents();
   const knownBefore = watcher.observations.length;
+  const blindFrom = await connection.getSlot(SOLANA_COMMITMENT);
+  // The agent holds no wallet: the wallet that paid for these purchases is the owner's, through its deposit.
+  const ownerAddress = cast.owner.publicKey.toBase58();
   const r1 = await agent(["--topic", TOPIC, "--calls", String(CALLS)]);
   if (r1.code !== 0 || !r1.out.ok || !r1.out.reserves?.ok) fail(`agent failed: ${JSON.stringify(r1.out)}`);
   showReserves(r1.out.reserves);
@@ -608,6 +620,7 @@ async function main() {
   for (const [i, c] of r1.out.calls.entries()) {
     ok(`call ${i + 1}: paid ${c.paidCents} cents, ${TOPIC.toUpperCase()} ${flow(c.data)}  ${dim(`(redemption ${String(c.redemptionId).slice(0, 8)})`)}`);
     emit({ type: "call", side: "blindfold", n: i + 1, cents: c.paidCents, label: `whale flow ${TOPIC.toUpperCase()}`, ok: c.status === 200 });
+    if (c.status === 200) bought({ side: "blindfold", buyer: ownerAddress, provider: FEED, route: `/v1/data/${TOPIC}`, topic: TOPIC });
   }
   const rn = await agent(["--topic", TOPIC, "--provider", "news-wire", "--calls", String(NEWS_CALLS)]);
   if (rn.code !== 0 || !rn.out.ok) fail(`agent failed on ${NEWS}: ${JSON.stringify(rn.out)}`);
@@ -615,8 +628,10 @@ async function main() {
     const data = c.data as { headline?: string } | null;
     ok(`${NEWS} call ${i + 1}: paid ${c.paidCents} cents, ${data?.headline ?? "headline"}  ${dim(`(redemption ${String(c.redemptionId).slice(0, 8)})`)}`);
     emit({ type: "call", side: "blindfold", n: CALLS + i + 1, cents: c.paidCents, label: `${NEWS} ${TOPIC.toUpperCase()}`, ok: c.status === 200 });
+    if (c.status === 200) bought({ side: "blindfold", buyer: ownerAddress, provider: NEWS, route: `/v1/data/${TOPIC}`, topic: TOPIC });
   }
   const lastCallAt = Date.now();
+  windows.blindfold = { from: blindFrom, to: await connection.getSlot(SOLANA_COMMITMENT) };
   ok(`tokens ${before} -> ${walletCents()} cents`);
   void refreshBalances();
   say("Each payment was an ecash token in an HTTP header. No Solana transaction happened.");
@@ -691,25 +706,43 @@ async function main() {
   say("The payout time follows the clock, not the calls, and the amounts are rounded. Copycat sees which feeds earned, not who bought what.");
   await pause(pausing);
 
-  // Act 5: Copycat's report.
-  scene(5, "Copycat's report", "Everything Copycat learned from public Solana data during this run.");
+  // Act 5: the attribution scoreboard, scored against the ground truth recorded in Acts 1 and 3.
+  scene(5, "Copycat's scoreboard", "How many purchases Copycat pinned on the buyer, checked against what the agent actually bought. Copycat never sees that list.");
+  // One more RPC pass, so the coverage check reaches past both acts whichever source Copycat has been reading.
+  step("Copycat re-reads the watched accounts to confirm it saw every slot of both acts");
+  await watcher.rpcScan().catch(() => undefined);
+  const board = scoreAttribution({
+    purchases: truth, windows, observations: watcher.observations, coverage: watcher.coverage(),
+    accounts: [...payoutAccounts, vaultToken].map((a) => a.toBase58()), names: feedNames,
+  });
   const fmt = (d: Date | null) => (d ? d.toISOString().slice(11, 19) : "?");
   blank();
-  say(bold(red("Standard x402 (exact)")));
-  kv("Agent wallet", signal.payer);
-  kv("Purchases", `${signal.calls} calls to ${FEED}, ${usd(signal.totalBase)} total`);
-  kv("About", `${Object.entries(signal.feeds).map(([f, n]) => `${n} ${f}`).join(", ")}${signal.token ? ` on ${signal.token}` : ""}`);
-  kv("Times (UTC)", watcher.observations.filter((o) => o.kind === "direct_payment" && o.from === signal.payer).map((o) => fmt(o.time)).join(", "));
-  kv("Signal", bold(red(signal.action)));
+  say(bold("Attribution: Copycat's claims against what was actually bought"));
+  say(dim("Attributed: Copycat names the paying wallet, the feed and the token researched for that purchase."));
+  kv("Standard x402", describeScore(board.exact));
+  kv("Blindfold", describeScore(board.blindfold));
   blank();
-  say(bold(green("Blindfold x402 (blindfold)")));
+  say(bold(red("What gave the exact purchases away")));
+  kv("Claim", `wallet ${short(signal.payer)} bought ${Object.entries(signal.feeds).map(([f, n]) => `${n} ${f}`).join(", ")}${signal.token ? ` on ${signal.token}` : ""} from ${FEED}: ${bold(red(signal.action))}`);
+  kv("Times (UTC)", watcher.observations.filter((o) => o.kind === "direct_payment" && o.from === signal.payer).map((o) => fmt(o.time)).join(", "));
+  blank();
+  say(bold(green("What Copycat still sees on the Blindfold side")));
   for (const d of watcher.observations.filter((x) => x.kind === "vault_deposit")) kv("Deposit", `${short(d.from)} put ${usd(d.amountBase)} into the vault at ${fmt(d.time)}`);
   for (const p of watcher.observations.filter((x) => x.kind === "vault_payout")) kv("Payout", `vault paid ${feedNames[p.to] ?? "a feed"} ${usd(p.amountBase)} in a batch at ${fmt(p.time)}`);
-  kv("Agent wallet", "none: the agent has no onchain identity");
-  kv("Per-call data", `none: ${CALLS + NEWS_CALLS} purchases, 0 transactions`);
-  kv("Signal", bold(green("NO SIGNAL")));
+  kv("Reading", `${board.vault.action}: ${board.vault.reason}`);
+  emit({
+    type: "score", visible: describeVisible(board.vault),
+    text: `exact: ${describeScore(board.exact)} · Blindfold: ${describeScore(board.blindfold)}`,
+    sides: Object.fromEntries((["exact", "blindfold"] as const).map((k) => {
+      const b = board[k];
+      return [k, {
+        purchases: b.purchases, transfers: b.transfers, correct: b.correct, partial: b.partial, incorrect: b.incorrect, abstained: b.abstained,
+        complete: b.coverage.complete, verdict: b.verdict, summary: describeScore(b),
+      }];
+    })) as Record<Side, ScoreView>,
+  });
   blank();
-  say(dim("Honest limit: payouts show which registered feeds earned. Fixed windows, a hold and rounding stop payouts from tracking calls, but only one owner deposited in this run, so Copycat can link the payout to that owner, though not to the token or the calls. With several owners depositing equal amounts it cannot (`pnpm crowd`)."));
+  say(dim("Honest limit: payouts show which registered feeds earned. Fixed windows, a hold and rounding stop payouts from tracking calls, but only one owner deposited in this run, so Copycat can link the payout to that owner (counted above as linked), though not to the token, the count or the timing of the calls. With several owners depositing equal amounts it cannot (`pnpm crowd`)."));
   await pause(pausing);
 
   // Act 6: an LLM agent meets a poisoned feed.

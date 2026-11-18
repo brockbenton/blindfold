@@ -9,7 +9,7 @@
 import type { Connection, PublicKey } from "@solana/web3.js";
 import { SOLANA_COMMITMENT } from "@blindfold/protocol";
 import type { Observation } from "./bot.js";
-import { ChainWatcher } from "./copycat.js";
+import { ChainWatcher, type SlotRange } from "./copycat.js";
 import {
   StreamsApi, newSecurityToken, recordToObservation, startReceiver, startTunnel, streamSpec,
   type Receiver, type StreamBatch, type StreamDeposit, type Tunnel, type Watch,
@@ -123,6 +123,12 @@ export class StreamWatcher {
     if (await this.waitTip(slot, 15_000)) return;
     return this.rpc.scan();
   }
+
+  /** One RPC pass whatever the source, so `coverage` reaches the current slot (Stream deliveries do not count there). */
+  rpcScan(): Promise<void> { return this.rpc.scan(); }
+
+  /** Slot ranges per watched account that RPC passes read completely (ChainWatcher.coverage). */
+  coverage(): Record<string, SlotRange[]> { return this.rpc.coverage(); }
 
   /** Waits until `want` holds. Streams deliveries arrive by push; after 20 s without success it also polls RPC. */
   async waitFor(want: (obs: Observation[]) => boolean, timeoutMs = 60_000): Promise<Observation[]> {

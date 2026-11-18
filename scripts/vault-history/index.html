@@ -24,6 +24,23 @@
       </div>
     </header>
 
+    <section class="panel verdict v-unk" id="verdict" aria-label="Reserve coverage">
+      <div class="section"><span>Reserve coverage</span><span id="v-slot">slot unknown</span></div>
+      <div class="v-head"><span class="v-status" id="v-status">checking</span> <span class="v-reason" id="v-reason">reading the vault and the issuance log</span></div>
+      <div class="v-figs">
+        <div><div class="label">vault holds</div><div class="value" id="v-vault">–</div><div class="note">USDC in the vault token account</div></div>
+        <div><div class="label">published claims</div><div class="value" id="v-claims">–</div><div class="note" id="v-claims-n">issuance log not read</div></div>
+        <div><div class="label">margin</div><div class="value" id="v-margin">–</div><div class="note">vault minus claims</div></div>
+      </div>
+      <div class="v-accounts" id="v-accounts"></div>
+      <p class="v-scope">All three accounts are read in one RPC call, so the balance and the claim come from the same slot. The claim is the cumulative issuance the mint has published to the vault's onchain issuance log, minus what has been settled to providers. Agents run the same comparison before paying, and also use the mint's HTTP report when it claims more. This checks the mint's published claims. It doesn't prove the mint has issued nothing outside the log: the mint still holds signing authority.</p>
+      <details class="v-details">
+        <summary>machine-readable snapshot</summary>
+        <div class="v-json-bar"><button type="button" id="v-copy">copy JSON</button></div>
+        <pre id="v-json">{}</pre>
+      </details>
+    </section>
+
     <section class="totals" aria-label="Totals">
       <div class="stat"><div class="label">held now</div><div class="value" id="t-held">–</div></div>
       <div class="stat"><div class="label">deposited</div><div class="value" id="t-in">–</div><div class="note" id="t-in-n"></div></div>

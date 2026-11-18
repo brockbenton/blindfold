@@ -141,6 +141,19 @@ describe("replay timeline", () => {
     expect(entries[entries.length - 1].t).toBe(6300);
   });
 
+  it("plays Act 5's score event, and recordings made before it still build", () => {
+    const rec = fakeRun().r.snapshot();
+    const side = { purchases: 3, transfers: 3, correct: 3, partial: 0, incorrect: 0, abstained: 0, complete: true, verdict: "attributed", summary: "s" };
+    const score = { type: "score", text: "exact: 3/3", visible: "1 vault deposit", sides: { exact: side, blindfold: { ...side, correct: 0, transfers: 0, verdict: "not attributed" } }, seq: 99 };
+    rec.events.splice(rec.events.length - 1, 0, { t: rec.durationMs, event: score });
+    expect(recordingProblems(rec)).toEqual([]);
+    const played = buildTimeline(parseRecording(rec)).entries.filter((e: any) => e.kind === "event" && e.event.type === "score");
+    expect(played.map((e: any) => stripLocalLinks(e.event))).toEqual([score]);
+    // The published recording predates the scoreboard (or carries it); either way it parses and has acts.
+    const published = parseRecording(JSON.parse(readFileSync(new URL("../dashboard/recording.json", import.meta.url), "utf8")));
+    expect(buildTimeline(published).acts.length).toBeGreaterThan(5);
+  });
+
   it("finds how many entries are due at a time", () => {
     const entries = [{ t: 0 }, { t: 10 }, { t: 10 }, { t: 30 }];
     expect([-1, 0, 9, 10, 29, 30, 99].map((t) => indexAt(entries, t))).toEqual([0, 1, 1, 3, 3, 4, 4]);

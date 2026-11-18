@@ -81,6 +81,15 @@ a { color: inherit; text-decoration: none; }
 .reserve a { text-decoration: underline; text-underline-offset: 3px; }
 .reserve-detail { padding-left: 1.7em; }
 .note.other::before { content: "\00b7"; color: var(--muted); }
+.note.score { color: var(--text); }
+.note.score.exact::before { content: "!"; color: var(--red); }
+.note.score b { font-weight: 500; }
+.note.score.exact b { color: var(--red); }
+.note.score.blindfold b { color: var(--green); }
+.note.score.blindfold.warn::before { content: "!"; color: var(--amber); }
+.note.score.blindfold.warn b { color: var(--amber); }
+.score-def { color: var(--muted); margin-left: 8px; }
+.score-detail { color: var(--text-2); padding-left: 1.7em; }
 
 /* Status bar */
 .app footer { display: flex; gap: 40px; color: var(--muted); }

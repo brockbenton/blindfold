@@ -26,7 +26,7 @@ The server uses the same wallet and reserve checks as the CLI agent, with its ow
 | Session spend threshold | 50¢ per server process | `BUDGET_CENTS` |
 | Reserve check | Before the first paid call and every 10 paid calls | `RESERVE_CHECK_EVERY` |
 
-A failed reserve check refuses the purchase and runs again on the next attempt. The server checks the session spend before each purchase. One purchase can cross the threshold by up to the per-call cap. `quote` and `buy_data` reject an input URL outside the origin of a discoverable active provider. The wallet checks the payment requirements separately.
+A failed reserve check refuses the purchase and runs again on the next attempt. Purchases run one at a time. The wallet checks each validated price against the session budget left and refuses with `budget_exhausted` before any proof leaves, so no purchase crosses it. `quote` and `buy_data` reject an input URL outside the origin of a discoverable active provider. The wallet checks the payment requirements separately.
 
 At startup, the server checks spendable proof keysets if the mint's keyset endpoint responds successfully. Unknown keysets produce a warning in `get_balance` and block purchases with `tokens_unusable`. Fund a fresh token file through the running mint.
 
