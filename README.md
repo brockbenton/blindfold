@@ -19,21 +19,6 @@ Standard x402 `exact` payments on Solana leave a USDC transfer for each purchase
 
 Blindfold is a custom x402 v2 scheme named `blindfold`. An owner deposits USDC into a shared Solana vault and receives blind-signed [Cashu](https://cashu.space) tokens. The agent pays for data in an HTTP header. Providers redeem the tokens at the mint and receive periodic USDC payouts from the vault. Direct Blindfold purchases leave no per-call transaction. The [public replay](https://brockbenton.github.io/blindfold/) shows the single-agent comparison and a crowd demo that illustrates what deposit amounts can reveal.
 
-### What the demo shows
-
-`pnpm demo` runs the same research twice on devnet, once with standard x402 and once with Blindfold, while the observer watches the chain. Script and talking points are in [the demo guide](docs/DEMO.md#what-each-act-shows).
-
-| Act | Result |
-|---|---|
-| 1. Standard x402 | Three paid calls are three public transfers. The seller memo names SOL, and the observer signals **BUY SOL**. |
-| 2. Fund | The owner deposits $1.00 into the vault and receives blind-signed tokens. The issuance log updates. |
-| 3. Blindfold | The same research plus two NewsWire reads. The agent checks reserves against the issuance log first. The observer reports **NO SIGNAL**. |
-| 4. Settle | One batched, rounded vault payout to both feeds at the next window. |
-| 5. Scoreboard | The observer is scored against what the agent actually bought. Standard x402: 3/3 purchases attributed (wallet, feed and token). Blindfold: 0/5 attributed, 0 per-call transfers. With a single owner, payouts can still be linked to that owner and the feeds, but not to the token. Incomplete chain coverage is reported as inconclusive. |
-| 6. Poisoned feed | A model-driven agent asks for owner approval on a 25¢ purchase. The session allowance stops a runaway loop with `budget_exhausted`, and an injected payment to an unregistered recipient is refused. |
-| 7. Replay | A copied payment gets a 402. |
-| 8. Reserve gate | The mint claims more than the vault holds, and the agent stops without paying. |
-
 ## Architecture
 
 ```mermaid
