@@ -15,8 +15,8 @@ export function mountWatch(root) {
   root.innerHTML = `
     <div class="watch">
       <header>
-        <h1>Public chain</h1>
-        <div class="meta"><span data-scope>Solana devnet</span><span class="source" data-source>connecting</span></div>
+        <h1>Blindfold</h1>
+        <div class="meta"><span data-scope></span><span class="source" data-source>connecting</span></div>
       </header>
       <section class="tally">
         <div class="stat" data-stat="direct"><div class="k">Feed payments</div><div class="v">0</div></div>
@@ -25,13 +25,15 @@ export function mountWatch(root) {
       </section>
       <section class="panel copycat">
         <div class="title">Copycat</div>
-        <div data-readings></div>
+        <div class="sides">
+          <div class="side"><div class="side-name">Standard x402</div><div data-readings="exact"></div></div>
+          <div class="side"><div class="side-name">Blindfold</div><div data-readings="blind"></div></div>
+        </div>
       </section>
       <section class="panel feed">
         <div class="title">Transactions</div>
         <div class="rows" data-rows></div>
       </section>
-      <footer>Blindfold purchases leave no transaction</footer>
     </div>`;
   const $ = (sel) => root.querySelector(sel);
   let state;
@@ -53,30 +55,28 @@ export function mountWatch(root) {
     }
   }
 
-  const span = (s) => (s === null || s === undefined ? "" : s < 60 ? `${Math.max(s, 1)}s` : `${Math.round(s / 60)}m`);
+  const span = (s) => (s === null || s === undefined ? "" : s < 120 ? `${Math.max(s, 1)}s` : `${Math.round(s / 60)}m`);
+  const facts = (list) => `<div class="facts">${list.filter(Boolean).map(esc).join('<span class="sep">·</span>')}</div>`;
 
   function renderReadings() {
-    const parts = [];
-    for (const s of state.signals.values()) {
-      const facts = [`${s.calls} paid ${s.calls === 1 ? "read" : "reads"}`, s.token ? `${s.tokenCalls} on ${s.token}` : "token unknown", span(s.spanSeconds)].filter(Boolean);
-      parts.push(`
+    // Standard x402: every wallet that paid a feed directly, labelled ones (the rival) first.
+    const signals = [...state.signals.values()].sort((a, b) => Number(!state.labels[a.payer]) - Number(!state.labels[b.payer]) || b.calls - a.calls);
+    $('[data-readings="exact"]').innerHTML = signals.length
+      ? signals.map((s) => `
         <div class="reading alarm" title="${esc(s.reason)}">
           <div class="action">${esc(s.action)}</div>
           <div class="target">${who(s.payer)}</div>
-          <div class="facts">${facts.map(esc).join('<span class="sep">·</span>')}</div>
-        </div>`);
-    }
-    if (state.vault) {
-      const v = state.vault;
-      const facts = [`${v.depositors} ${v.depositors === 1 ? "depositor" : "depositors"}`, `${v.payouts} ${v.payouts === 1 ? "payout" : "payouts"}${v.payouts ? ` ${usd(v.payoutBase)}` : ""}`, "token unknown"];
-      parts.push(`
-        <div class="reading ${TONE[v.action] ?? ""}" title="${esc(v.reason)}">
-          <div class="action">${esc(v.action)}</div>
-          <div class="target"><span class="addr">Vault</span></div>
-          <div class="facts">${facts.map(esc).join('<span class="sep">·</span>')}</div>
-        </div>`);
-    }
-    $("[data-readings]").innerHTML = parts.length ? parts.join("") : `<div class="empty">No signal</div>`;
+          ${facts([`${s.calls} paid ${s.calls === 1 ? "read" : "reads"}`, s.token ? `${s.tokenCalls} on ${s.token}` : "token unknown", span(s.spanSeconds)])}
+        </div>`).join("")
+      : `<div class="reading"><div class="action">NO SIGNAL</div><div class="target">No direct payments</div>${facts([])}</div>`;
+    // Blindfold: the vault reading. The agent has no wallet, so it never appears as a payer.
+    const v = state.vault;
+    $('[data-readings="blind"]').innerHTML = `
+      <div class="reading ${v ? TONE[v.action] ?? "" : "calm"}" title="${esc(v?.reason ?? "No vault activity in view")}">
+        <div class="action">${esc(v?.action ?? "NO SIGNAL")}</div>
+        <div class="target">No agent wallet · 0 per-call transactions</div>
+        ${facts(v ? [`${v.depositors} ${v.depositors === 1 ? "depositor" : "depositors"}`, `${v.payouts} ${v.payouts === 1 ? "payout" : "payouts"}${v.payouts ? ` ${usd(v.payoutBase)}` : ""}`, "token unknown"] : ["token unknown"])}
+      </div>`;
   }
 
   function memo(e) {
@@ -93,6 +93,7 @@ export function mountWatch(root) {
     rows.querySelector(".empty")?.remove();
     const from = e.kind === "vault_payout" ? `<span class="addr">Vault</span>` : who(e.from);
     const el = document.createElement("a");
+    el.dataset.time = e.time ?? "";
     el.className = `row ${e.kind}`;
     el.href = e.url;
     el.target = "_blank";
@@ -103,7 +104,9 @@ export function mountWatch(root) {
       <span class="kind">${KIND[e.kind] ?? esc(e.kind)}</span>
       <span class="flow">${from}<span class="arrow">→</span><span class="addr">${esc(e.toName ?? short(e.to))}</span>${memo(e)}</span>
       <span class="amt">${usd(e.amountBase)}</span>`;
-    rows.prepend(el);
+    // Newest first. History arrives one account at a time, so insert by time rather than arrival order.
+    const later = [...rows.children].find((x) => (x.dataset.time ?? "") < (e.time ?? ""));
+    rows.insertBefore(el, later ?? null);
     renderCounts();
   }
 
@@ -111,7 +114,7 @@ export function mountWatch(root) {
     switch (e.type) {
       case "setup":
         state.labels = e.labels ?? {};
-        $("[data-scope]").innerHTML = [`${esc(e.network)}`, ...(e.feeds ?? []).map((f) => `<a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.name)}</a>`), `<a href="${esc(e.vaultUrl)}" target="_blank" rel="noopener">Vault</a>`].join('<span class="sep">·</span>');
+        $("[data-scope]").innerHTML = [...(e.feeds ?? []).map((f) => `<a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.name)}</a>`), `<a href="${esc(e.vaultUrl)}" target="_blank" rel="noopener">Vault</a>`].join('<span class="sep">·</span>');
         break;
       case "source": {
         const el = $("[data-source]");
