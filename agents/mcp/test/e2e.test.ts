@@ -13,6 +13,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { VAULT_IDL, USDC_DEVNET_MINT, configPda, vaultAta } from "@blindfold/protocol";
 import { makeProviderKey } from "@blindfold/testkit";
 import { ownerFund } from "@blindfold/wallet";
+import { fakeVaultToken } from "../../../packages/wallet/test/fakes/fake-vault-token.js";
 import { FakeDepositor } from "../../../packages/wallet/test/fakes/fake-depositor.js";
 import { FakeMint } from "../../../packages/wallet/test/fakes/fake-mint.js";
 import { FakeProvider } from "../../../packages/wallet/test/fakes/fake-provider.js";
@@ -34,9 +35,9 @@ const configData = () => {
   });
 };
 const connection = (vaultCents: number) => ({
-  // Only the Config PDA exists: no onchain issuance log, so liabilities come from the mint.
-  async getAccountInfo(a: PublicKey) { return a.equals(configPda(programId)) ? { owner: programId, data: await configData() } : null; },
-  async getTokenAccountBalance() { return { value: { amount: String(vaultCents * 10_000) } }; },
+  async getMultipleAccountsInfo() {
+    return [{ owner: programId, data: await configData() }, fakeVaultToken(usdcMint, configPda(programId), BigInt(vaultCents) * 10_000n), null];
+  },
 });
 
 const stops: (() => Promise<void>)[] = [];
@@ -52,14 +53,17 @@ beforeAll(async () => {
   await mint.stop();
 });
 
-type Answer = "approve" | "deny" | "none";
+type Answer = "approve" | "deny" | "none" | "empty";
 
-async function world(o: { elicit?: Answer; vault?: number; env?: Record<string, string> } = {}) {
+async function world(o: { elicit?: Answer; vault?: number; env?: Record<string, string>; redirectTo?: string } = {}) {
   const mint = new FakeMint();
   const mintUrl = await mint.start();
   stops.push(() => mint.stop());
   const app = createApp({ mintUrl, providerSecretKey: providerKey.sk, priceCents: 5 });
-  const http = serve({ fetch: app.fetch, port: 0, hostname: "127.0.0.1" });
+  const http = serve({
+    fetch: (req) => o.redirectTo && new URL(req.url).pathname === "/redirect" ? Response.redirect(o.redirectTo) : app.fetch(req),
+    port: 0, hostname: "127.0.0.1",
+  });
   await new Promise((r) => setTimeout(r, 50));
   const apiUrl = `http://127.0.0.1:${(http.address() as { port: number }).port}`;
   stops.push(() => new Promise<void>((r) => { (http as any).closeAllConnections?.(); http.close(() => r()); }));
@@ -76,6 +80,7 @@ async function world(o: { elicit?: Answer; vault?: number; env?: Record<string, 
   if (o.elicit && o.elicit !== "none") {
     client.setRequestHandler(ElicitRequestSchema, async (req) => {
       elicited.push(req.params.message);
+      if (o.elicit === "empty") return { action: "accept" };
       return o.elicit === "approve" ? { action: "accept", content: { approve: true } } : { action: "decline" };
     });
   }
@@ -93,6 +98,46 @@ async function world(o: { elicit?: Answer; vault?: number; env?: Record<string, 
 }
 
 describe("MCP server end to end", () => {
+  it("refuses a valid offer above the remaining budget before approving or spending", async () => {
+    const w = await world({ elicit: "approve", env: { BUDGET_CENTS: "28" } });
+    const initial = w.balance();
+    expect((await w.call("buy_data", { url: `${w.apiUrl}/v1/data/sol` })).body).toMatchObject({ paid_cents: 5 });
+    expect((await w.call("buy_data", { url: `${w.apiUrl}/v1/data/sol/signals` })).body).toMatchObject({ refused: "budget_exhausted" });
+    expect(w.balance()).toBe(initial - 5);
+    expect(w.elicited).toEqual([]);
+  });
+
+  it("binds payment to the key registered for the requested origin", async () => {
+    const w = await world();
+    const initial = w.balance();
+    w.mint.setProviders([{ provider_id: 0, pubkey: makeProviderKey().pubkey, name: "Feed", url: w.apiUrl, price_cents: 5, topics: [], active: true }]);
+    const r = await w.call("buy_data", { url: `${w.apiUrl}/v1/data/sol` });
+    expect(r.body).toMatchObject({ refused: "provider_not_allowed" });
+    expect(w.balance()).toBe(initial);
+  });
+
+  it("blocks quote and purchase redirects to an unregistered origin", async () => {
+    let contacted = false;
+    const other = serve({ hostname: "127.0.0.1", port: 0, fetch: () => {
+      contacted = true;
+      return new Response("other host");
+    } });
+    await new Promise<void>((resolve) => other.once("listening", resolve));
+    stops.push(() => new Promise<void>((resolve) => other.close(() => resolve())));
+    const w = await world({ redirectTo: `http://127.0.0.1:${(other.address() as { port: number }).port}` });
+    expect((await w.call("quote", { url: `${w.apiUrl}/redirect` })).isError).toBe(true);
+    expect((await w.call("buy_data", { url: `${w.apiUrl}/redirect` })).isError).toBe(true);
+    expect(contacted).toBe(false);
+  });
+
+  it("requires affirmative confirmation for an approval-gated purchase", async () => {
+    const w = await world({ elicit: "empty" });
+    const initial = w.balance();
+    const r = await w.call("buy_data", { url: `${w.apiUrl}/v1/data/sol/signals` });
+    expect(r.body).toMatchObject({ refused: "approval_denied" });
+    expect(w.balance()).toBe(initial);
+  });
+
   it("quotes a route's exact price from the 402 challenge without paying", async () => {
     const w = await world();
     const before = w.balance();

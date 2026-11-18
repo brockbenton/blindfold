@@ -3,6 +3,7 @@ export type RefusalReason =
   | "unit"
   | "mint"
   | "over_cap"
+  | "budget_exhausted"
   | "provider_not_allowed"
   | "provider_not_in_signer_set"
   | "insufficient_exact"

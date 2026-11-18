@@ -27,6 +27,11 @@ export interface WalletOptions {
   now?: () => number;
 }
 
+export interface PaymentLimits {
+  maxCents: number;
+  providerPubkeys: readonly string[];
+}
+
 export interface RecoverReport {
   returned: number;
   dropped: number;
@@ -41,6 +46,7 @@ export class AgentWallet implements SpendHost {
   readonly usdcMint: string;
   readonly approvalOverCents: number;
   currentUrl = "";
+  private limits?: PaymentLimits & { startingBalance: number };
   private approvals = 0;
   private mutex = new Mutex();
   private inFlight = new Map<string, PendingWire>();
@@ -124,8 +130,23 @@ export class AgentWallet implements SpendHost {
     return this.file.proofs.length;
   }
 
-  payFetch = (url: string | URL, init?: RequestInit): Promise<Response> =>
-    this.mutex.run(() => this.doPayFetch(url, init));
+  payFetch = (url: string | URL, init?: RequestInit, limits?: PaymentLimits): Promise<Response> =>
+    this.mutex.run(async () => {
+      if (limits) this.limits = { ...limits, startingBalance: this.balance() };
+      try {
+        return await this.doPayFetch(url, init);
+      } finally {
+        this.limits = undefined;
+      }
+    });
+
+  paymentBudget(): number {
+    return this.limits ? this.limits.maxCents - (this.limits.startingBalance - this.balance()) : Infinity;
+  }
+
+  acceptsProvider(pubkey: string): boolean {
+    return this.allowlist.includes(pubkey) && (!this.limits || this.limits.providerPubkeys.includes(pubkey));
+  }
 
   recoverPending(): Promise<RecoverReport> {
     return this.mutex.run(async () => {
@@ -147,7 +168,13 @@ export class AgentWallet implements SpendHost {
     this.file.proofs = this.file.proofs.filter((p) => !secrets.has(p.secret));
     const entry: PendingWire = { proofs: chosen, url: this.currentUrl, sent_at: this.now() };
     (this.file.pending ??= []).push(entry);
-    await this.persist();
+    try {
+      await this.persist();
+    } catch (e) {
+      this.file.proofs.push(...chosen);
+      this.file.pending.pop();
+      throw e;
+    }
     this.attempted = true;
     return entry;
   }

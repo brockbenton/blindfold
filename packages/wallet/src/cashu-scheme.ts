@@ -14,7 +14,8 @@ export interface SpendHost {
   readonly maxPerCallCents: number;
   /** Payments above this need `requestApproval` to answer "approved". */
   readonly approvalOverCents: number;
-  readonly allowlist: readonly string[];
+  paymentBudget(): number;
+  acceptsProvider(pubkey: string): boolean;
   readonly usdcMint: string;
   readonly currentUrl: string;
   /** Move `chosen` from proofs to a new pending entry and persist, before the paid retry is sent. */
@@ -76,8 +77,9 @@ export class CashuClientScheme implements SchemeNetworkClient {
     if (req.asset !== h.usdcMint) refuse("mint", { asset: req.asset });
     if (!mints.some((m) => normalizeMint(m) === normalizeMint(h.file.mint))) refuse("mint", { mints });
     if (!Number.isSafeInteger(cents) || cents < 1 || cents > h.maxPerCallCents) refuse("over_cap", { cents });
+    if (cents > h.paymentBudget()) refuse("budget_exhausted", { cents });
     const pk = providerPubkey.toLowerCase();
-    if (!h.allowlist.includes(pk)) refuse("provider_not_allowed", { provider: pk });
+    if (!h.acceptsProvider(pk)) refuse("provider_not_allowed", { provider: pk });
 
     const sel = selectExact(h.file.proofs, cents, pk);
     if ("error" in sel) return refuse(sel.error, { cents });
