@@ -26,6 +26,28 @@ Blindfold is a new x402 payment scheme on Solana. It works in four steps.
 
 4. Settle. The vault pays providers in rounded batches on a timer, so payouts don't line up with individual calls.
 
+Now let's see it.
+
+## 4b. Demo: Glass Map (~50s)
+
+Before recording: restart `pnpm replay`, wait for "Live crowd run ready", open `localhost:5174/vault/glass-map/`, click one tx and allow local network access. Record within 10 minutes.
+
+**Stage 0**
+This is our live dashboard on a local Solana chain. On the left, three autonomous agents buy research over x402 from TokenFeed, our test data provider. On the right, an observer we built watches the chain.
+
+**Stage 1**
+First, standard x402. Agent A buys two whale-flow reads and one depth read: 20 cents. Every purchase is a public transfer, and the memo names the token.
+*[Click Agent A's whale-flow tx → Explorer → back]*
+Anyone can read this. So the observer expects a SOL trade, and does the same for B and C. Three of three identified.
+
+**Stage 2**
+Now the same research, paid with Blindfold. Each owner deposits one dollar into the vault. Purchases are tokens sent over HTTP, so nothing reaches the chain. Zero of three.
+
+**Stage 3**
+Later, the vault pays TokenFeed once: 55 cents for everyone, and 2.45 stays in the vault. Who bought what, and when: unknown.
+
+## 4c. Back to the slides
+
 The standard rail gave away three of three purchases. Blindfold gave away zero.
 
 It also keeps the agent safe. Tokens only work at registered providers, so a poisoned feed can't redirect payment. The wallet enforces a budget and asks the owner before big purchases. And before paying, the agent checks Solana itself: if the vault holds less than the mint has issued, it pays nothing.

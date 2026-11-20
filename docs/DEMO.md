@@ -204,7 +204,7 @@ What it does not hide, and says so at the end: transfers that fund the owners fr
 
 ## Recorded replay
 
-The [public replay](https://brockbenton.github.io/blindfold/) plays the dashboards and terminal narration from recorded runs. Its landing page offers two replays: **Single agent** (`pnpm demo`, `replay.html`) and **Crowd** (`pnpm crowd`, `replay.html?demo=crowd`). The **Glass Map** ([`/vault/glass-map/`](https://brockbenton.github.io/blindfold/vault/glass-map/), source `scripts/vault-history/glass-map/`) replays the crowd recording as one map: what each agent bought next to what a public-chain observer can infer, scene by scene. Its "teaching lens" switches emphasis between the agents' view and the observer's view; clicking an agent focuses its paths.
+The [public replay](https://brockbenton.github.io/blindfold/) plays the dashboards and terminal narration from recorded runs. Its landing page offers two replays: **Single agent** (`pnpm demo`, `replay.html`) and **Crowd** (`pnpm crowd`, `replay.html?demo=crowd`). The **Glass Map** ([`/vault/glass-map/`](https://brockbenton.github.io/blindfold/vault/glass-map/), source `scripts/vault-history/glass-map/`) replays the crowd recording as one ledger: a lane per agent with what it bought, the boundary where a Blindfold request stops and a direct payment crosses onto the public chain, and what a public observer can infer. It has four stages, 0 to 3 (the run's acts 0, 1, 3 and 4), ending on the round-1 verdict; each shows its end state, with act 2's deposits already in place at stage 2. Clicking an agent dims the other lanes. Every transaction is an Explorer link; for a localnet recording those resolve only while its validator runs.
 
 **Publish a new devnet recording** with one command, once the demo passes:
 
@@ -220,7 +220,7 @@ It runs the devnet demo without pauses (same keys, costs and one-at-a-time rule 
 |---|---|
 | `pnpm demo --record FILE` | Record without publishing; add `--localnet` for a rehearsal |
 | `pnpm crowd --record FILE` | Record a crowd run without publishing |
-| `pnpm replay [FILE]` | Preview the site at http://localhost:5174, with FILE in place of the published recording of its demo; the Glass Map is at http://localhost:5174/vault/glass-map/ |
+| `pnpm replay [FILE]` | Preview the site at http://localhost:5174, with FILE in place of the published recording of its demo; the Glass Map is at http://localhost:5174/vault/glass-map/. Without a crowd FILE it also runs the crowd in the background on a local validator at port 8999 (about a minute; the Glass Map waits for it) and serves that run, so the Glass Map's Explorer links open its transactions until you stop the preview. `--recorded` serves the committed crowd recording instead |
 | `pnpm replay --site DIR` | Write the static site that the workflow deploys |
 
 On the page: Space plays and pauses, the arrow keys jump between acts, and the bar under the dashboard has one segment per act. `?act=3`, `?speed=2` and `?autoplay=0` set the start. Waits longer than 2.5 seconds, such as chain confirmations and the observer's polling, are shortened in playback, and an act too short to read its narration holds for a few seconds at its end; everything else plays as recorded. In a devnet recording the Explorer links open the real transactions. A localnet recording (the crowd, or a single-agent rehearsal) shows the shortened signatures without links, since nobody else can reach the validator it ran on. Controls that act on a live run are inert.

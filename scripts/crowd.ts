@@ -9,13 +9,17 @@
 //   pnpm crowd --no-pause      run straight through
 //   pnpm crowd --no-dashboard  skip the live crowd dashboard (default http://localhost:5173)
 //   pnpm crowd --record FILE   also save the dashboard events and narration for the replay page (pnpm replay FILE)
+//   pnpm crowd --hold          after the run, save the recording and keep the validator up (for its Explorer links)
+//                              until Ctrl+C or SIGTERM; pnpm replay runs it this way for the Glass Map
 //
 // Localnet only: a devnet crowd needs owners funded independently of each other (see docs/DEMO.md).
-// Optional env: DATABASE_URL (default: starts the repository's dev PostgreSQL).
+// Optional env: DATABASE_URL (default: starts the repository's dev PostgreSQL), LOCALNET_PORT (validator RPC port,
+// default 8899), CROWD_DASHBOARD_PORT (first port tried for the dashboard, default 5173).
 import "./lib/quiet.js";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { once } from "node:events";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -46,6 +50,9 @@ import { act, blank, bold, dim, green, kv, magenta, ok, pause, red, say, short, 
 
 const argv = process.argv.slice(2);
 const pausing = !argv.includes("--no-pause");
+const holding = argv.includes("--hold");
+const LOCALNET_PORT = Number(process.env.LOCALNET_PORT ?? 8899);
+const DASHBOARD_PORT = Number(process.env.CROWD_DASHBOARD_PORT ?? 5173);
 const recordArg = argv.indexOf("--record");
 if (recordArg >= 0 && !/^[^-]/.test(argv[recordArg + 1] ?? "")) throw new Error("--record needs a file name");
 const recorder = recordArg >= 0 ? startRecorder({ file: resolve(process.env.INIT_CWD ?? process.cwd(), argv[recordArg + 1]), demo: "crowd" }) : null;
@@ -132,12 +139,26 @@ async function startValidator(rpc: string, programId: PublicKey) {
   const so = join(ROOT, "target/deploy/vault.so");
   if (!existsSync(so)) fail(`${so} missing: run \`anchor build\` first`);
   const c = new Connection(rpc, SOLANA_COMMITMENT);
-  if (await c.getVersion().then(() => true, () => false)) fail("a validator is already running on 127.0.0.1:8899; stop it first");
+  if (await c.getVersion().then(() => true, () => false)) fail(`a validator is already running on ${rpc}; stop it first`);
   const ledger = mkdtempSync(join(tmpdir(), "bf-crowd-ledger-"));
-  const v: ChildProcess = spawn(`${solanaBin}/solana-test-validator`, ["--bpf-program", programId.toBase58(), so, "--ledger", ledger, "--reset", "--quiet"], {
+  // A non-default port also moves the faucet, gossip and dynamic ports so a second validator can run alongside.
+  const ports = LOCALNET_PORT === 8899 ? [] : [
+    "--rpc-port", String(LOCALNET_PORT), "--faucet-port", String(LOCALNET_PORT + 1000), "--gossip-port", String(LOCALNET_PORT + 2),
+    "--dynamic-port-range", `${LOCALNET_PORT + 10}-${LOCALNET_PORT + 60}`,
+  ];
+  const v: ChildProcess = spawn(`${solanaBin}/solana-test-validator`, ["--bpf-program", programId.toBase58(), so, "--ledger", ledger, "--reset", "--quiet", ...ports], {
     stdio: "ignore", env: { ...process.env, PATH: `${solanaBin}:${process.env.PATH}` },
   });
-  cleanups.push(() => { v.kill("SIGTERM"); });
+  // The ledger lives in the OS temp dir (RAM on tmpfs) and holds about 1M shreds, roughly 4.5 GB once full; remove it
+  // when the validator exits. That shred cap also means the run's transactions are pruned after about 15 minutes.
+  cleanups.push(async () => {
+    if (v.exitCode === null && v.signalCode === null) {
+      const exited = once(v, "exit");
+      v.kill("SIGTERM");
+      await Promise.race([exited, sleep(10_000)]);
+    }
+    rmSync(ledger, { recursive: true, force: true });
+  });
   for (let i = 0; i < 90; i++) {
     if (await c.getVersion().then(() => true, () => false)) return;
     await sleep(1000);
@@ -151,7 +172,7 @@ async function main() {
   blank();
 
   // ---------------------------------------------------------------- chain: everything funded before the observer looks
-  const rpc = "http://127.0.0.1:8899";
+  const rpc = `http://127.0.0.1:${LOCALNET_PORT}`;
   const programId = new PublicKey(DEFAULT_VAULT_PROGRAM_ID);
   step("starting a local Solana validator with the vault program");
   await startValidator(rpc, programId);
@@ -232,7 +253,7 @@ async function main() {
   const vaultStart = await tokenBalance(connection, vaultToken);
   let dash: Dashboard<CrowdEvent> | null = null;
   if (withDashboard) {
-    dash = dashboard = await startDashboard<CrowdEvent>({ port: await pickPort(5173), page: "crowd.html", onEmit: recorder?.event });
+    dash = dashboard = await startDashboard<CrowdEvent>({ port: await pickPort(DASHBOARD_PORT), page: "crowd.html", onEmit: recorder?.event });
     cleanups.push(() => dash!.close());
   }
   const emit = (e: CrowdEvent) => dash?.emit(e);
@@ -431,18 +452,44 @@ async function main() {
 }
 
 let failed = false;
-process.once("SIGINT", () => { failed = true; void cleanup().then(() => process.exit(130)); });
+let release: (() => void) | null = null; // set while --hold keeps the validator up
+let stopping = false;
+// A signal can arrive twice (the terminal's Ctrl+C and pnpm replay's SIGTERM); the first one stops the run.
+const onSignal = () => {
+  if (stopping) return;
+  stopping = true;
+  if (release) return release();
+  failed = true;
+  void cleanup().then(() => process.exit(130));
+};
+process.on("SIGINT", onSignal);
+process.on("SIGTERM", onSignal);
 async function cleanup() {
   for (const c of cleanups.reverse()) await Promise.resolve(c()).catch(() => undefined);
   cleanups.length = 0;
+}
+let saved = false;
+function saveRecording() {
+  if (!recorder || saved) return;
+  saved = true;
+  recorder.stop();
+  recorder.save();
+  console.log(dim(`Recording saved to ${argv[recordArg + 1]}; preview it with: pnpm replay ${argv[recordArg + 1]}`));
 }
 try {
   await main();
   blank();
   console.log(green(bold("Crowd demo complete.")));
   dashboard?.emit({ type: "done", ok: true });
-  // Keep the final dashboard on screen for recording.
-  if (dashboard) await pause(pausing, `Dashboard still live at ${dashboard.url}. Press Enter to exit`);
+  if (holding) {
+    // Saved before holding, so the replay can show this run while its validator still serves the Explorer links.
+    saveRecording();
+    console.log(dim(`Holding: the validator stays up at http://127.0.0.1:${LOCALNET_PORT} for the Explorer links. Ctrl+C to stop.`));
+    await new Promise<void>((r) => (release = r));
+  } else if (dashboard) {
+    // Keep the final dashboard on screen for recording.
+    await pause(pausing, `Dashboard still live at ${dashboard.url}. Press Enter to exit`);
+  }
 } catch (e) {
   failed = true;
   blank();
@@ -451,5 +498,6 @@ try {
   dashboard?.emit({ type: "done", ok: false });
 }
 await cleanup();
-if (recorder) { recorder.stop(); recorder.save(); console.log(dim(`Recording saved to ${argv[recordArg + 1]}; preview it with: pnpm replay ${argv[recordArg + 1]}`)); }
+// With --hold, the recording file means "a finished run is up"; a failed run leaves none (pnpm replay reads its exit code).
+if (!holding) saveRecording();
 process.exit(failed ? 1 : 0);

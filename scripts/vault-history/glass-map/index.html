@@ -5,69 +5,60 @@
   <meta name="referrer" content="no-referrer">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Blindfold · Glass Map</title>
-  <meta name="description" content="A replay of the recorded Blindfold crowd run: what three agents bought, next to what a public-chain observer could infer.">
+  <meta name="description" content="The Blindfold crowd run, stage by stage: what three agents bought, next to what a public-chain observer could infer.">
+  <link rel="preload" href="fonts/Inter-Bold.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="../../dashboard.css">
   <link rel="stylesheet" href="glass-map.css">
 </head>
 <body>
+  <a class="skip" href="#gm-main">skip to the map</a>
   <div class="gm" id="gm">
     <header class="gm-head">
-      <div>
-        <h1>Blindfold <span class="sep">/</span> Glass Map</h1>
-        <p class="sub">same crowd, two payment rails</p>
-      </div>
-      <div class="meta">
-        <div id="gm-mode">recorded crowd run</div>
-        <ul class="legend" aria-label="legend">
-          <li><i class="k-public"></i>solid = public</li>
-          <li><i class="k-private"></i>frosted = private</li>
-          <li><i class="k-inferred"></i>dashed = inferred</li>
-        </ul>
-      </div>
+      <p class="wordmark">Blindfold <span>Glass Map</span></p>
+      <nav class="stages" aria-label="stages">
+        <button type="button" class="step" id="gm-prev" aria-label="previous stage (left arrow)">←</button>
+        <ol class="scenes" id="gm-scenes"></ol>
+        <button type="button" class="step" id="gm-next" aria-label="next stage (right arrow)">→</button>
+      </nav>
     </header>
 
-    <nav class="controls" aria-label="playback">
-      <div class="group">
-        <button type="button" id="gm-play" aria-label="play (Space)">play</button>
-        <button type="button" id="gm-restart">restart</button>
-        <button type="button" id="gm-prev" aria-label="previous scene (left arrow)">← scene</button>
-        <button type="button" id="gm-next" aria-label="next scene (right arrow)">scene →</button>
-        <span class="clock" id="gm-clock">0:00 / 0:00</span>
-      </div>
-      <div class="group" role="group" aria-label="speed" id="gm-speed">
-        <button type="button" data-speed="1" aria-pressed="true">1×</button>
-        <button type="button" data-speed="2" aria-pressed="false">2×</button>
-        <button type="button" data-speed="4" aria-pressed="false">4×</button>
-      </div>
-      <div class="group" role="group" aria-label="teaching lens" id="gm-lens">
-        <span class="label">teaching lens</span>
-        <button type="button" data-lens="both" aria-pressed="true">Both</button>
-        <button type="button" data-lens="agent" aria-pressed="false">Agent view</button>
-        <button type="button" data-lens="observer" aria-pressed="false">Observer view</button>
-      </div>
-    </nav>
-    <ol class="scenes" id="gm-scenes" aria-label="scenes"></ol>
+    <main id="gm-main" tabindex="-1">
+      <section class="hero">
+        <div class="hero-text">
+          <span class="dash" aria-hidden="true"></span>
+          <h1 class="headline" id="gm-scene"></h1>
+          <p class="caption" id="gm-caption"></p>
+        </div>
+        <div class="score" id="gm-result" aria-live="polite"></div>
+      </section>
 
-    <main id="gm-main">
-      <section class="map-wrap" aria-label="glass map">
-        <svg id="gm-map" class="map" role="img" aria-label="Agents, the public chain and TokenFeed"></svg>
-        <div class="focus-note" id="gm-focus" hidden></div>
-      </section>
-      <section class="panel report" id="gm-report" hidden aria-label="the observer's report"></section>
-      <div class="panels">
-        <section class="panel truth" aria-labelledby="gm-truth-h">
-          <h2 id="gm-truth-h">ground truth <span>what the agents bought</span></h2>
-          <div id="gm-truth"></div>
+      <div class="map" id="gm-map">
+        <section class="col truth-col" aria-labelledby="gm-truth-h">
+          <div class="col-head">
+            <p class="side-label side-private">Private</p>
+            <h2 id="gm-truth-h">What each agent did</h2>
+            <p class="col-sub">Only the agent knows this.</p>
+          </div>
         </section>
-        <section class="panel observer" aria-labelledby="gm-obs-h">
-          <h2 id="gm-obs-h">observer view <span>what the public chain gives away</span></h2>
-          <div id="gm-observer"></div>
+        <section class="col rail-col" aria-labelledby="gm-rail-h">
+          <div class="col-head">
+            <p class="side-label">Boundary</p>
+            <h2 id="gm-rail-h">On chain?</h2>
+          </div>
+        </section>
+        <section class="col public-col" aria-labelledby="gm-public-h">
+          <div class="col-head">
+            <p class="side-label side-public">Public</p>
+            <h2 id="gm-public-h">What the observer sees, and concludes</h2>
+            <p class="col-sub" id="gm-feed"></p>
+          </div>
         </section>
       </div>
-      <section class="panel activity" aria-labelledby="gm-act-h">
-        <h2 id="gm-act-h">activity <span>newest first</span></h2>
-        <div class="ledger" id="gm-ledger"></div>
-      </section>
+
+      <details class="trace">
+        <summary>Full event trace <span class="trace-sum" id="gm-trace-sum"></span></summary>
+        <div class="table-wrap" id="gm-trace"></div>
+      </details>
     </main>
   </div>
   <script type="module" src="glass-map.js"></script>

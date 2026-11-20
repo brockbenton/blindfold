@@ -1,51 +1,61 @@
-// Glass Map: a replay of the recorded crowd run (crowd-recording.json, copied to the site root by `pnpm replay --site`)
-// that draws what the agents bought next to what a public-chain observer could infer. Static: no server, no SSE.
-// State is rebuilt from the recording's events up to the playback position, so any position always looks the same.
-import { parseRecording, buildTimeline, Player, indexAt, actAt, clock, isPublicUrl } from "../../replay-core.js";
+// Glass Map: the crowd run (crowd-recording.json, at the site root; pnpm replay serves a live run there) shown stage by
+// stage as a ledger: what each agent did privately, what reaches the chain, and what a public observer sees and
+// concludes. Each stage shows its settled end state; state is rebuilt from the recording's events, so a stage always
+// looks the same however you reach it.
+import { parseRecording, buildTimeline, indexAt, clock } from "../../replay-core.js";
 
 const RECORDING = "../../crowd-recording.json";
-const NS = "http://www.w3.org/2000/svg";
-const reduced = matchMedia("(prefers-reduced-motion: reduce)");
-
-// Logical map coordinates (the SVG viewBox); CSS scales the whole map.
-const W = 1200, H = 744;
-const AG = { x: 24, w: 180 };
-const BAND = { x: 400, w: 420, y: 52 };
-const FEED = { x: 980, w: 196 };
-const TOP = 104, BOTTOM = 404;
-const VAULT = { x: 650, y: 494, w: 120, h: 52 };
-const PAY_Y = VAULT.y + VAULT.h / 2;
-const CHIP = { x: 414, y: 440, w: 180, h: 26, gap: 34 };
+// Acts left out of the stage list. Their events still apply in order; nothing past the last stage is shown.
+const SKIP = new Set([2, 5, 6]);
+// Acts about Blindfold only: their stages hide the agents' x402 purchases and transfers, which earlier stages showed.
+const BLINDFOLD_ONLY = new Set([3, 4]);
+// Deck-style headline and short tab name per act; the recorded act title stays as the caption.
+const COPY = {
+  0: ["Three agents. One data feed.", "The crowd"],
+  1: ["Every call is public.", "Standard x402"],
+  3: ["Same research. Nothing on chain.", "Blindfold"],
+  4: ["One payout. No names.", "One payout"],
+};
 
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 const short = (a) => String(a).slice(0, 4) + "…" + String(a).slice(-4);
 const usdBase = (b) => "$" + (Number(b) / 1e6).toFixed(2);
 const usdCents = (c) => "$" + (Number(c) / 100).toFixed(2);
-const hhmmss = (iso) => (iso ? new Date(iso).toISOString().slice(11, 19) : "--:--:--");
-const tokenOf = (label) => String(label).trim().split(/\s+/).at(-1);
-const routeOfMemo = (memo) => String(memo).replace(/[-/]+/g, " ");
 const sigOf = (url) => /\/tx\/([^/?#]+)/.exec(String(url ?? ""))?.[1];
 const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
-const ANSWER = { "NO SIGNAL": "no signal", "CANNOT ATTRIBUTE": "can't tell", PARTIAL: "amounts leak" };
+const sum = (xs, f) => xs.reduce((s, x) => s + Number(f(x)), 0);
 
-function svg(tag, attrs = {}, parent) {
-  const n = document.createElementNS(NS, tag);
-  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
-  parent?.append(n);
+/** Creates an element; children are nodes or text, and empty ones ("", null, false) are skipped. */
+function el(tag, attrs = {}, ...children) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) if (v !== undefined && v !== null && v !== false) n.setAttribute(k, String(v));
+  n.append(...children.flat().filter((c) => c !== "" && c !== null && c !== undefined && c !== false));
   return n;
 }
-function label(parent, x, y, str, cls, attrs = {}) {
-  const t = svg("text", { x, y, class: cls, ...attrs }, parent);
-  t.textContent = str;
-  return t;
-}
+// Every colored label carries its meaning as text too, in three words: public (on chain), private (off chain) and
+// guess (the observer's inference).
+const VIS = { onchain: ["public", "public"], offchain: ["private", "private"], batched: ["public", "public"], inferred: ["inferred", "guess"] };
+const TONE = { "NO SIGNAL": "private", "CANNOT ATTRIBUTE": "private", PARTIAL: "inferred" };
+const tag = (kind, text = kind) => el("span", { class: `tag t-${kind}` }, text);
+const visTag = (vis) => tag(...VIS[vis]);
+// The observer sees which token a wallet researches, not which way it will trade.
+const conclusion = (s) => (!s.token ? "no token in the memo → following the wallet"
+  : /^BUY\b/.test(s.action) ? `researches ${s.token} → expect a ${s.token} trade` : `bought ${s.token} data once → watching`);
+// Every transaction links to its Explorer page, localnet ones included: those resolve only while that validator runs.
+const txLink = (x) => (x.sig ? (x.link ? el("a", { class: "tx", href: x.link, target: "_blank", rel: "noopener", title: x.sig }, `tx ${x.sig.slice(0, 4)}`) : `tx ${x.sig.slice(0, 4)}`) : "");
+const txs = (xs) => el("span", { class: "txs" }, xs.map(txLink));
 
 async function load() {
   let rec;
   try {
-    const res = await fetch(RECORDING, { cache: "no-cache" });
-    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`.trim());
+    let res = await fetch(RECORDING, { cache: "no-cache" });
+    // pnpm replay answers 503 while its live crowd run is still going; wait for it rather than show an older run.
+    while (res.status === 503) {
+      $("gm-scene").textContent = `Waiting for the live crowd run · ${await res.text()}`;
+      await new Promise((r) => setTimeout(r, 2000));
+      res = await fetch(RECORDING, { cache: "no-cache" });
+    }
+    if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status} ${res.statusText}`.trim());
     rec = parseRecording(await res.json());
   } catch (err) {
     throw new Error(`Could not load the crowd recording ${RECORDING}: ${err.message}`);
@@ -57,8 +67,8 @@ async function load() {
 }
 
 function fail(message) {
-  $("gm-main").innerHTML = `<section class="panel error" role="alert"><h2>recording unavailable</h2><p>${esc(message)}</p></section>`;
-  for (const b of document.querySelectorAll(".controls button")) b.disabled = true;
+  $("gm-main").replaceChildren(el("section", { class: "error", role: "alert" }, el("h2", {}, "recording unavailable"), el("p", {}, message)));
+  for (const b of document.querySelectorAll(".stages button")) b.disabled = true;
 }
 
 try {
@@ -69,169 +79,94 @@ try {
 
 function start({ rec, agents }) {
   const root = $("gm");
-  const local = rec.mode === "localnet";
-  $("gm-mode").textContent = "recorded crowd run · " + (local ? "local validator" : `public ${rec.mode ?? "network"}`);
-  const timeline = buildTimeline(rec);
-  const { entries, acts } = timeline;
-  const player = new Player({ duration: timeline.duration });
+  const { entries, acts, duration } = buildTimeline(rec);
+  if (!acts.length) throw new Error(`${RECORDING} has no acts`);
+
+  // Act k ends at the entry before the next act event: a round's last balance and its verdict are logged while the
+  // next act's banner is printing, and still belong to act k.
+  const endOf = (k) => {
+    if (k === acts.length - 1) return duration;
+    const i = entries.findIndex((x) => x.kind === "event" && x.event?.type === "act" && x.event.n === acts[k + 1].n);
+    return Math.max(acts[k].t, i > 0 ? entries[i - 1].t : acts[k + 1].t - 1);
+  };
+  // The stages a presenter steps through, numbered from 0 by position; each shows its act's end state.
+  const stages = acts.flatMap((a, k) => (SKIP.has(a.n) && k > 0 ? [] : [{
+    title: a.title, end: endOf(k), x402: !BLINDFOLD_ONLY.has(a.n), headline: COPY[a.n]?.[0] ?? a.title, short: COPY[a.n]?.[1] ?? a.title,
+  }]));
+  const last = stages.length - 1;
 
   // ------------------------------------------------------------------------------------------------- layout
-  const n = agents.length;
-  const agentY = agents.map((_, i) => TOP + ((BOTTOM - TOP) / n) * (i + 0.5));
-  const calls = rec.events.map((e) => e.event).filter((e) => e?.type === "call");
-  const routeLabels = [...new Set(calls.map((e) => String(e.label)))].sort((a, b) => a.localeCompare(b));
-  const tokens = [...new Set([...agents.map((a) => a.token), ...routeLabels.map(tokenOf)])].filter((t) => routeLabels.some((l) => tokenOf(l) === t));
-  const groups = new Map();
-  const routeY = new Map();
-  let gy = TOP - 12;
-  for (const tok of tokens) {
-    groups.set(tok, gy);
-    gy += 22;
-    for (const l of routeLabels.filter((r) => tokenOf(r) === tok)) { routeY.set(l, gy); gy += 24; }
-    gy += 10;
-  }
-
+  // One grid row per agent between the column heads and the vault row; the columns share rows, so nothing crosses.
   const map = $("gm-map");
-  map.setAttribute("viewBox", `0 0 ${W} ${H}`);
-  const layer = (cls) => svg("g", { class: cls }, map);
-  const lHeads = layer("heads");
-  label(lHeads, AG.x, 34, "agents know", "col");
-  label(lHeads, BAND.x + BAND.w / 2, 34, "what Solana sees", "col", { "text-anchor": "middle" });
-  label(lHeads, FEED.x, 34, "TokenFeed", "col");
-  const lPrivate = layer("under");
-  svg("rect", { class: "band", x: BAND.x, y: BAND.y, width: BAND.w, height: H - 12 - BAND.y, rx: 16 }, map);
-  const lEdges = layer("edges");
-  const lNodes = layer("nodes");
-  const lPulses = layer("pulses");
-
-  // TokenFeed and its routes.
-  svg("rect", { class: "node feed", x: FEED.x, y: BAND.y, width: FEED.w, height: PAY_Y + 40 - BAND.y, rx: 12 }, lNodes);
-  label(lNodes, FEED.x + 12, BAND.y + 22, "TokenFeed · one provider", "feed-title");
-  const routeEls = new Map();
-  for (const [tok, y] of groups) label(lNodes, FEED.x + 12, y + 4, tok, "group");
-  for (const [l, y] of routeY) {
-    const g = svg("g", { class: "route idle" }, lNodes);
-    label(g, FEED.x + 22, y + 4, l, "route-name");
-    routeEls.set(l, label(g, FEED.x + FEED.w - 12, y + 4, "", "route-n", { "text-anchor": "end" }));
-  }
-  label(lNodes, FEED.x + 12, PAY_Y + 4, "batched payouts in", "route-name");
-
-  // The vault, its payout edge, the observer's blindfold marker and the public ledger, all inside the band.
-  svg("rect", { class: "node vault", x: VAULT.x, y: VAULT.y, width: VAULT.w, height: VAULT.h, rx: 10 }, lNodes);
-  label(lNodes, VAULT.x + VAULT.w / 2, VAULT.y + 22, "Blindfold vault", "vault-title", { "text-anchor": "middle" });
-  const vaultSub = label(lNodes, VAULT.x + VAULT.w / 2, VAULT.y + 40, "", "sub", { "text-anchor": "middle" });
-  const payout = svg("path", { class: "edge payout off", d: `M ${VAULT.x + VAULT.w} ${PAY_Y} L ${FEED.x} ${PAY_Y}` }, lEdges);
-  const payoutLabel = label(lEdges, (VAULT.x + VAULT.w + FEED.x) / 2, PAY_Y - 8, "", "elabel payout-label", { "text-anchor": "middle" });
-  const payoutSub = label(lEdges, (VAULT.x + VAULT.w + FEED.x) / 2, PAY_Y + 16, "", "elabel sub", { "text-anchor": "middle" });
-  const marker = label(lEdges, VAULT.x + VAULT.w / 2, VAULT.y - 20, "", "marker", { "text-anchor": "middle" });
-  const lChips = svg("g", { class: "chips" }, lEdges);
-  const forcedEdge = svg("path", { class: "edge infer forced off" }, lEdges);
-  const FORCED_Y = 596; // the forced-owner inference runs below the chips, so it never crosses another depositor
-  const forcedLabel = label(lEdges, 700, FORCED_Y + 20, "", "elabel forced-label", { "text-anchor": "middle" });
-  const ledgerTop = 640;
-  label(lNodes, BAND.x + 14, ledgerTop, "public ledger · latest", "col small");
-  const lLedger = svg("g", { class: "band-ledger" }, lNodes);
-
-  // Agents.
-  const agentEls = agents.map((a, i) => {
-    const cy = agentY[i];
-    const g = svg("g", { class: "agent", "data-agent": i, tabindex: 0, role: "button",
-      "aria-label": `Agent ${a.name}, researching ${a.token}, wallet ${a.wallet}, owner ${a.owner}. Focus this agent.` }, lNodes);
-    svg("title", {}, g).textContent = `Agent ${a.name} · ${a.token}\nwallet ${a.wallet}\nowner ${a.owner}`;
-    svg("rect", { class: "node", x: AG.x, y: cy - 38, width: AG.w, height: 76, rx: 12 }, g);
-    label(g, AG.x + 14, cy - 12, `Agent ${a.name} · ${a.token}`, "agent-name");
-    label(g, AG.x + 14, cy + 6, short(a.wallet), "sub");
-    return { g, stats: label(g, AG.x + 14, cy + 24, "", "stats"), http: label(lEdges, BAND.x - 6, cy + 44, "HTTP token · no transaction", "http off", { "text-anchor": "end", "data-agent": i }) };
+  map.style.setProperty("--rows", agents.length + 2);
+  const [truthCol, railCol, pubCol] = map.querySelectorAll(".col");
+  const lanes = agents.map((a, i) => {
+    const btn = el("button", { type: "button", class: "agent", "aria-pressed": "false" },
+      el("span", { class: "agent-name" }, `Agent ${a.name}`), el("span", { class: "agent-token" }, `researching ${a.token}`));
+    const body = el("div", { class: "lane-body" });
+    const rail = el("div", { class: "cell rail", "data-agent": i });
+    const pub = el("div", { class: "cell pub", "data-agent": i });
+    truthCol.append(el("div", { class: "cell lane", "data-agent": i }, btn, body));
+    railCol.append(rail);
+    pubCol.append(pub);
+    btn.addEventListener("click", (e) => { e.stopPropagation(); setFocus(i); });
+    return { btn, body, rail, pub };
   });
-
-  // One edge per side/agent/route pair seen anywhere in the recording, hidden until its first call.
-  const edges = new Map();
-  const ax = AG.x + AG.w;
-  for (const e of calls) {
-    const key = `${e.side}|${e.agent}|${e.label}`;
-    if (edges.has(key) || !routeY.has(String(e.label)) || !(e.agent in agentY)) continue;
-    const cy = agentY[e.agent], ry = routeY.get(String(e.label));
-    if (e.side === "exact") {
-      const path = svg("path", { class: "edge exact off", "data-agent": e.agent, d: `M ${ax} ${cy - 18} C ${ax + 260} ${cy - 18}, ${FEED.x - 260} ${ry}, ${FEED.x} ${ry}` }, lEdges);
-      edges.set(key, { side: "exact", path, text: label(lEdges, 0, 0, "", "elabel exact-label off", { "text-anchor": "end", "data-agent": e.agent }) });
-    } else {
-      const k = [...edges.values()].filter((x) => x.side === "blindfold" && x.agent === e.agent).length;
-      const by = cy + 6 + k * 16;
-      const path = svg("path", { class: "edge blind off", "data-agent": e.agent, d: `M ${ax} ${cy + 4} C ${ax + 100} ${cy + 4}, ${BAND.x - 100} ${by}, ${BAND.x - 4} ${by}` }, lEdges);
-      const hidden = svg("path", { class: "edge private off", "data-agent": e.agent, d: `M ${BAND.x - 4} ${by} C ${BAND.x + 200} ${by}, ${FEED.x - 220} ${ry + 5}, ${FEED.x} ${ry + 5}` }, lPrivate);
-      edges.set(key, { side: "blindfold", agent: e.agent, path, hidden, text: label(lEdges, BAND.x - 10, by - 4, "", "elabel blind-label off", { "text-anchor": "end", "data-agent": e.agent }) });
-    }
-  }
-  // The observer's exact-side inference: payer wallet -> the token its memos name.
-  const infer = agents.map((_, i) => ({
-    path: svg("path", { class: "edge infer off", "data-agent": i }, lEdges),
-    text: label(lEdges, 0, 0, "", "elabel infer-label off", { "data-agent": i }),
-  }));
+  const vaultRail = el("div", { class: "cell rail", "data-agent": "vault" });
+  const vaultCell = el("div", { class: "cell pub vault", "data-agent": "vault" });
+  truthCol.append(el("div", { class: "cell lane vault-lane", "data-agent": "vault" }, el("p", { class: "agent-name" }, "Blindfold vault"), el("p", { class: "muted" }, "shared by every owner")));
+  railCol.append(vaultRail);
+  pubCol.append(vaultCell);
 
   // ------------------------------------------------------------------------------------------------- state
-  let state, applied, pulses = [], focus = -1, lens = "both", lastScene = -2;
+  let state, applied, stage = 0, focus = -1;
 
   function reset() {
     state = {
-      act: -1,
-      edges: new Map(), // key -> { side, agent, route, n, cents, public }
-      agentCalls: agents.map(() => 0),
-      agentCents: agents.map(() => 0),
-      tokens: null,
-      owners: [], // { addr, deposits: [{ round, base }], forced: false }
-      payouts: [], // { round, base }
-      exact: null,
+      routes: agents.map(() => new Map()), // `${side}|${label}` -> { side, label, n, cents }
+      payments: [], // direct payments: { agent, from, memo, base, sig, link }
+      deposits: [], // { from, round, base, forced, sig, link }
+      payouts: [], // { round, base, sig, link }
+      exact: null, // latest observer reading of the direct payments
       verdicts: new Map(), // round -> latest vault event
-      pub: [], // public chain rows for the band ledger
-      rows: [], // activity rows
+      trace: [], // every event as a row: { t, rail, agent, who, what, amount, vis, sig, link, from, round }
     };
     applied = 0;
-    for (const p of pulses) p.el.remove();
-    pulses = [];
   }
 
   const agentByWallet = (w) => agents.findIndex((a) => a.wallet === w);
+  const agentByOwner = (w) => agents.findIndex((a) => a.owner === w);
+  const who = (i, addr) => (i >= 0 ? `Agent ${agents[i].name}` : short(addr));
 
-  function apply(e, t, animate) {
+  function apply(e, t) {
     switch (e?.type) {
-      case "act":
-        if (Number.isSafeInteger(e.n)) state.act = e.n;
-        break;
       case "call": {
-        const key = `${e.side}|${e.agent}|${e.label}`;
-        const s = state.edges.get(key) ?? { side: e.side, agent: e.agent, route: String(e.label), n: 0, cents: 0, public: false };
-        s.n++;
-        s.cents += Number(e.cents) || 0;
-        state.edges.set(key, s);
-        if (e.agent in state.agentCalls) { state.agentCalls[e.agent]++; state.agentCents[e.agent] += Number(e.cents) || 0; }
-        state.rows.push({ t, side: e.side, agent: e.agent, who: agents[e.agent] ? `Agent ${agents[e.agent].name}` : "?", what: String(e.label),
-          amount: usdCents(e.cents), vis: e.side === "exact" ? "onchain" : "offchain" });
-        if (animate) pulse(edges.get(key));
+        if (!agents[e.agent]) break;
+        const label = String(e.label);
+        const routes = state.routes[e.agent];
+        const key = `${e.side}|${label}`;
+        const r = routes.get(key) ?? { side: e.side, label, n: 0, cents: 0 };
+        r.n++;
+        r.cents += Number(e.cents) || 0;
+        routes.set(key, r);
+        state.trace.push({ t, rail: e.side === "exact" ? "x402" : "Blindfold", agent: e.agent, who: who(e.agent), amount: usdCents(e.cents),
+          what: `${label} · ${e.side === "exact" ? "x402 purchase, paid by public transfer" : "Blindfold purchase, token over HTTP, no transfer"}`, vis: e.side === "exact" ? "onchain" : "offchain" });
         break;
       }
       case "chain": {
-        const sig = sigOf(e.url);
-        const link = e.url && isPublicUrl(e.url) ? e.url : null;
+        const tx = { sig: sigOf(e.url), link: e.url || null };
+        const row = { t, amount: usdBase(e.amountBase), ...tx };
         if (e.kind === "direct_payment") {
-          const i = agentByWallet(e.from);
-          const s = state.edges.get(`exact|${i}|${routeOfMemo(e.memo)}`);
-          if (s) s.public = true;
-          state.pub.push({ time: e.time, text: `${short(e.from)} → feed · ${e.memo}`, amount: usdBase(e.amountBase), agent: i });
-          state.rows.push({ t, side: "exact", agent: i, who: i >= 0 ? `Agent ${agents[i].name}` : short(e.from), what: `direct payment ${short(e.from)} → feed · ${e.memo}`,
-            amount: usdBase(e.amountBase), vis: "onchain", sig, link });
+          const a = agentByWallet(e.from);
+          state.payments.push({ agent: a, from: e.from, memo: String(e.memo), base: e.amountBase, ...tx });
+          state.trace.push({ ...row, rail: "x402", agent: a, who: who(a, e.from), what: `transfer ${short(e.from)} → TokenFeed, memo ${e.memo}`, vis: "onchain" });
         } else if (e.kind === "vault_deposit") {
-          let o = state.owners.find((x) => x.addr === e.from);
-          if (!o) state.owners.push((o = { addr: e.from, deposits: [], forced: false }));
-          o.deposits.push({ round: e.round, base: e.amountBase });
-          state.pub.push({ time: e.time, text: `deposit ${short(e.from)} → vault`, amount: usdBase(e.amountBase), from: e.from, round: e.round });
-          state.rows.push({ t, side: "blindfold", agent: "vault", who: "vault", what: `deposit ${short(e.from)} → vault · round ${e.round}`,
-            amount: usdBase(e.amountBase), vis: "onchain", sig, link, from: e.from, round: e.round });
+          state.deposits.push({ from: e.from, round: e.round, base: e.amountBase, forced: false, ...tx });
+          state.trace.push({ ...row, rail: "vault", agent: agentByOwner(e.from), who: short(e.from), what: `deposit ${short(e.from)} → vault (round ${e.round})`,
+            vis: "onchain", from: e.from, round: e.round });
         } else if (e.kind === "vault_payout") {
-          state.payouts.push({ round: e.round, base: e.amountBase });
-          state.pub.push({ time: e.time, text: "vault → feed · batched", amount: usdBase(e.amountBase) });
-          state.rows.push({ t, side: "blindfold", agent: "vault", who: "vault", what: `payout vault → TokenFeed · round ${e.round}`,
-            amount: usdBase(e.amountBase), vis: "batched", sig, link });
-          if (animate && !reduced.matches) pulseAlong(payout, false);
+          state.payouts.push({ round: e.round, base: e.amountBase, ...tx });
+          state.trace.push({ ...row, rail: "vault", agent: "vault", who: "vault", what: `vault → TokenFeed, one transfer (round ${e.round})`, vis: "batched" });
         }
         break;
       }
@@ -241,296 +176,198 @@ function start({ rec, agents }) {
       case "vault":
         state.verdicts.set(e.round, e);
         for (const addr of e.forced ?? []) {
-          const o = state.owners.find((x) => x.addr === addr);
-          if (o) o.forced = true;
-          for (const r of [...state.rows, ...state.pub]) if (r.from === addr && r.round === e.round) r.forced = true;
+          for (const d of state.deposits) if (d.from === addr && d.round === e.round) d.forced = true;
+          for (const r of state.trace) if (r.from === addr && r.round === e.round) r.vis = "inferred";
         }
-        break;
-      case "tokens":
-        if (Array.isArray(e.cents)) state.tokens = e.cents;
         break;
     }
   }
 
-  /** Applies every event up to playback position `pos`; going backwards rebuilds from the start. */
+  /** Applies every event up to position `pos`; going backwards rebuilds from the start. */
   function sync(pos) {
     const idx = indexAt(entries, pos);
-    const scene = actAt(acts, pos);
-    if (idx === applied && scene === lastScene) return;
     if (idx < applied) reset();
-    const animate = player.playing && idx - applied <= 4 && !reduced.matches;
-    for (let i = applied; i < idx; i++) if (entries[i].kind === "event") apply(entries[i].event, entries[i].t, animate);
-    applied = idx;
-    lastScene = scene;
-    render(scene);
-  }
-
-  // ------------------------------------------------------------------------------------------------- pulses
-  function pulse(edge) {
-    if (edge) pulseAlong(edge.path, edge.side === "blindfold");
-  }
-  function pulseAlong(path, fade) {
-    const el = svg("circle", { r: 5, class: "pulse " + (fade ? "blind" : path.classList.contains("payout") ? "payout" : "exact") }, lPulses);
-    pulses.push({ el, path, len: 0, start: performance.now(), dur: 1100 / player.speed, fade });
-  }
-  function animatePulses(now) {
-    pulses = pulses.filter((p) => {
-      const f = (now - p.start) / p.dur;
-      if (f >= 1) { p.el.remove(); return false; }
-      p.len ||= p.path.getTotalLength(); // after render: the path may have been hidden when the pulse was queued
-      const pt = p.path.getPointAtLength(f * p.len);
-      p.el.setAttribute("cx", pt.x);
-      p.el.setAttribute("cy", pt.y);
-      p.el.style.opacity = p.fade ? String(Math.max(0, 1 - Math.max(0, f - 0.6) / 0.4)) : "1";
-      return true;
-    });
+    for (let i = applied; i < idx; i++) if (entries[i].kind === "event") apply(entries[i].event, entries[i].t);
+    applied = Math.max(applied, idx);
   }
 
   // ------------------------------------------------------------------------------------------------- render
-  const weight = (n) => Math.min(n, 6);
-  function setOff(el, off) { el.classList.toggle("off", off); }
-
-  function render(scene) {
-    // Edges.
-    for (const [key, e] of edges) {
-      const s = state.edges.get(key);
-      const on = !!s;
-      for (const el of [e.path, e.hidden, e.text]) if (el) setOff(el, !on);
-      if (!on) continue;
-      e.path.style.strokeWidth = String(1.2 + weight(s.n) * 0.5);
-      e.path.style.strokeOpacity = String(0.35 + weight(s.n) * 0.1);
-      if (e.hidden) e.hidden.style.strokeWidth = e.path.style.strokeWidth;
-      e.path.classList.toggle("public", s.public);
-      e.text.textContent = `${plural(s.n, "read")} · ${usdCents(s.cents)}`;
-      if (e.side === "exact") {
-        const pt = e.path.getPointAtLength(e.path.getTotalLength() * 0.86);
-        e.text.setAttribute("x", pt.x - 6);
-        e.text.setAttribute("y", pt.y - 5);
-      }
-    }
-    for (const [l, el] of routeEls) {
-      const reads = [...state.edges.values()].filter((s) => s.route === l).reduce((a, s) => a + s.n, 0);
-      el.textContent = reads ? String(reads) : "";
-      el.parentNode.classList.toggle("idle", !reads);
-    }
-
-    // Agents.
-    agents.forEach((a, i) => {
-      const bal = state.tokens && Number.isFinite(state.tokens[i]) ? ` · token ${usdCents(state.tokens[i])}` : "";
-      agentEls[i].stats.textContent = `${plural(state.agentCalls[i], "call")}${bal}`;
-      setOff(agentEls[i].http, ![...state.edges.values()].some((s) => s.side === "blindfold" && s.agent === i));
-    });
-
-    // Observer inference on the exact side.
-    const signals = state.exact?.signals ?? [];
-    infer.forEach((x, i) => {
-      const s = signals.find((g) => agentByWallet(g.payer) === i && g.token);
-      const hy = s && groups.get(s.token);
-      setOff(x.path, hy === undefined);
-      setOff(x.text, hy === undefined);
-      if (hy === undefined) return;
-      const cy = agentY[i];
-      x.path.setAttribute("d", `M ${ax} ${cy - 30} C ${ax + 220} ${cy - 90}, ${FEED.x - 240} ${hy - 50}, ${FEED.x} ${hy}`);
-      const pt = x.path.getPointAtLength(x.path.getTotalLength() * 0.3);
-      x.text.setAttribute("x", pt.x);
-      x.text.setAttribute("y", pt.y - 12);
-      x.text.textContent = `${short(s.payer)} → ${s.token}`;
-    });
-
-    // Vault side.
-    const deposits = state.owners.reduce((a, o) => a + o.deposits.length, 0);
-    vaultSub.textContent = deposits ? plural(deposits, "deposit") : "no deposits yet";
-    lChips.replaceChildren();
-    state.owners.forEach((o, k) => {
-      const y = CHIP.y + k * CHIP.gap, cy = y + CHIP.h / 2;
-      const g = svg("g", { class: "chip" + (o.forced ? " forced" : ""), "data-agent": "vault" }, lChips);
-      svg("title", {}, g).textContent = `depositor ${o.addr}`;
-      svg("path", { class: "edge deposit", d: `M ${CHIP.x + CHIP.w} ${cy} C ${CHIP.x + CHIP.w + 30} ${cy}, ${VAULT.x - 30} ${PAY_Y}, ${VAULT.x} ${PAY_Y}` }, g);
-      svg("rect", { class: "node chip-box", x: CHIP.x, y, width: CHIP.w, height: CHIP.h, rx: 6 }, g);
-      label(g, CHIP.x + 8, cy + 4, short(o.addr), "chip-addr");
-      label(g, CHIP.x + CHIP.w - 8, cy + 4, o.deposits.map((d) => usdBase(d.base)).join(" · "), "chip-amt", { "text-anchor": "end" });
-    });
-    setOff(payout, !state.payouts.length);
-    payoutLabel.textContent = state.payouts.length ? `${plural(state.payouts.length, "payout")} · ${usdBase(state.payouts.reduce((a, p) => a + Number(p.base), 0))}` : "";
-    payoutSub.textContent = state.payouts.length ? "batched · payer unknown" : "";
-    const r1 = state.verdicts.get(1);
-    marker.textContent = deposits || state.payouts.length ? "? → ?" + (r1 ? " · " + (ANSWER[r1.action] ?? r1.action.toLowerCase()) : "") : "";
-
-    const forced = state.owners.findIndex((o) => o.forced);
-    setOff(forcedEdge, forced < 0);
-    if (forced >= 0) {
-      const cy = CHIP.y + forced * CHIP.gap + CHIP.h / 2;
-      forcedEdge.setAttribute("d", `M ${CHIP.x} ${cy} C ${CHIP.x - 12} ${cy}, ${CHIP.x - 12} ${FORCED_Y}, ${CHIP.x + 40} ${FORCED_Y} L ${FEED.x - 80} ${FORCED_Y} C ${FEED.x - 30} ${FORCED_Y}, ${FEED.x - 30} ${PAY_Y + 24}, ${FEED.x} ${PAY_Y + 24}`);
-      const owner = agents.findIndex((a) => a.owner === state.owners[forced].addr);
-      forcedLabel.textContent = `${short(state.owners[forced].addr)}${owner >= 0 ? ` (Agent ${agents[owner].name}'s owner)` : ""} must have paid the feed · token unknown`;
-    } else forcedLabel.textContent = "";
-
-    lLedger.replaceChildren();
-    state.pub.slice(-5).reverse().forEach((r, k) => {
-      const g = svg("g", { class: "ledger-row" + (r.forced ? " forced" : ""), "data-agent": r.agent ?? "vault" }, lLedger);
-      const y = ledgerTop + 20 + k * 17;
-      label(g, BAND.x + 14, y, hhmmss(r.time), "sub");
-      label(g, BAND.x + 84, y, r.text, "ledger-text");
-      label(g, BAND.x + BAND.w - 14, y, r.amount, "ledger-amt", { "text-anchor": "end" });
-    });
-
-    renderPanels();
-    renderReport();
-    renderScenes(scene);
+  function render() {
+    renderLanes();
+    renderVault();
+    renderResult();
+    renderTrace();
+    renderStage();
     applyFocus();
   }
 
-  function renderPanels() {
-    const truth = [...state.edges.values()].sort((a, b) => a.agent - b.agent || (a.side === b.side ? a.route.localeCompare(b.route) : a.side === "exact" ? -1 : 1));
-    $("gm-truth").innerHTML = truth.length
-      ? `<table><thead><tr><th>agent</th><th>token</th><th>route</th><th>rail</th><th class="num">reads</th><th class="num">spend</th></tr></thead><tbody>${truth.map((s) =>
-          `<tr data-agent="${s.agent}" class="${s.side}"><td>Agent ${esc(agents[s.agent]?.name ?? "?")}</td><td>${esc(agents[s.agent]?.token ?? "?")}</td><td>${esc(s.route)}</td><td>${s.side === "exact" ? "standard x402" : "Blindfold"}</td><td class="num">${s.n}</td><td class="num">${usdCents(s.cents)}</td></tr>`).join("")}</tbody></table>`
-      : '<p class="empty">no purchases yet</p>';
+  const none = (text) => el("p", { class: "none" }, text);
+  const block = (title, items) => (items.length ? el("div", { class: "block" }, el("h3", {}, title), el("ul", { class: "list" }, items)) : "");
+  // "2 × $0.05 = $0.10": the same arithmetic on both sides, so the private and public totals visibly match.
+  const times = (n, cents) => `${n} × ${usdCents(cents / n)} = ${usdCents(cents)}`;
+  const cellText = (r) => (r ? times(r.n, r.cents) : "—");
 
-    const signals = [...(state.exact?.signals ?? [])].sort((a, b) => agentByWallet(a.payer) - agentByWallet(b.payer));
-    const named = signals.filter((s) => s.token).length;
-    const exactHtml = signals.length
-      ? `<div class="verdict-line alarm"><b>${named} of ${n} named</b>${state.exact.final ? " · every wallet tied to its token" : ""}</div><ul class="obs">${signals.map((s) => {
-          const i = agentByWallet(s.payer);
-          return `<li data-agent="${i}"><span class="addr">${esc(short(s.payer))}</span>${i >= 0 ? ` <span class="muted">(Agent ${esc(agents[i].name)})</span>` : ""} → ${esc(s.token || "token unknown")} · ${esc(s.action)} · ${plural(Number(s.calls), "read")}</li>`;
-        }).join("")}</ul>`
-      : '<p class="empty">no direct payments yet</p>';
+  function renderLanes() {
+    agents.forEach((a, i) => {
+      const { btn, body, rail, pub } = lanes[i];
+      // Rails shown: x402 only on stages that show it, and only rails with a purchase so far (no empty "—" column).
+      const sides = (stages[stage].x402 ? ["exact", "blindfold"] : ["blindfold"])
+        .filter((s) => agents.some((_, j) => [...state.routes[j].values()].some((r) => r.side === s)));
+      const routes = [...state.routes[i].values()].filter((r) => sides.includes(r.side));
+      const n = sum(routes, (r) => r.n);
+      btn.setAttribute("aria-label", `Focus Agent ${a.name}, researching ${a.token}: ${plural(n, "purchase")}`);
 
-    const rounds = [...state.verdicts.keys()].sort((a, b) => a - b);
-    const blindHtml = rounds.length
-      ? rounds.map((r) => {
-          const v = state.verdicts.get(r);
-          const tone = v.action === "PARTIAL" ? "warn" : ANSWER[v.action] ? "calm" : "alarm";
-          let forced = "";
-          for (const addr of v.forced ?? []) {
-            const i = agents.findIndex((a) => a.owner === addr);
-            forced += `<p class="forced-line" data-agent="vault"><span class="addr">${esc(short(addr))}</span>${i >= 0 ? ` = Agent ${esc(agents[i].name)}'s owner <span class="muted">(matched from the run's setup)</span>` : ""} · must have paid the feed · token unknown</p>`;
-          }
-          return `<div class="round"><div class="verdict-line ${tone}">round ${Number(r)} · <b>${esc(v.action)}</b> · ${esc(ANSWER[v.action] ?? "")}</div><p class="reason">${esc(v.reason ?? "")}</p>${forced}</div>`;
-        }).join("")
-      : state.owners.length || state.payouts.length || [...state.edges.values()].some((s) => s.side === "blindfold")
-        ? '<div class="verdict-line">? → ? <span class="muted">· watching the vault</span></div>'
-        : '<p class="empty">no Blindfold activity yet</p>';
+      // Private: one row per data product, one column per payment rail.
+      const products = [...new Set(routes.map((r) => r.label))].sort();
+      const of = (side, label) => state.routes[i].get(`${side}|${label}`);
+      const total = (side) => routes.filter((r) => r.side === side);
+      // Tokens left = what the owner deposited minus what the agent spent with Blindfold (both from the events).
+      const depositedCents = sum(state.deposits.filter((d) => d.from === a.owner), (d) => d.base) / 1e4;
+      const spentCents = sum(total("blindfold"), (r) => r.cents);
+      body.replaceChildren(
+        products.length
+          ? el("table", { class: "spend" },
+            el("thead", {}, el("tr", {}, el("th", { scope: "col" }, "purchases"),
+              sides.map((s) => el("th", { scope: "col", class: "num" }, s === "exact" ? "x402" : "Blindfold", el("span", { class: "unit" }, "count × price"))))),
+            el("tbody", {}, products.map((p) => el("tr", {}, el("th", { scope: "row" }, p.replace(new RegExp(`\\s+${a.token}$`), "")),
+              sides.map((s) => el("td", { class: "num" }, cellText(of(s, p))))))),
+            el("tfoot", {}, el("tr", {}, el("th", { scope: "row" }, "total"),
+              ...sides.map((s) => el("td", { class: "num" }, total(s).length ? `${sum(total(s), (r) => r.n)} for ${usdCents(sum(total(s), (r) => r.cents))}` : "—")))))
+          : none("no purchases yet"),
+        depositedCents > 0 ? el("p", { class: "balance" }, "Blindfold tokens left ", el("b", {}, usdCents(depositedCents - spentCents)), " ",
+          el("span", { class: "muted" }, `(${usdCents(depositedCents)} deposited − ${usdCents(spentCents)} spent)`)) : "");
 
-    $("gm-observer").innerHTML = `<h3>standard x402</h3>${exactHtml}<h3>Blindfold</h3>${blindHtml}`;
+      // The boundary: an x402 purchase crosses it as a transfer; a Blindfold purchase stops at it.
+      const exact = total("exact").length > 0, blind = total("blindfold").length > 0;
+      rail.classList.toggle("is-blank", !exact && !blind);
+      // Each arrow crosses the boundary (x402: a public transfer) or stops at it (Blindfold: a token over HTTP).
+      const arrow = (kind, name, note) => el("div", { class: `cross r-${kind}` }, el("p", { class: "cross-name" }, name),
+        el("span", { class: "cross-line", "aria-hidden": "true" }), el("p", { class: "cross-note" }, note));
+      rail.replaceChildren(exact || blind ? el("span", { class: "who" }, `Agent ${a.name}`) : "",
+        exact ? arrow("exact", "x402", "crosses: public transfer") : "",
+        blind ? arrow("blindfold", "Blindfold", "stops: token over HTTP") : "");
 
-    const rows = state.rows.slice().reverse();
-    $("gm-ledger").innerHTML = rows.length
-      ? `<table><thead><tr><th>time</th><th>side</th><th>who</th><th>route / chain kind</th><th class="num">amount</th><th>visibility</th><th>signature</th></tr></thead><tbody>${rows.map((r) => {
-          const sig = r.sig ? (r.link ? `<a href="${esc(r.link)}" target="_blank" rel="noopener">${esc(short(r.sig))}</a>` : esc(short(r.sig))) : "";
-          return `<tr data-agent="${esc(r.agent)}" class="${r.side} ${r.vis}${r.forced ? " forced" : ""}"><td>${clock(r.t)}</td><td>${r.side}</td><td>${esc(r.who)}</td><td>${esc(r.what)}</td><td class="num">${esc(r.amount)}</td><td><span class="vis">${r.vis}</span></td><td class="muted">${sig}</td></tr>`;
-        }).join("")}</tbody></table>`
-      : '<p class="empty">nothing has happened yet</p>';
+      // Public: what the chain shows for this lane, then what the observer makes of it.
+      const pays = stages[stage].x402 ? state.payments.filter((p) => p.agent === i) : [];
+      const deps = state.deposits.filter((d) => d.from === a.owner);
+      const signal = stages[stage].x402 ? state.exact?.signals.find((s) => s.payer === a.wallet) : null;
+      const byMemo = [...new Set(pays.map((p) => p.memo))].sort().map((memo) => pays.filter((p) => p.memo === memo));
+      const sees = [
+        ...byMemo.map((ps) => el("li", {}, el("span", { class: "addr" }, short(a.wallet)), ` → TokenFeed, memo ${ps[0].memo}: `,
+          el("b", {}, times(ps.length, sum(ps, (p) => p.base) / 1e4)), txs(ps))),
+        pays.length ? el("li", { class: "sum" }, `total: ${plural(pays.length, "transfer")} = ${usdBase(sum(pays, (p) => p.base))}`) : "",
+        ...deps.map((d) => el("li", {}, el("span", { class: "addr" }, short(d.from)), ` → vault · deposit ${usdBase(d.base)} (round ${d.round}) `, txs([d]))),
+      ].filter(Boolean);
+      const concludes = [
+        signal ? el("li", { class: "c-guess" }, tag("inferred", "guess"), " ", el("span", { class: "addr" }, short(signal.payer)), ` ${conclusion(signal)}`) : "",
+        ...deps.map((d) => (d.forced
+          ? el("li", { class: "c-guess" }, tag("inferred", "guess"), " ", el("span", { class: "addr" }, short(d.from)), " paid TokenFeed; token unknown")
+          : el("li", { class: "c-safe" }, `${short(d.from)}'s deposit: can't be tied to any agent or purchase`))),
+      ].filter(Boolean);
+      pub.replaceChildren(el("span", { class: "who" }, `Agent ${a.name}`), sees.length ? block("Sees", sees) : none("nothing on chain yet"), block("Concludes", concludes));
+    });
   }
 
-  function renderReport() {
-    const el = $("gm-report");
-    el.hidden = !acts.length || state.act < acts[acts.length - 1].n;
-    if (el.hidden) return;
+  function renderVault() {
+    const paidBase = sum(state.payouts, (p) => p.base) + (stages[stage].x402 ? sum(state.payments, (p) => p.base) : 0);
+    $("gm-feed").replaceChildren(el("b", {}, "TokenFeed"), ` has received ${usdBase(paidBase)} on chain`, stages[stage].x402 ? "" : " from the vault");
+
+    vaultRail.classList.toggle("is-blank", !state.payouts.length);
+    vaultRail.replaceChildren(state.payouts.length ? el("div", { class: "cross r-batched" }, el("p", { class: "cross-name" }, "Vault"),
+      el("span", { class: "cross-line", "aria-hidden": "true" }), el("p", { class: "cross-note" }, "crosses: one payout for all")) : "");
+
+    const orphans = state.deposits.filter((d) => agentByOwner(d.from) < 0);
+    const depositedBase = sum(state.deposits, (d) => d.base), paidOutBase = sum(state.payouts, (p) => p.base);
+    const sees = [
+      state.deposits.length ? el("li", {}, `${plural(state.deposits.length, "deposit")} into the vault · ${usdBase(depositedBase)} total`,
+        state.payouts.length ? ` · ${usdBase(depositedBase - paidOutBase)} still in the vault` : "") : "",
+      ...orphans.map((d) => el("li", {}, el("span", { class: "addr" }, short(d.from)), ` → vault · deposit ${usdBase(d.base)} (round ${d.round}) `, txs([d]))),
+      ...state.payouts.map((p) => el("li", {}, `vault → TokenFeed · ${usdBase(p.base)} in one transfer (round ${p.round}) `, txs([p]))),
+    ].filter(Boolean);
+    const concludes = state.payouts.map((p) => el("li", { class: "c-safe" }, `round ${p.round} payout: could be any mix of the deposits; who paid for what is unknown`));
+    vaultCell.replaceChildren(sees.length ? block("Sees", sees) : none("no vault activity yet"), block("Concludes", concludes));
+  }
+
+  // Rebuilt only when it changes: the region is live, and screen readers announce every rebuild.
+  let resultKey = "";
+  function renderResult() {
+    const all = agents.flatMap((_, i) => [...state.routes[i].values()]);
     const signals = state.exact?.signals ?? [];
     const named = signals.filter((s) => s.token).length;
-    const rounds = [...state.verdicts.keys()].sort((a, b) => a - b).map((r) => {
-      const v = state.verdicts.get(r);
-      return `round ${Number(r)} <b>${esc(v.action)}${v.action === "PARTIAL" ? " / amount fingerprint" : ""}</b>`;
-    });
-    el.innerHTML = `<h2>the observer's report</h2><table><tbody>
-      <tr class="exact"><th>standard x402</th><td><b>${named}/${n} named</b> · every wallet tied to its token</td></tr>
-      <tr class="blindfold"><th>Blindfold</th><td>${rounds.join(" · ") || "no verdict"}</td></tr></tbody></table>
-      <p class="foot">${local ? "Recorded on a local validator (localnet); its Explorer links are not public." : `Recorded on ${esc(rec.mode)}.`}
-      The map shows the crowd's ground truth next to what a public observer can read. It is not evidence that Blindfold hides deposits
-      or provider payouts: both are public, which is why they are on the map.</p>`;
+    const round = Math.max(-Infinity, ...state.verdicts.keys());
+    const v = state.verdicts.get(round);
+    const blind = all.some((r) => r.side === "blindfold") || state.deposits.length > 0;
+    const forced = v ? (v.forced ?? []).length : 0;
+    const key = JSON.stringify([signals.length, named, blind, v?.action, v?.reason, round]);
+    if (key === resultKey) return;
+    resultKey = key;
+    const stat = (kind, num, label, extra) => el("div", { class: `stat stat-${kind}` }, el("p", { class: "stat-num" }, num), el("p", { class: "stat-label" }, label), extra ?? "");
+    const out = [];
+    if (signals.length) out.push(stat("public", `${named} of ${agents.length}`, "agents identified, with their tokens · x402"));
+    if (v) {
+      out.push(stat(TONE[v.action] ?? "public", `${forced} of ${agents.length}`, "agents identified · Blindfold",
+        el("p", { class: "stat-sub" }, el("span", { class: `verdict-chip v-${TONE[v.action] ?? "public"}` }, v.action), " ", v.reason ?? "")));
+    } else if (blind) out.push(stat("private", "—", "Blindfold · no conclusion yet"));
+    $("gm-result").replaceChildren(...out);
+  }
+
+  function renderTrace() {
+    const rows = state.trace;
+    $("gm-trace-sum").textContent = rows.length ? `· ${plural(rows.length, "event")}` : "· nothing has happened yet";
+    $("gm-trace").replaceChildren(rows.length
+      ? el("table", {}, el("thead", {}, el("tr", {}, ["time", "rail", "who", "event", "amount", "visibility", "tx"].map((h) => el("th", { scope: "col", class: h === "amount" ? "num" : null }, h)))),
+        el("tbody", {}, rows.map((r) => el("tr", { "data-agent": r.agent },
+          el("td", { class: "muted" }, clock(r.t)), el("td", {}, r.rail), el("td", {}, r.who), el("td", {}, r.what), el("td", { class: "num" }, r.amount ?? ""),
+          el("td", {}, visTag(r.vis)), el("td", {}, txLink(r))))))
+      : none("nothing has happened yet"));
   }
 
   const sceneList = $("gm-scenes");
-  sceneList.innerHTML = acts.map((a, k) => `<li><button type="button" data-scene="${k}">${a.n} · ${esc(a.title)}</button></li>`).join("");
-  function renderScenes(scene) {
+  sceneList.replaceChildren(...stages.map((s, k) => el("li", {}, el("button", { type: "button", "data-stage": k }, el("span", { class: "step-n" }, String(k)), s.short))));
+  function renderStage() {
+    $("gm-scene").textContent = stages[stage].headline;
+    $("gm-caption").textContent = `Stage ${stage} of ${last} · ${stages[stage].title}`;
     for (const b of sceneList.querySelectorAll("button")) {
-      if (Number(b.dataset.scene) === scene) b.setAttribute("aria-current", "step");
+      if (Number(b.dataset.stage) === stage) b.setAttribute("aria-current", "step");
       else b.removeAttribute("aria-current");
     }
+    $("gm-prev").disabled = stage === 0;
+    $("gm-next").disabled = stage === last;
   }
 
   function applyFocus() {
-    root.classList.toggle("focused", focus >= 0);
-    for (const el of root.querySelectorAll("[data-agent]")) el.classList.toggle("dim", focus >= 0 && el.dataset.agent !== String(focus));
-    const note = $("gm-focus");
-    note.hidden = focus < 0;
-    if (focus >= 0) {
-      const a = agents[focus];
-      note.textContent = `Agent ${a.name} · ${a.token} · ${plural(state.agentCalls[focus], "call")} · ${usdCents(state.agentCents[focus])} · click the map to clear`;
-    }
+    for (const n of root.querySelectorAll("[data-agent]")) n.classList.toggle("dim", focus >= 0 && n.dataset.agent !== String(focus));
+    lanes.forEach(({ btn }, i) => btn.setAttribute("aria-pressed", String(focus === i)));
+  }
+  function setFocus(i) {
+    focus = focus === i ? -1 : i;
+    applyFocus();
   }
 
-  // ------------------------------------------------------------------------------------------------- controls
-  const playBtn = $("gm-play");
-  const seek = (t) => { player.seek(t); sync(player.position); };
-  const toggle = () => { player.toggle(); };
-  const sceneStep = (d) => {
-    const k = actAt(acts, player.position);
-    const to = acts[Math.min(Math.max(k + d, 0), acts.length - 1)];
-    if (to) seek(to.t);
-  };
+  // ------------------------------------------------------------------------------------------------- stages
+  /** Shows stage k's settled end state. */
+  function showStage(k) {
+    stage = Math.min(Math.max(k, 0), last);
+    sync(stages[stage].end);
+    render();
+  }
 
-  playBtn.addEventListener("click", toggle);
-  $("gm-restart").addEventListener("click", () => { reset(); lastScene = -2; seek(0); });
-  $("gm-prev").addEventListener("click", () => sceneStep(-1));
-  $("gm-next").addEventListener("click", () => sceneStep(1));
+  $("gm-prev").addEventListener("click", () => showStage(stage - 1));
+  $("gm-next").addEventListener("click", () => showStage(stage + 1));
   sceneList.addEventListener("click", (e) => {
-    const b = e.target.closest("button[data-scene]");
-    if (b) seek(acts[Number(b.dataset.scene)].t);
+    const b = e.target.closest("button[data-stage]");
+    if (b) showStage(Number(b.dataset.stage));
   });
-  $("gm-speed").addEventListener("click", (e) => {
-    const b = e.target.closest("button[data-speed]");
-    if (!b) return;
-    player.setSpeed(Number(b.dataset.speed));
-    for (const x of $("gm-speed").querySelectorAll("button")) x.setAttribute("aria-pressed", String(x === b));
+  map.addEventListener("click", (e) => {
+    if (focus >= 0 && !e.target.closest("a")) { focus = -1; applyFocus(); }
   });
-  $("gm-lens").addEventListener("click", (e) => {
-    const b = e.target.closest("button[data-lens]");
-    if (!b) return;
-    lens = b.dataset.lens;
-    root.dataset.lens = lens;
-    for (const x of $("gm-lens").querySelectorAll("button")) x.setAttribute("aria-pressed", String(x === b));
-  });
-  root.dataset.lens = lens;
-
-  const setFocus = (i) => { focus = focus === i ? -1 : i; applyFocus(); };
-  agentEls.forEach(({ g }, i) => {
-    g.addEventListener("click", (e) => { e.stopPropagation(); setFocus(i); });
-    g.addEventListener("keydown", (e) => {
-      if (e.key !== "Enter" && e.key !== " ") return;
-      e.preventDefault();
-      e.stopPropagation();
-      setFocus(i);
-    });
-  });
-  map.addEventListener("click", () => { if (focus >= 0) { focus = -1; applyFocus(); } });
-
-  // A mouse click leaves focus on the button; drop it so Space keeps toggling playback instead of re-clicking it.
-  root.addEventListener("click", (e) => { if (e.detail > 0) e.target.closest("button")?.blur(); });
+  const CONTROL = "a, summary, input, select, textarea";
   document.addEventListener("keydown", (e) => {
-    if (e.altKey || e.ctrlKey || e.metaKey) return;
-    if (e.key === " " && !e.target.closest?.("button, a, [role=button]")) { e.preventDefault(); toggle(); }
-    else if (e.key === "ArrowLeft") { e.preventDefault(); sceneStep(-1); }
-    else if (e.key === "ArrowRight") { e.preventDefault(); sceneStep(1); }
+    if (e.altKey || e.ctrlKey || e.metaKey || e.target.closest?.(CONTROL)) return;
+    if (e.key === "ArrowLeft") { e.preventDefault(); showStage(stage - 1); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); showStage(stage + 1); }
   });
-
-  let shown = "";
-  function frame(now) {
-    const pos = player.tick();
-    sync(pos);
-    const text = `${clock(pos)} / ${clock(timeline.duration)}`;
-    const btn = player.playing ? "pause" : "play";
-    if (text + btn !== shown) {
-      shown = text + btn;
-      $("gm-clock").textContent = text;
-      playBtn.textContent = btn;
-    }
-    animatePulses(now);
-    requestAnimationFrame(frame);
-  }
 
   reset();
-  sync(0);
-  requestAnimationFrame(frame);
+  showStage(0);
 }
