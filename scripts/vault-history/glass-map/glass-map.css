@@ -1,0 +1,133 @@
+/* Glass Map. Palette, fonts and the reduced-motion rule come from ../../dashboard.css. */
+html, body { height: auto; }
+.gm { max-width: 1440px; margin: 0 auto; padding: 32px; display: flex; flex-direction: column; gap: 16px; }
+
+.gm-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; flex-wrap: wrap; }
+.gm-head h1 { margin: 0; font: 500 24px/32px var(--sans); }
+.gm-head h1 .sep { color: var(--muted); margin: 0 4px; }
+.gm-head .sub { margin: 4px 0 0; color: var(--text-2); }
+.gm-head .meta { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; color: var(--text-2); }
+.legend { display: flex; gap: 16px; margin: 0; padding: 0; list-style: none; color: var(--muted); }
+.legend i { display: inline-block; width: 20px; height: 0; margin-right: 6px; vertical-align: middle; border-top: 2px solid var(--text); }
+.legend .k-private { border-top: 6px solid rgba(76, 195, 138, 0.35); filter: blur(1px); }
+.legend .k-inferred { border-top: 2px dashed var(--amber); }
+
+/* Controls */
+.controls { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: center; }
+.controls .group { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.controls .label { color: var(--muted); }
+.clock { color: var(--text-2); min-width: 100px; }
+.gm button { font: inherit; color: var(--text); background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+.gm button:hover { background: var(--raised); }
+.gm button:focus-visible, .agent:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.gm button[aria-pressed="true"], .gm button[aria-current] { border-color: var(--text-2); background: var(--raised); }
+.gm button:disabled { opacity: 0.4; cursor: default; }
+.scenes { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.scenes button { color: var(--text-2); }
+.scenes button[aria-current] { color: var(--text); border-color: var(--green); }
+
+/* Map */
+.map-wrap { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 8px; }
+.map { display: block; width: 100%; height: auto; font: 400 12px var(--mono); }
+.focus-note { position: absolute; left: 16px; bottom: 12px; padding: 6px 10px; background: var(--raised); border: 1px solid var(--line); border-radius: 8px; color: var(--text); }
+.map text { fill: var(--text); }
+.map .col { fill: var(--muted); font-size: 13px; }
+.map .col.small { font-size: 11px; }
+.map .sub, .map .stats { fill: var(--text-2); font-size: 11px; }
+.map .agent-name, .map .vault-title, .map .feed-title { font-family: var(--sans); font-weight: 500; font-size: 14px; }
+.map .group { fill: var(--text-2); font-weight: 500; }
+.map .route-name { fill: var(--text-2); font-size: 11px; }
+.map .route-n { font-size: 11px; }
+.map .route.idle text { fill: var(--muted); opacity: 0.6; }
+.band { fill: rgba(237, 237, 237, 0.05); stroke: rgba(237, 237, 237, 0.14); stroke-width: 1; }
+.node { fill: var(--raised); stroke: var(--line); stroke-width: 1; }
+.node.feed { fill: rgba(33, 33, 35, 0.6); }
+.agent { cursor: pointer; outline: none; }
+.agent:hover .node { stroke: var(--text-2); }
+
+.edge { fill: none; stroke-linecap: round; transition: opacity 300ms var(--ease), stroke-width 300ms var(--ease); }
+.edge.exact { stroke: var(--text-2); }
+.edge.exact.public { stroke: var(--red); }
+.edge.blind { stroke: var(--green); }
+.edge.private { stroke: var(--green); stroke-opacity: 0.3 !important; filter: blur(2px); }
+.edge.deposit, .edge.payout { stroke: var(--text); stroke-width: 1.5; }
+.edge.infer { stroke: var(--amber); stroke-width: 1.5; stroke-dasharray: 6 5; }
+.elabel { font-size: 11px; }
+.exact-label { fill: var(--red) !important; }
+.blind-label { fill: var(--green) !important; }
+.infer-label, .forced-label { fill: var(--amber) !important; }
+.http { fill: var(--muted) !important; font-size: 10.5px; font-style: italic; }
+.marker { fill: var(--text-2) !important; font-size: 13px; }
+.chip-addr { font-size: 11px; }
+.chip-amt { fill: var(--text-2) !important; font-size: 11px; }
+.chip.forced .chip-box { stroke: var(--amber); stroke-width: 1.5; }
+.chip.forced .chip-addr, .chip.forced .chip-amt { fill: var(--amber) !important; }
+.ledger-text, .ledger-amt { font-size: 11px; }
+.ledger-row.forced text { fill: var(--amber) !important; }
+.pulse { stroke: none; }
+.pulse.exact { fill: var(--red); }
+.pulse.blind { fill: var(--green); }
+.pulse.payout { fill: var(--text); }
+.map .off { display: none; }
+
+/* Teaching lens: what each layer emphasizes. The observer never sees the agent layer; this only changes emphasis. */
+[data-lens="agent"] .edge.private { stroke-opacity: 0.85 !important; filter: none; }
+[data-lens="agent"] :is(.edge.infer, .infer-label, .forced-label, .marker, .ledger-row) { opacity: 0.2; }
+[data-lens="observer"] :is(.edge.blind, .edge.private, .blind-label, .http) { display: none; }
+[data-lens="observer"] :is(.agent .stats, .panel.truth, .ledger tr.offchain) { opacity: 0.25; }
+
+/* Focus on one agent. */
+.gm .dim { opacity: 0.12 !important; }
+
+/* Panels */
+.panels { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px 20px; min-width: 0; transition: opacity 300ms var(--ease); }
+.panel h2 { margin: 0 0 12px; font: 500 16px/24px var(--sans); }
+.panel h2 span { color: var(--muted); font: 400 13px var(--mono); margin-left: 8px; }
+.panel h3 { margin: 16px 0 6px; font: 500 13px var(--sans); color: var(--text-2); }
+.panel h3:first-child { margin-top: 0; }
+.panel table { width: 100%; border-collapse: collapse; }
+.panel th { text-align: left; font-weight: 400; color: var(--muted); padding: 4px 8px 4px 0; }
+.panel td { padding: 6px 8px 6px 0; border-top: 1px solid var(--line); vertical-align: top; }
+.panel .num { text-align: right; }
+.panel .empty { color: var(--muted); margin: 0; }
+.panel .muted { color: var(--muted); }
+.panel .addr { color: var(--text); }
+.truth tr.exact td:nth-child(4) { color: var(--red); }
+.truth tr.blindfold td:nth-child(4) { color: var(--green); }
+.obs { margin: 6px 0 0; padding: 0; list-style: none; }
+.obs li { padding: 4px 0; border-top: 1px solid var(--line); }
+.verdict-line b { font-weight: 500; }
+.verdict-line.alarm b { color: var(--red); }
+.verdict-line.calm b { color: var(--green); }
+.verdict-line.warn b { color: var(--amber); }
+.round + .round { margin-top: 10px; }
+.reason { margin: 4px 0 0; color: var(--text-2); }
+.forced-line { margin: 4px 0 0; color: var(--amber); }
+.forced-line .addr { color: var(--amber); }
+
+.activity .ledger { max-height: 360px; overflow: auto; }
+.ledger td:nth-child(2) { color: var(--text-2); }
+.ledger tr.exact td:nth-child(2) { color: var(--red); }
+.ledger tr.blindfold td:nth-child(2) { color: var(--green); }
+.ledger .vis { color: var(--text-2); }
+.ledger tr.batched .vis, .ledger tr.offchain .vis { color: var(--green); }
+.ledger tr.forced td { color: var(--amber); }
+.ledger a { text-decoration: underline; text-underline-offset: 3px; }
+
+.report { border-color: var(--text-2); }
+.report th { color: var(--text-2); width: 160px; }
+.report tr.exact b { color: var(--red); }
+.report tr.blindfold b { color: var(--amber); font-weight: 500; }
+.report .foot { margin: 12px 0 0; color: var(--muted); }
+.error { border-color: var(--red); }
+.error h2 { color: var(--red); }
+
+@media (max-width: 960px) {
+  .gm { padding: 16px; }
+  .gm-head .meta { align-items: flex-start; }
+  .legend { flex-wrap: wrap; gap: 4px 12px; }
+  .panels { grid-template-columns: 1fr; }
+  .panel { padding: 12px; overflow-x: auto; }
+  .focus-note { position: static; margin-top: 8px; }
+}

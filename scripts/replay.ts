@@ -2,7 +2,8 @@
 // "Recorded replay"). A landing page picks one.
 //
 //   pnpm replay [file]             preview the site at http://localhost:5174, with `file` in place of the published
-//                                  recording of its demo
+//                                  recording of its demo; scripts/vault-history is at /vault/ as on GitHub Pages
+//                                  (Glass Map: http://localhost:5174/vault/glass-map/)
 //   pnpm replay --site DIR [file]  write the static site that GitHub Pages serves
 //   pnpm replay:publish [--main] [--calls N]
 //                                  record a devnet run of pnpm demo, check it, commit it as the published recording
@@ -15,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { serve } from "@hono/node-server";
+import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { serveAsset } from "./lib/dashboard.js";
 import { recordingProblems, type Recording } from "./lib/recorder.js";
@@ -90,9 +92,16 @@ if (argv[0] === "publish") {
     serveAsset(app, "/", "home.html");
     for (const f of REPLAY_ASSETS) serveAsset(app, `/${f}`, f);
     for (const d of Object.keys(SITE_PATHS) as Demo[]) serveAsset(app, `/${SITE_PATHS[d].recording}`, pathToFileURL(recordings[d]));
+    // The Pages workflow copies scripts/vault-history to /vault/. Directories need the trailing slash, as on Pages,
+    // because their pages load relative assets.
+    app.get("/vault", (c) => c.redirect("/vault/"));
+    app.get("/vault/:dir{[^/.]+}", (c) => c.redirect(`${c.req.path}/`));
+    app.get("/vault/*", serveStatic({ root: fileURLToPath(new URL("vault-history", import.meta.url)), rewriteRequestPath: (p) => p.slice("/vault".length) }));
     const port = Number(process.env.PORT ?? 5174);
     const url = `http://localhost:${port}/${shown ? SITE_PATHS[shown].page : ""}`;
-    serve({ fetch: app.fetch, port, hostname: "127.0.0.1" }, () =>
-      console.log(`${shown ? `Replaying ${relative(cwd, recordings[shown]) || recordings[shown]}` : "Replays"} at ${url}  (Ctrl+C to stop)`));
+    serve({ fetch: app.fetch, port, hostname: "127.0.0.1" }, () => {
+      console.log(`${shown ? `Replaying ${relative(cwd, recordings[shown]) || recordings[shown]}` : "Replays"} at ${url}  (Ctrl+C to stop)`);
+      console.log(`Glass Map at http://localhost:${port}/vault/glass-map/`);
+    });
   }
 }

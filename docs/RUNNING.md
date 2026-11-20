@@ -40,6 +40,14 @@ export DATABASE_URL=postgres://blindfold:blindfold@127.0.0.1:5432/blindfold
 
 The compose file uses PostgreSQL 16 and creates `blindfold`, not `mint_test`. CI runs the application suite against both PostgreSQL 16 and 18; a local PostgreSQL 17 cluster also works.
 
+Without a system PostgreSQL package (or when the distribution's mirrors can't provide one), a conda-forge build works with the same script:
+
+```sh
+conda create -y -n blindfold-pg -c conda-forge postgresql=17
+export PG_BIN="$(conda info --base)/envs/blindfold-pg/bin"
+export DATABASE_URL="$(services/mint/scripts/dev-pg.sh)"
+```
+
 ## 3. Fake-chain mint
 
 This mode runs the real mint HTTP server and database with an in-memory vault and settlement sender. No Solana keys or RPC are needed. The vault resets on process restart while PostgreSQL does not: **use a new disposable database and new token file for each fake-chain server session**. Reusing the database can leave deposit cursors, provider records and liabilities inconsistent with the new empty vault.
