@@ -29,43 +29,27 @@ Blindfold is a custom **x402 v2 scheme** called `blindfold`:
 
 A direct Blindfold purchase doesn't create any transaction at all. Providers don't have to give up their `exact` route either; Blindfold is added as another entry in the route's `accepts` list.
 
+The main way to use it is an MCP server for Claude Code or Claude Desktop. You give Claude a token file and it gets five tools: `list_providers`, `get_balance`, `quote`, `buy_data` and `check_reserves`. Ask it to research SOL and it checks prices, buys the whale flow and order-book depth for a few cents each, and tells you whether it would buy, sell or hold. None of those purchases show up onchain. When a purchase goes over 20¢, the server pops up an approval form in Claude through MCP elicitation, and if you say no, the purchase doesn't happen.
+
 Since the agent is reading untrusted feeds and could get prompt-injected, the wallet also has some guardrails:
 
 - **Provider lock:** tokens can only be redeemed by registered providers, so a prompt-injected "pay this URL" goes nowhere.
 - **Per-call cap, session budget and owner approval** above a threshold, enforced in the wallet, outside the model.
 - **Reserve gate:** before paying, the agent reads the vault balance and the onchain issuance log itself and refuses if the mint has issued more than the vault holds.
 
-There's a CLI agent, an LLM research loop, and an MCP server you can add to Claude Code or Claude Desktop.
+There's no MCP tool for approving a payment, raising a limit or skipping the reserve check, so Claude can't talk its way past them. Provider responses are also labelled as untrusted in the tool results. Besides the MCP server there's a scripted CLI agent and an LLM research loop that works with Gemini or any OpenAI-compatible model.
 
 ### How we built it
 
 **Onchain (Rust, Anchor 1.2.2, Solana devnet).** The vault program (`EsB6NfKVPipU5kEVm2jq14cjopbE7w9hPEFZWVu8jtMo`) holds USDC, keeps a provider registry, records deposits as `DepositRecord` PDAs, and pays providers through `settle_batch` with sequential batch IDs. Each batch pays 1 to 8 providers, and only to their registered accounts. An `IssuanceLog` PDA publishes the mint's cumulative issued total and the settled total, so anyone can check reserves.
 
-**The mint (TypeScript, Hono, PostgreSQL).** It credits quotes from onchain deposits, blind-signs outputs with DLEQ proofs, rejects double spends, and runs settlement. Blind signing follows Cashu's BDHKE. For a secret $x$, the wallet computes $Y = H(x)$, where $H$ hashes to a curve point, blinds it with a random $r$, and sends
-
-$$B' = Y + rG.$$
-
-The mint signs with its key $k$ (public key $K = kG$) and returns $C' = kB'$. The wallet unblinds:
-
-$$C = C' - rK = kY.$$
-
-The mint later sees $(x, C)$ when a provider redeems, but it never saw $Y$ at signing time, so it can't link the redemption to the deposit that paid for it. The DLEQ proof lets the owner check that $C'$ was signed with the published $K$.
-
-Settlement holds recent redemptions for one window and rounds each payout down to a multiple of 10¢:
-
-$$\text{payout}_p = 10 \cdot \left\lfloor \frac{\text{owed}_p}{10} \right\rfloor \ \text{cents},$$
-
-with the remainder carried into the next window, so you can't back out the exact number of calls from the payout.
-
-The reserve check the agent runs before paying is
-
-$$\text{vault USDC} \;\ge\; \max\big(\text{issued} - \text{settled},\ \text{mint-reported liabilities}\big),$$
-
-where $\text{issued}$ and $\text{settled}$ come from the onchain issuance log.
+**The mint (TypeScript, Hono, PostgreSQL).** It credits quotes from onchain deposits, blind-signs outputs with DLEQ proofs, rejects double spends, and runs settlement. Blind signing follows Cashu's BDHKE.
 
 **x402 integration.** We used the official `@x402/core`, `@x402/hono` and `@x402/fetch` packages and registered `blindfold` as a new scheme next to `exact`. Before building anything else we wrote a quick spike (`spikes/x402-cashu`) with a real x402 server and client and real `cashu-ts` crypto, to make sure the idea actually worked.
 
-**Wallet SDK and agents.** The wallet does provider-locked funding, exact-change proof selection, approval hooks, budget checks under a payment lock, and recovery of pending proofs. On top of it sit a scripted CLI agent, an LLM loop (Gemini or any OpenAI-compatible model), and an MCP server exposing `list_providers`, `get_balance`, `quote`, `buy_data` and `check_reserves`, with MCP elicitation for owner approval.
+**Wallet SDK and agents.** The wallet does provider-locked funding, exact-change proof selection, approval hooks, budget checks under a payment lock, and recovery of pending proofs. The CLI agent, the LLM loop and the MCP server all sit on top of it.
+
+**MCP server.** A stdio server built on the same wallet as the CLI agent, with its own defaults: 30¢ per-call cap, approval above 20¢, a 50¢ budget per session, and a reserve check before the first paid call and every 10 after that. It also refuses any URL that isn't on a registered provider's origin before making a request. The end-to-end tests drive the real server through an MCP client and cover approve and deny, clients without elicitation, a hostile provider, the budget and the reserve check.
 
 **Providers.** TokenFeed serves whale flow, order-book depth and trade signals (Coinbase market data with a deterministic fallback) at 5¢, 10¢ and 25¢. We also wrote a gateway that takes Blindfold tokens and buys from upstream `exact` vendors out of one shared wallet, so agents can use existing x402 vendors without each making their own transfers.
 
@@ -76,16 +60,15 @@ where $\text{issued}$ and $\text{settled}$ come from the onchain issuance log.
 - Standard x402: **3/3** purchases attributed (wallet, feed and token), 3 per-call transfers.
 - Blindfold: **0/5** purchases attributed, 0 per-call transfers.
 
+For the live version, Claude buys through the MCP server on one half of the screen while `pnpm watch` shows everything public on devnet on the other. A rival agent researching SOL with standard x402 shows up with its memo and gets flagged **BUY SOL**. Claude's purchases don't show up at all, only the owner's one deposit and, a minute later, the vault's batched payout.
+
 A public replay and a vault history page (reserve coverage verdict, deposits, settlements, issuance totals, read live from devnet in the browser) are on GitHub Pages.
 
 ### Challenges we ran into
 
 - **Privacy only works with other users.** If there's only one depositor, the observer can still match their deposit to the batch payout. It can't see which token or how many calls, but it does know who paid for which feed. We built a separate crowd demo to measure this. With $n$ equal deposits and one payout, the observer's best guess is about $1/n$ and it reports `CANNOT ATTRIBUTE`. In a second round one owner deposits $2.37 and everyone else deposits $0.10. The small deposits can't add up to the payout, so the observer correctly picks out the big depositor (`PARTIAL`). Unusual deposit amounts give you away.
 - **The mint is custodial.** That's true of every ecash mint and we didn't find a way around it. What we could do was make it auditable with the onchain issuance log, the agent's reserve check, and a public coverage page. The mint could still under-report what it issued, which the README calls out.
-- **Making sure the privacy score meant something.** An observer that attributes nothing could just be an observer that missed transactions. The scorer checks that RPC actually covered every watched account for each act's slot range, and if there are gaps and nothing got attributed, it marks the result inconclusive.
-- **Budgets under concurrency.** Our first version of the session budget only checked the price the model asked for. We moved the check into the wallet, under the payment lock, and compared it against the actual 402 offer, so a looping agent or an inflated offer can't go over budget.
 - **Settlement and redemption edge cases.** Providers redeem before they deliver, so a dropped response can lose tokens. Settlement and funding also need to survive a crash between "signed" and "confirmed". We fixed the worst of these and put the rest on the roadmap.
-- **One shared devnet vault.** During rehearsals we had multiple processes settling against the same vault and hit races on batch IDs, so we added a local settle lock.
 
 ### What we learned
 
