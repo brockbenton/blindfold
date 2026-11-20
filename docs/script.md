@@ -28,23 +28,23 @@ Blindfold is a new x402 payment scheme on Solana. It works in four steps.
 
 Now let's see it.
 
-## 4b. Demo: Glass Map (~50s)
+## 4b. Demo: Glass Map (~65s)
 
 Before recording: restart `pnpm replay`, wait for "Live crowd run ready", open `localhost:5174/vault/glass-map/`, click one tx and allow local network access. Record within 10 minutes.
 
 **Stage 0**
-This is our live dashboard on a local Solana chain. On the left, three autonomous agents buy research over x402 from TokenFeed, our test data provider. On the right, an observer we built watches the chain.
+This is a live dashboard we built on a local Solana chain. On the left are three autonomous agents, our test subjects, researching tokens and paying per call over x402 to TokenFeed, our test data provider. On the right is an observer agent we built, which watches every x402 transaction on chain.
 
 **Stage 1**
-First, standard x402. Agent A buys two whale-flow reads and one depth read: 20 cents. Every purchase is a public transfer, and the memo names the token.
+First, the agents use regular x402. Take Agent A: it buys one depth call and two whale-flow calls, three calls for 20 cents. Every one of those payments is a public transfer, and the memo says exactly what it bought.
 *[Click Agent A's whale-flow tx → Explorer → back]*
-Anyone can read this. So the observer expects a SOL trade, and does the same for B and C. Three of three identified.
+So the observer picks them up instantly, and from the research alone it can guess a SOL trade is coming. Same for Agent B with BTC and Agent C with ETH. TokenFeed received 55 cents on chain, and the observer knows exactly which agent paid for which query. All three agents identified.
 
 **Stage 2**
-Now the same research, paid with Blindfold. Each owner deposits one dollar into the vault. Purchases are tokens sent over HTTP, so nothing reaches the chain. Zero of three.
+Now the same agents, same research, with Blindfold. Each agent's owner deposits one dollar into the vault, and you can see those deposits on chain. But each purchase is just a token sent over HTTP, so nothing about it reaches the chain. All the observer can say is that three dollars went into the vault. Zero agents identified.
 
 **Stage 3**
-Later, the vault pays TokenFeed once: 55 cents for everyone, and 2.45 stays in the vault. Who bought what, and when: unknown.
+Finally, the vault pays providers periodically. TokenFeed gets one payout of 55 cents, and 2.45 stays in the vault. So the observer learns that 55 cents of research happened, but not which agent made which query, or when.
 
 ## 4c. Back to the slides
 
