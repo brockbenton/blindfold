@@ -41,7 +41,7 @@ You can use it from a CLI agent, an LLM-driven research loop, or an **MCP server
 
 **Onchain (Rust, Anchor 1.2.2, Solana devnet).** The vault program (`EsB6NfKVPipU5kEVm2jq14cjopbE7w9hPEFZWVu8jtMo`) holds USDC, keeps a provider registry, records deposits as `DepositRecord` PDAs, and pays providers through `settle_batch` with sequential batch IDs. Each batch pays 1 to 8 providers, and only to their registered accounts. An `IssuanceLog` PDA publishes the mint's cumulative issued total and the settled total, so anyone can check reserves.
 
-**The mint (TypeScript, Hono, PostgreSQL).** It credits quotes from onchain deposits, blind-signs outputs with DLEQ proofs, rejects double spends, and runs settlement. Blind signing follows Cashu's BDHKE. For a secret $x$, the wallet computes $Y = \text{hash\_to\_curve}(x)$, blinds it with a random $r$, and sends
+**The mint (TypeScript, Hono, PostgreSQL).** It credits quotes from onchain deposits, blind-signs outputs with DLEQ proofs, rejects double spends, and runs settlement. Blind signing follows Cashu's BDHKE. For a secret $x$, the wallet computes $Y = H(x)$, where $H$ hashes to a curve point, blinds it with a random $r$, and sends
 
 $$B' = Y + rG.$$
 
