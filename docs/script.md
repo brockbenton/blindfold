@@ -17,11 +17,17 @@ On a public chain, an agent can't hide its research. Until now. We built Blindfo
 
 ## 4. What it is and how it works (1:12-2:35)
 
-Blindfold is a new x402 payment scheme on Solana. The owner deposits USDC into a vault and gets back blind-signed ecash tokens, so the mint can't link a redeemed token to the deposit that paid for it.
+Blindfold is a new x402 payment scheme on Solana. It works in four steps.
 
-The agent holds tokens, not a wallet key. When a provider asks for payment, the agent sends a token in an HTTP header, and the provider redeems it with the mint before serving the data.
+1. Deposit. The owner deposits USDC into a Solana vault.
 
-Same research, nothing onchain, and our watcher sees nothing. Providers get paid from the vault in rounded batches on a timer. The standard rail gave away three of three purchases. Blindfold gave away zero.
+2. Blind-sign. The mint returns blind-signed ecash tokens, so it can't link a redeemed token to the deposit that paid for it.
+
+3. Pay per call. The agent holds tokens, not a wallet key. When a provider asks for payment, the agent sends a token in an HTTP header, and the provider redeems it with the mint before serving the data. Same research, nothing onchain, and our watcher sees nothing.
+
+4. Settle. The vault pays providers in rounded batches on a timer, so payouts don't line up with individual calls.
+
+The standard rail gave away three of three purchases. Blindfold gave away zero.
 
 It also keeps the agent safe. Tokens only work at registered providers, so a poisoned feed can't redirect payment. The wallet enforces a budget and asks the owner before big purchases. And before paying, the agent checks Solana itself: if the vault holds less than the mint has issued, it pays nothing.
 
