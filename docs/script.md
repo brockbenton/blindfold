@@ -8,8 +8,7 @@ Dark pools handled 17 to 18 percent of US equity volume in 2025, and off-exchang
 
 AI agents now buy market data per call over x402. CoinGecko, Birdeye and others charge about a cent a request. But one report puts x402 daily settlement volume down 93 percent this year.
 
-Part of the problem: on Solana, every one of those calls is a public USDC transfer. Here's our agent buying SOL whale-flow data the standard way. Three purchases, three public transfers, and the memo names the token.
-Our watcher reads the chain and calls it: BUY SOL. Before the agent has even traded.
+Part of the problem: on Solana, every one of those calls is a public USDC transfer. l
 
 ## 3. Until now (1:05-1:12)
 
