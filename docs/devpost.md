@@ -151,7 +151,21 @@ Solana (devnet), Anchor, Rust, SPL Token, SPL Memo, Circle devnet USDC, **QuickN
 
 ---
 
-## Technical summary — contract / program addresses (Solana devnet)
+## Technical Summary
+
+Blindfold is a custom x402 v2 payment scheme (`blindfold`) that lets agents pay for API calls with Cashu ecash instead of onchain USDC transfers. It has four main parts.
+
+**Vault program (Rust, Anchor 1.2.2, Solana devnet).** Holds deposited USDC and keeps a registry of approved data providers. Each deposit is recorded as a `DepositRecord` PDA and emits a `DepositMade` event. Providers get paid through `settle_batch`, which pays 1 to 8 providers per batch, only to their registered token accounts, with sequential batch IDs. An `IssuanceLog` PDA stores the mint's cumulative issued and settled totals so anyone can check reserves against the vault balance.
+
+**Mint (TypeScript, Hono, PostgreSQL).** Watches for deposits, credits quotes, and blind-signs tokens using Cashu's BDHKE with DLEQ proofs. Tokens are locked to registered provider keys. When a provider redeems, the mint checks for double spends and adds the amount to that provider's balance. Every settlement window it pays out from the vault, holding recent redemptions for one window and rounding payouts down to 10¢ with the remainder carried forward.
+
+**Wallet SDK and agents.** The wallet handles provider-locked funding, exact-change proof selection, pending-proof recovery, a per-call cap, a session budget checked under a payment lock against the real 402 offer, owner approval above a threshold, and a reserve check that reads the vault and issuance log onchain before paying. On top of it there's a CLI agent, an LLM research loop (Gemini or any OpenAI-compatible model), and an MCP server with `list_providers`, `get_balance`, `quote`, `buy_data` and `check_reserves`.
+
+**Providers, gateway and observer.** TokenFeed is a sample provider serving whale flow, order-book depth and trade signals at 5¢, 10¢ and 25¢, with both `exact` and `blindfold` in its `accepts` list via `@x402/hono`. A gateway accepts Blindfold tokens and pays upstream `exact` vendors from one shared wallet. The observer reads a filtered QuickNode Stream of Solana devnet (watched USDC accounts, SPL memos, vault deposit events) with RPC fallback and tries to attribute purchases. In the demo it attributes 3/3 standard x402 purchases and 0/5 Blindfold purchases.
+
+**Payment flow:** owner deposits USDC → mint issues blind-signed, provider-locked tokens → agent requests data and gets a 402 → agent sends proofs in the `PAYMENT-SIGNATURE` header → provider redeems at the mint and serves the data → mint settles to providers from the vault in batches.
+
+### Contract / program addresses (Solana devnet)
 
 | Program / account | Address | Role |
 |---|---|---|
